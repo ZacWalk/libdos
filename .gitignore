@@ -1,0 +1,22 @@
+# Build output
+bin/
+intermediate/
+tmp/
+trace.txt
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.aps
+*.ilk
+*.tlog
+*.iobj
+*.ipdb
+
+# Reference material and sample programs, kept locally only
+inspiration/
+
+# Programs built by ovrwincc
+shell/*.COM
+*.bmp
