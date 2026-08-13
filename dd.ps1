@@ -7,16 +7,18 @@
     dd test    Build the CLI, then run the behavioural test suite.
     dd run     Build the GUI app, then launch it.
     dd cli     Build the CLI, then run it with whatever arguments follow.
+    dd bench   Build the CLI, compile cc\bench\bench.c for this machine with
+               the compiler that was just built, and run it here.
 
     Both commands build the code first. Output binaries land in bin\ using the
     naming convention <name><64|32><r|d>, e.g. ovrwincli64d.exe, ovrwinapp64r.exe.
 
 .PARAMETER Command
-    'test', 'run' or 'cli'.
+    'test', 'run', 'cli' or 'bench'.
 
 .PARAMETER Release
-    Force the Release configuration. By default 'run' builds Release and
-    'test' and 'cli' build Debug.
+    Force the Release configuration. By default 'run' and 'bench' build Release
+    and 'test' and 'cli' build Debug.
 
 .PARAMETER DebugBuild
     Force the Debug configuration (overrides the 'run' default of Release).
@@ -25,17 +27,19 @@
     Build the 32-bit (Win32) platform instead of x64.
 
 .PARAMETER Arguments
-    Everything after the command is passed through to the binary.
+    Everything after the command is passed through to the binary. For 'bench',
+    a source file to compile and run instead of the benchmark.
 
 .EXAMPLE
     .\dd.ps1 test
     .\dd.ps1 run
+    .\dd.ps1 bench
     .\dd.ps1 cli --info .\samples\game\GAME.EXE
 #>
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('test', 'run', 'cli')]
+    [ValidateSet('test', 'run', 'cli', 'bench')]
     [string]$Command,
 
     [switch]$Release,
@@ -58,16 +62,17 @@ if (-not $Command) {
     Write-Host '  test    Build and run the test suite (Debug by default)'
     Write-Host '  run     Build and launch the GUI app (Release by default)'
     Write-Host '  cli     Build and run the CLI with the remaining arguments'
+    Write-Host '  bench   Build, compile the benchmark for this machine, run it (Release)'
     Write-Host ''
     Write-Host 'Options: -Release, -DebugBuild, -Win32'
     exit 0
 }
 
-# Resolve configuration: explicit -Release/-DebugBuild win; otherwise 'run'
-# defaults to Release and everything else to Debug.
+# Resolve configuration: explicit -Release/-DebugBuild win; otherwise the two
+# commands that are about speed default to Release and everything else to Debug.
 if ($Release) { $configuration = 'Release' }
 elseif ($DebugBuild) { $configuration = 'Debug' }
-elseif ($Command -eq 'run') { $configuration = 'Release' }
+elseif ($Command -eq 'run' -or $Command -eq 'bench') { $configuration = 'Release' }
 else { $configuration = 'Debug' }
 
 # Resolve platform and the matching binary-name suffix.
@@ -91,6 +96,15 @@ switch ($Command) {
         $project = Join-Path $root 'cli\ovrwin-cli.vcxproj'
         $exeName = "ovrwincli$suffix.exe"
         $exeArgs = $Arguments
+    }
+    'bench' {
+        # The generated code is x64, so only an x64 build can run what it
+        # compiled; a 32-bit one would have to fall back to the emulator.
+        if ($Win32) { throw 'bench needs the x64 build: the generated code is x64.' }
+        $project = Join-Path $root 'cli\ovrwin-cli.vcxproj'
+        $exeName = "ovrwincli$suffix.exe"
+        $source  = if ($Arguments) { $Arguments[0] } else { Join-Path $root 'cc\bench\bench.c' }
+        $exeArgs = @('--ccnative', $source)
     }
 }
 
