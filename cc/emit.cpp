@@ -283,16 +283,16 @@ void emitter::drop(int first, int last) { dropped_.emplace_back(first, last); }
 int emitter::encode(instruction& in, int position, std::vector<uint8_t>* into) const
 {
 	in.fixup = 0;
-	return machine == cc_machine::x64 ? encode_x64(in, position, into)
+	return machine == cc_machine_x64 ? encode_x64(in, position, into)
 	                                 : encode_8086(in, position, into);
 }
 
 // How long a branch is before the layout pass has tried to shorten it.
 int emitter::branch_length(op code) const
 {
-	if (machine == cc_machine::x64) return code == op::jmp ? 5 : 6;
+	if (machine == cc_machine_x64) return code == op::jmp ? 5 : 6;
 	if (code == op::jmp) return 3;
-	return cpu >= cc_cpu::i80386 ? 4 : 5;
+	return cpu >= cc_cpu_i80386 ? 4 : 5;
 }
 
 int emitter::encode_8086(instruction& in, int position, std::vector<uint8_t>* into) const
@@ -550,7 +550,7 @@ int emitter::encode_8086(instruction& in, int position, std::vector<uint8_t>* in
 	case op::setcc:
 		// A 386 sets the byte and clears the rest; an 8086 has to branch
 		// over a clear, because it has no SETcc at all.
-		if (cpu >= cc_cpu::i80386 && in.dest.reg < 4)
+		if (cpu >= cc_cpu_i80386 && in.dest.reg < 4)
 		{
 			out.put(0x0f);
 			out.put(codes_for(in.test).taken + 0x20);
@@ -605,7 +605,7 @@ int emitter::encode_8086(instruction& in, int position, std::vector<uint8_t>* in
 		}
 		// A 386 branches that far in one instruction. An 8086 has no near
 		// conditional branch, so it jumps over an unconditional one.
-		if (cpu >= cc_cpu::i80386)
+		if (cpu >= cc_cpu_i80386)
 		{
 			out.put(0x0f);
 			out.put(codes_for(in.test).taken + 0x10);
@@ -727,7 +727,7 @@ void emitter::lay_out(int code_base)
 
 bool emitter::resolve(int code_base, int data_base)
 {
-	const bool relative = machine == cc_machine::x64;
+	const bool relative = machine == cc_machine_x64;
 
 	const auto put_word = [&](int at, int value)
 	{

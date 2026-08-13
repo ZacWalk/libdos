@@ -112,6 +112,11 @@ when a review turns one up, add it here rather than in AGENTS.md.
   `malloc` is a bump allocator that never reuses, `getenv` always fails, and
   `printf` accepts width and precision but ignores them. The list of what a
   real program still asks for is under the memory model below.
+- The compiler is C++ and so cannot be its own input. Rewriting it in C and
+  then feeding it to itself is planned in [docs/selfhost.md](selfhost.md). What
+  stands in the way, in the compiler itself, is struct assignment, struct
+  parameters and struct returns, and a front end that honours the target's int
+  and pointer widths instead of assuming two bytes.
 
 ## Running a large program: the memory model
 
