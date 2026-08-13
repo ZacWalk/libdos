@@ -639,6 +639,8 @@ namespace
 		                      int extra = 0);
 		bool operate_from_memory(tok what, const value& right);
 		void promote_locals();
+		void fold_address_copies(int first, int last);
+		std::vector<bool> live_registers(int first, int last, int which) const;
 
 		value expression();
 		value assignment_expression();
@@ -3413,6 +3415,137 @@ namespace
 				put(prologue_slots_ + 2 + n, operand::in(registers[n]), emitter::frame(chosen[n]));
 			for (const int at : epilogue_slots_)
 				put(at + n, operand::in(registers[n]), emitter::frame(save[n]));
+		}
+
+		fold_address_copies(first, last);
+	}
+
+	// Where a register still matters, worked out backwards over a function.
+	// The instruction list is already a control flow graph: a branch names a
+	// label and a label names an instruction.
+	std::vector<bool> generator::live_registers(int first, int last, int which) const
+	{
+		const auto reads = [&](const instruction& in)
+		{
+			// A helper takes its second 32-bit operand in CX:BX and a DOS call
+			// takes whatever the program put in the registers, so both count.
+			if (in.code == op::call || in.code == op::call_at || in.code == op::interrupt)
+				return true;
+			for (const operand* o : {&in.dest, &in.source})
+			{
+				if (o->kind == operand_kind::memory && (o->reg == which || o->index == which))
+					return true;
+				if (o->kind != operand_kind::reg || o->reg != which) continue;
+				if (o == &in.source) return true;
+				if (in.code != op::mov && in.code != op::lea && in.code != op::pop &&
+					in.code != op::setcc)
+					return true;
+			}
+			return false;
+		};
+		const auto writes = [&](const instruction& in)
+		{
+			return in.dest.kind == operand_kind::reg && in.dest.reg == which &&
+				(in.code == op::mov || in.code == op::lea || in.code == op::pop ||
+					in.code == op::setcc);
+		};
+
+		std::vector<bool> live(size_t(last - first) + 1, false);
+		for (bool changed = true; changed;)
+		{
+			changed = false;
+			for (int k = last - 1; k >= first; --k)
+			{
+				const instruction& in = e_.code[size_t(k)];
+				bool out = false;
+				if (in.code != op::ret)
+				{
+					if (in.code != op::jmp) out = live[size_t(k + 1 - first)];
+					if ((in.code == op::jmp || in.code == op::jcc) && in.label >= 0)
+					{
+						const int target = e_.labels[size_t(in.label)];
+						out = out || target < first || target >= last ||
+							live[size_t(target - first)];
+					}
+				}
+				const bool now = reads(in) || (out && !writes(in));
+				if (now == live[size_t(k - first)]) continue;
+				live[size_t(k - first)] = now;
+				changed = true;
+			}
+		}
+		return live;
+	}
+
+	// Promotion leaves a copy into BX in front of every access through a
+	// pointer that now lives in a register, and SI and DI can address memory
+	// themselves. Removing the copy needs to know that nothing wants BX
+	// afterwards, which is a question about the instruction list rather than
+	// about the parse - the reason for doing this here and not there.
+	void generator::fold_address_copies(int first, int last)
+	{
+		const std::vector<bool> live = live_registers(first, last, reg_b);
+		std::vector<bool> entered(size_t(last - first) + 1, false);
+		for (const int index : e_.labels)
+			if (index >= first && index < last) entered[size_t(index - first)] = true;
+
+		for (int i = first; i + 1 < last; ++i)
+		{
+			instruction& copy = e_.code[size_t(i)];
+			if (copy.code != op::mov || copy.width != 2) continue;
+			if (copy.dest.kind != operand_kind::reg || copy.dest.reg != reg_b) continue;
+			if (copy.source.kind != operand_kind::reg) continue;
+			const int base = copy.source.reg;
+			if (base != reg_si && base != reg_di) continue;
+
+			std::vector<int> uses; // instruction index and side, packed
+			bool settled = false, rejected = false, base_gone = false;
+			for (int k = i + 1; k < last && !settled && !rejected; ++k)
+			{
+				const instruction& in = e_.code[size_t(k)];
+				// Where control can arrive another way, or leave, the question
+				// is not what the next instruction does but whether BX is
+				// wanted at all from here on.
+				if (entered[size_t(k - first)] || in.code == op::literal ||
+					in.code == op::jmp || in.code == op::jcc || in.code == op::ret ||
+					in.code == op::call || in.code == op::call_at || in.code == op::interrupt)
+				{
+					if (live[size_t(k - first)]) rejected = true;
+					settled = true;
+					break;
+				}
+				for (int side = 0; side < 2 && !rejected; ++side)
+				{
+					const operand& o = side == 0 ? in.dest : in.source;
+					if (o.kind == operand_kind::reg && o.reg == reg_b)
+					{
+						if (side == 0 && in.code == op::mov) settled = true;
+						else rejected = true;
+					}
+					else if (o.kind == operand_kind::memory && (o.reg == reg_b || o.index == reg_b))
+					{
+						// The copy is only worth removing if the register it
+						// came from still holds the address at every use.
+						if (o.index != reg_none || base_gone) rejected = true;
+						else uses.push_back(k * 2 + side);
+					}
+				}
+				if (in.code == op::xchg) rejected = true;
+				if (in.dest.kind == operand_kind::reg && in.dest.reg == base &&
+					in.code != op::cmp && in.code != op::test && in.code != op::push)
+					base_gone = true;
+			}
+			if (!settled || rejected || uses.empty()) continue;
+
+			for (const int packed : uses)
+			{
+				instruction& in = e_.code[size_t(packed / 2)];
+				operand& o = packed % 2 == 0 ? in.dest : in.source;
+				o.reg = uint8_t(base);
+			}
+			copy.code = op::nop;
+			copy.dest = {};
+			copy.source = {};
 		}
 	}
 
