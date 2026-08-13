@@ -204,8 +204,12 @@ holding `const cc_tok end = tok_end;` and the rest. Every one of those 577 sites
 keeps compiling untouched, a const enum variable is still a valid `case` label,
 and the only edits needed are the places `tok` was used as a *type* - a
 namespace and a type cannot share a name. The shim goes when the file that needs
-it becomes C. `op::`, `condition::`, `operand_kind::` and `reference_kind::`
-will go the same way.
+it becomes C.
+
+Where a shim will not do - `op::mov` had to become `op_mov` because `op` is also
+a type the parser names - the rename is done by a throwaway Python script and
+checked by the fingerprint. That is what the emitter's 490 call sites took: one
+script, one build, no diff in the output.
 
 0. **Pin the current behaviour.** `tools/cc-fingerprint.ps1` compiles a corpus -
    bench.c at three settings, the shell, hello - and records the size and hash
@@ -222,14 +226,16 @@ will go the same way.
    interned `name` for comparison and a `text` pointer for printing, and a
    string literal carries its length because it may contain a NUL. The
    file-name table is gone: a token's `file` is an interned pointer. *(done)*
-5. **`emit.h`/`emit.cpp`/`emit-x64.cpp`** (1,400 lines). The operand factories
-   become `operand_in(int r)` and the ~140 shape helpers become `cc_emit_*`
-   functions, reached from the parser through the same kind of shim until the
-   parser follows.
+5. **`emit.h`/`emit.c`/`emit-x64.c`** - the instruction list and both encoders.
+   The operand factories became `operand_in(int r)` and the ~140 shape helpers
+   `emit_*(emitter* e, ...)`; the five vectors became `cc_list`s reached through
+   `EMIT_CODE`/`EMIT_LABEL`/`EMIT_IMAGE`. The 490 call sites in the parser were
+   rewritten by a one-shot Python script rather than by hand. *(done)*
 6. **`gen.cpp`** (4,400 lines), the bulk. `class generator` becomes
-   `struct generator` and every method a function taking `generator* g`. Do it
-   in passes over the file rather than all at once: fields first, then lambdas,
-   then strings, then the maps.
+   `struct generator` and every method a function taking `generator* g`. Write
+   `gen.c` alongside the C++ file and leave it out of the build until it is
+   finished, so the suite stays green the whole way through; swap the two in
+   one commit at the end.
 7. **`cc.h`** - the public header, `extern "C"`, no `std::` in the signature.
    `cli/main.cpp` changes with it.
 8. **`build-cc.ps1`** (below), building the same sources outside MSBuild.
