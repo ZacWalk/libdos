@@ -610,6 +610,14 @@ int emit_encode_x64(const emitter* e, instruction* in, int position, cc_list* in
 			x64_put(&out, reloaded[i]);
 			x64_dword(&out, CC_NATIVE_REGISTERS + at[i] * 2);
 		}
+
+		/* A DOS call answers in the carry flag, and the caller reads it right
+		 * after this. Shifting the byte the host set puts its bottom bit there,
+		 * and nothing between here and the test disturbs it. */
+		x64_put(&out, 0x41);
+		x64_put(&out, 0xd0);
+		x64_put(&out, 0xaf); /* shr byte [r15 + carry], 1 */
+		x64_dword(&out, CC_NATIVE_CARRY);
 		break;
 	}
 
