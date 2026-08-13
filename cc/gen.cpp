@@ -123,6 +123,21 @@ namespace
 		int offset;
 	};
 
+	// A goto label and the code label it was given, looked up by interned name.
+	struct goto_label
+	{
+		int name;
+		int label;
+	};
+
+	// What the register allocator knows about one frame slot.
+	struct slot_use
+	{
+		int offset;
+		int uses;
+		bool rejected;
+	};
+
 	struct switch_context
 	{
 		int temporary = 0;
@@ -297,7 +312,7 @@ namespace
 		std::vector<symbol> symbols_;
 		std::vector<string_entry> strings_;
 		std::vector<function_fixup> function_fixups_;
-		std::map<int, int> labels_;
+		std::vector<goto_label> labels_;
 		std::vector<std::pair<int, int>> pending_gotos_;
 		std::vector<int> break_labels_;
 		std::vector<int> continue_labels_;
@@ -460,6 +475,23 @@ namespace
 
 		// A name the compiler makes up for itself, such as a runtime thunk's.
 		int intern(const char* text) const { return cc_intern(tokens_.names, text, -1); }
+
+		// The code label a goto or a label statement names, made on first mention
+		// because either one can come first.
+		int label_for(int name)
+		{
+			for (size_t i = 0; i < labels_.size(); ++i)
+				if (labels_[i].name == name) return labels_[i].label;
+			labels_.push_back({name, emit_label(&e_)});
+			return labels_.back().label;
+		}
+
+		int label_if_known(int name) const
+		{
+			for (size_t i = 0; i < labels_.size(); ++i)
+				if (labels_[i].name == name) return labels_[i].label;
+			return -1;
+		}
 
 		int find(int name) const
 		{
@@ -1602,7 +1634,7 @@ namespace
 		// function has to be put aside for the length of it.
 		const size_t saved_at = at_;
 		const int saved_return = return_type_;
-		std::map<int, int> saved_labels;
+		std::vector<goto_label> saved_labels;
 		std::vector<std::pair<int, int>> saved_gotos;
 		std::vector<int> saved_breaks, saved_continues;
 		saved_labels.swap(labels_);
@@ -3397,8 +3429,9 @@ namespace
 				if (weight[size_t(k - first)] < 512) weight[size_t(k - first)] *= 8;
 		}
 
-		std::map<int, int> uses;
-		std::map<int, bool> rejected;
+		// One entry per frame slot the body touches, kept in slot order so that
+		// what comes out of the ranking does not depend on how a table hashed.
+		std::vector<slot_use> slots;
 		for (int i = first; i < last; ++i)
 		{
 			const instruction& in = EMIT_CODE(e_, int(i));
@@ -3415,14 +3448,19 @@ namespace
 				// An address that escapes reaches slots this pass cannot see,
 				// so one of them anywhere in the body settles the question.
 				if (in.code == op_lea) return;
-				if (in.width != 2) rejected[o->value] = true;
-				else uses[o->value] += weight[size_t(i - first)];
+
+				size_t at = 0;
+				while (at < slots.size() && slots[at].offset < o->value) ++at;
+				if (at == slots.size() || slots[at].offset != o->value)
+					slots.insert(slots.begin() + ptrdiff_t(at), {o->value, 0, false});
+				if (in.width != 2) slots[at].rejected = true;
+				else slots[at].uses += weight[size_t(i - first)];
 			}
 		}
 
 		std::vector<std::pair<int, int>> ranked;
-		for (const auto& entry : uses)
-			if (!rejected[entry.first]) ranked.emplace_back(entry.second, entry.first);
+		for (size_t i = 0; i < slots.size(); ++i)
+			if (!slots[i].rejected) ranked.emplace_back(slots[i].uses, slots[i].offset);
 		std::sort(ranked.begin(), ranked.end(), std::greater<std::pair<int, int>>());
 
 		// A register costs one save, one restore per return and, for a
@@ -3430,10 +3468,10 @@ namespace
 		const int registers[2] = {reg_si, reg_di};
 		int chosen[2] = {0, 0};
 		int count = 0;
-		for (const auto& entry : ranked)
+		for (size_t i = 0; i < ranked.size(); ++i)
 		{
-			if (count == 2 || entry.first < 4 + int(epilogue_slots_.size())) break;
-			chosen[count++] = entry.second;
+			if (count == 2 || ranked[i].first < 4 + int(epilogue_slots_.size())) break;
+			chosen[count++] = ranked[i].second;
 		}
 		if (count == 0) return;
 
@@ -3825,8 +3863,8 @@ namespace
 
 		for (size_t i = 0; i < pending_gotos_.size(); ++i)
 		{
-			const auto found = labels_.find(pending_gotos_[i].first);
-			if (found == labels_.end() || !emit_is_bound(&e_, found->second))
+			const int label = label_if_known(pending_gotos_[i].first);
+			if (label < 0 || !emit_is_bound(&e_, label))
 				fail(("undefined label: " + std::string(name_text(pending_gotos_[i].first))).c_str());
 		}
 		pending_gotos_.clear();
@@ -4225,9 +4263,8 @@ namespace
 			const int name = peek().name;
 			advance();
 			expect(tok::semicolon, "expected ; after goto");
-			if (labels_.find(name) == labels_.end()) labels_[name] = emit_label(&e_);
 			pending_gotos_.emplace_back(name, 0);
-			emit_jump(&e_, labels_[name]);
+			emit_jump(&e_, label_for(name));
 			return;
 		}
 
@@ -4260,8 +4297,7 @@ namespace
 		if (kind() == tok::identifier && peek(1).kind == tok::colon)
 		{
 			const int name = peek().name;
-			if (labels_.find(name) == labels_.end()) labels_[name] = emit_label(&e_);
-			emit_bind(&e_, labels_[name]);
+			emit_bind(&e_, label_for(name));
 			advance();
 			advance();
 			if (kind() != tok::r_brace) statement();
