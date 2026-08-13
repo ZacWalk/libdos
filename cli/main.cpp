@@ -1902,6 +1902,311 @@ namespace
 		return 0;
 	}
 
+	// ---- a Windows executable around a compiled block ----
+	//
+	// The x64 back end produces the same one-segment image the DOS back end
+	// does, so an .exe is that block plus two pieces of glue: a startup that
+	// hands the program the address of its own block, and a service routine
+	// that turns the INT 21h calls into Windows ones. Nothing is relocated, so
+	// the loader has to honour the image base - which is what lets every
+	// address in here be written now rather than at load time.
+	struct pe_writer
+	{
+		static const uint64_t image_base = 0x400000;
+		static const uint32_t section_rva = 0x1000;
+		static const uint32_t block_size = 0x10000; // code, data and stack
+
+		std::vector<uint8_t> body; // the one section, from section_rva onwards
+		std::vector<std::pair<uint32_t, uint32_t>> calls; // where a call is, and the IAT slot it wants
+
+		uint32_t at() const { return uint32_t(body.size()); }
+		uint32_t rva() const { return section_rva + at(); }
+		void u8(int v) { body.push_back(uint8_t(v)); }
+		void u16(int v) { u8(v & 0xff); u8((v >> 8) & 0xff); }
+		void u32(uint32_t v) { u16(int(v & 0xffff)); u16(int((v >> 16) & 0xffff)); }
+		void u64(uint64_t v) { u32(uint32_t(v)); u32(uint32_t(v >> 32)); }
+		void run(std::initializer_list<int> bytes) { for (const int b : bytes) u8(b); }
+		void align(uint32_t to) { while (at() % to != 0) u8(0); }
+
+		// call [rip + slot], which is how an import is reached.
+		void call_import(uint32_t slot)
+		{
+			run({0xff, 0x15});
+			calls.emplace_back(at(), slot);
+			u32(0);
+		}
+
+		void patch(uint32_t position, uint32_t value)
+		{
+			body[position] = uint8_t(value & 0xff);
+			body[position + 1] = uint8_t((value >> 8) & 0xff);
+			body[position + 2] = uint8_t((value >> 16) & 0xff);
+			body[position + 3] = uint8_t((value >> 24) & 0xff);
+		}
+	};
+
+	// The service routine, called the same way the in-process one is: the block
+	// in RCX and the interrupt number in EDX. Only the volatile registers are
+	// touched, because every other one is holding something of the guest's.
+	void write_service(pe_writer& pe, uint32_t std_handle, uint32_t write_file, uint32_t exit_process)
+	{
+		std::vector<uint32_t> to_end;
+
+		pe.run({0x48, 0x83, 0xec, 0x48}); // sub rsp, 48h - shadow space and three locals
+		pe.run({0x48, 0x89, 0x4c, 0x24, 0x30}); // mov [rsp+30h], rcx - the block
+		pe.run({0xc6, 0x81}); // mov byte [rcx + carry], 0
+		pe.u32(CC_NATIVE_CARRY);
+		pe.u8(0);
+
+		pe.run({0x83, 0xfa, 0x21}); // cmp edx, 21h
+		pe.run({0x75});
+		const uint32_t not_dos = pe.at();
+		pe.u8(0);
+
+		pe.run({0x0f, 0xb7, 0x81}); // movzx eax, word [rcx + registers]
+		pe.u32(CC_NATIVE_REGISTERS);
+		pe.run({0xc1, 0xe8, 0x08}); // shr eax, 8 - the service is in AH
+
+		pe.run({0x83, 0xf8, 0x02, 0x74}); // cmp eax, 2 / je
+		const uint32_t to_character = pe.at();
+		pe.u8(0);
+		pe.run({0x83, 0xf8, 0x09, 0x74}); // cmp eax, 9 / je
+		const uint32_t to_string = pe.at();
+		pe.u8(0);
+		pe.run({0x83, 0xf8, 0x4c, 0x74}); // cmp eax, 4Ch / je
+		const uint32_t to_exit = pe.at();
+		pe.u8(0);
+		pe.run({0xeb});
+		to_end.push_back(pe.at());
+		pe.u8(0);
+
+		// One character: the byte is DL, which is already in the block.
+		const uint32_t character = pe.at();
+		pe.body[to_character] = uint8_t(character - to_character - 1);
+		pe.run({0xb9, 0xf5, 0xff, 0xff, 0xff}); // mov ecx, -11 - the standard output
+		pe.call_import(std_handle);
+		pe.run({0x48, 0x89, 0xc1}); // mov rcx, rax
+		pe.run({0x48, 0x8b, 0x54, 0x24, 0x30}); // mov rdx, [rsp+30h]
+		pe.run({0x48, 0x81, 0xc2}); // add rdx, <the low byte of DX>
+		pe.u32(CC_NATIVE_REGISTERS + 6);
+		pe.run({0x41, 0xb8, 0x01, 0x00, 0x00, 0x00}); // mov r8d, 1
+		pe.run({0x4c, 0x8d, 0x4c, 0x24, 0x28}); // lea r9, [rsp+28h] - bytes written
+		pe.run({0x48, 0xc7, 0x44, 0x24, 0x20, 0x00, 0x00, 0x00, 0x00}); // mov qword [rsp+20h], 0
+		pe.call_import(write_file);
+		pe.run({0xeb});
+		to_end.push_back(pe.at());
+		pe.u8(0);
+
+		// A $-terminated string, a character at a time: the cursor lives on the
+		// stack because every register that would survive a call is the
+		// guest's.
+		const uint32_t string = pe.at();
+		pe.body[to_string] = uint8_t(string - to_string - 1);
+		pe.run({0x4c, 0x8b, 0x54, 0x24, 0x30}); // mov r10, [rsp+30h]
+		pe.run({0x41, 0x0f, 0xb7, 0x82}); // movzx eax, word [r10 + dx]
+		pe.u32(CC_NATIVE_REGISTERS + 6);
+		pe.run({0x49, 0x01, 0xc2}); // add r10, rax
+		pe.run({0x4c, 0x89, 0x54, 0x24, 0x38}); // mov [rsp+38h], r10
+
+		const uint32_t loop = pe.at();
+		pe.run({0x4c, 0x8b, 0x54, 0x24, 0x38}); // mov r10, [rsp+38h]
+		pe.run({0x41, 0x80, 0x3a, 0x24}); // cmp byte [r10], '$'
+		pe.run({0x74});
+		to_end.push_back(pe.at());
+		pe.u8(0);
+		pe.run({0xb9, 0xf5, 0xff, 0xff, 0xff}); // mov ecx, -11
+		pe.call_import(std_handle);
+		pe.run({0x48, 0x89, 0xc1}); // mov rcx, rax
+		pe.run({0x48, 0x8b, 0x54, 0x24, 0x38}); // mov rdx, [rsp+38h]
+		pe.run({0x41, 0xb8, 0x01, 0x00, 0x00, 0x00}); // mov r8d, 1
+		pe.run({0x4c, 0x8d, 0x4c, 0x24, 0x28}); // lea r9, [rsp+28h]
+		pe.run({0x48, 0xc7, 0x44, 0x24, 0x20, 0x00, 0x00, 0x00, 0x00}); // mov qword [rsp+20h], 0
+		pe.call_import(write_file);
+		pe.run({0x48, 0xff, 0x44, 0x24, 0x38}); // inc qword [rsp+38h]
+		pe.run({0xeb});
+		pe.u8(int(int8_t(int(loop) - int(pe.at()) - 1)));
+
+		// Terminate, which does not come back.
+		const uint32_t finish = pe.at();
+		pe.body[to_exit] = uint8_t(finish - to_exit - 1);
+		pe.run({0x4c, 0x8b, 0x54, 0x24, 0x30}); // mov r10, [rsp+30h]
+		pe.run({0x41, 0x0f, 0xb7, 0x8a}); // movzx ecx, word [r10 + ax]
+		pe.u32(CC_NATIVE_REGISTERS);
+		pe.run({0x81, 0xe1, 0xff, 0x00, 0x00, 0x00}); // and ecx, 255
+		pe.call_import(exit_process);
+
+		const uint32_t end = pe.at();
+		pe.body[not_dos] = uint8_t(end - not_dos - 1);
+		for (const uint32_t branch : to_end) pe.body[branch] = uint8_t(end - branch - 1);
+		pe.run({0x48, 0x83, 0xc4, 0x48}); // add rsp, 48h
+		pe.run({0xc3}); // ret
+	}
+
+	bool write_executable(const std::vector<uint8_t>& image, const char* path)
+	{
+		if (image.size() > pe_writer::block_size) return false;
+
+		pe_writer pe;
+		pe.body.assign(image.begin(), image.end());
+		pe.body.resize(pe_writer::block_size, 0);
+
+		// The startup the loader enters: the block is the image itself, and the
+		// program's answer becomes the process's.
+		const uint32_t entry_rva = pe.rva();
+		pe.run({0x48, 0x83, 0xec, 0x28}); // sub rsp, 28h - alignment and shadow space
+		pe.run({0x48, 0xb9}); // mov rcx, <the block>
+		pe.u64(pe_writer::image_base + pe_writer::section_rva);
+		pe.run({0x48, 0xb8}); // mov rax, <the program's own entry>
+		pe.u64(pe_writer::image_base + pe_writer::section_rva);
+		pe.run({0xff, 0xd0}); // call rax
+		pe.run({0x0f, 0xb7, 0xc8}); // movzx ecx, ax
+		const uint32_t exit_call = pe.at();
+		pe.run({0xff, 0x15, 0x00, 0x00, 0x00, 0x00});
+		pe.run({0xcc}); // not reached
+
+		// The imports, laid out before the service routine so their slots are
+		// known while it is being written.
+		pe.align(8);
+		const uint32_t iat_rva = pe.rva();
+		const uint32_t iat_at = pe.at();
+		for (int i = 0; i < 4; ++i) pe.u64(0); // three imports and the terminator
+
+		const uint32_t std_handle = iat_rva;
+		const uint32_t write_file = iat_rva + 8;
+		const uint32_t exit_process = iat_rva + 16;
+
+		const uint32_t service_rva = pe.rva();
+		write_service(pe, std_handle, write_file, exit_process);
+		pe.calls.emplace_back(exit_call + 2, exit_process);
+
+		// The import directory, its lookup table and the names.
+		pe.align(8);
+		const uint32_t lookup_rva = pe.rva();
+		const uint32_t lookup_at = pe.at();
+		for (int i = 0; i < 4; ++i) pe.u64(0);
+
+		pe.align(4);
+		const uint32_t descriptors_rva = pe.rva();
+		const uint32_t descriptors_at = pe.at();
+		for (int i = 0; i < 10; ++i) pe.u32(0); // one descriptor and the terminator
+
+		const char* names[3] = {"GetStdHandle", "WriteFile", "ExitProcess"};
+		uint32_t name_rva[3] = {};
+		for (int i = 0; i < 3; ++i)
+		{
+			pe.align(2);
+			name_rva[i] = pe.rva();
+			pe.u16(0); // the hint
+			for (const char* c = names[i]; *c != 0; ++c) pe.u8(*c);
+			pe.u8(0);
+		}
+		const uint32_t library_rva = pe.rva();
+		for (const char* c = "KERNEL32.dll"; *c != 0; ++c) pe.u8(*c);
+		pe.u8(0);
+		pe.align(16);
+
+		for (int i = 0; i < 3; ++i)
+		{
+			pe.patch(iat_at + i * 8, name_rva[i]);
+			pe.patch(lookup_at + i * 8, name_rva[i]);
+		}
+		pe.patch(descriptors_at, lookup_rva); // OriginalFirstThunk
+		pe.patch(descriptors_at + 12, library_rva); // Name
+		pe.patch(descriptors_at + 16, iat_rva); // FirstThunk
+
+		// The program reaches the host the same way it does in process: through
+		// a function pointer at the top of its own block.
+		{
+			const uint64_t service = pe_writer::image_base + service_rva;
+			memcpy(&pe.body[CC_NATIVE_SERVICE], &service, sizeof(service));
+		}
+
+		// Every call into the import table is relative to the instruction after
+		// it, and both ends are inside the image.
+		for (const auto& call : pe.calls)
+			pe.patch(call.first, call.second - (pe_writer::section_rva + call.first + 4));
+
+		const uint32_t file_alignment = 0x200;
+		const uint32_t headers = 0x200;
+		const uint32_t raw_size = (uint32_t(pe.body.size()) + file_alignment - 1) / file_alignment *
+			file_alignment;
+		const uint32_t image_size = (pe_writer::section_rva + uint32_t(pe.body.size()) + 0xfff) /
+			0x1000 * 0x1000;
+
+		std::vector<uint8_t> file(headers, 0);
+		const auto put16 = [&](uint32_t at, int v)
+		{
+			file[at] = uint8_t(v & 0xff);
+			file[at + 1] = uint8_t((v >> 8) & 0xff);
+		};
+		const auto put32 = [&](uint32_t at, uint32_t v)
+		{
+			put16(at, int(v & 0xffff));
+			put16(at + 2, int((v >> 16) & 0xffff));
+		};
+		const auto put64 = [&](uint32_t at, uint64_t v)
+		{
+			put32(at, uint32_t(v));
+			put32(at + 4, uint32_t(v >> 32));
+		};
+
+		file[0] = 'M';
+		file[1] = 'Z';
+		put32(0x3c, 0x40); // where the real header is
+
+		uint32_t p = 0x40;
+		file[p] = 'P';
+		file[p + 1] = 'E';
+		p += 4;
+		put16(p, 0x8664); // machine
+		put16(p + 2, 1); // one section
+		put16(p + 16, 0xf0); // the optional header's size
+		put16(p + 18, 0x0023); // executable, relocations stripped, large address aware
+		p += 20;
+
+		const uint32_t optional = p;
+		put16(optional, 0x20b); // PE32+
+		put32(optional + 4, raw_size); // size of code
+		put32(optional + 16, entry_rva);
+		put32(optional + 20, pe_writer::section_rva); // base of code
+		put64(optional + 24, pe_writer::image_base);
+		put32(optional + 32, 0x1000); // section alignment
+		put32(optional + 36, file_alignment);
+		put16(optional + 40, 6); // the oldest Windows this asks for
+		put16(optional + 48, 6);
+		put32(optional + 56, image_size);
+		put32(optional + 60, headers);
+		put16(optional + 68, 3); // a console program
+		put64(optional + 72, 0x100000); // stack reserve
+		put64(optional + 80, 0x1000); // stack commit
+		put64(optional + 88, 0x100000); // heap reserve
+		put64(optional + 96, 0x1000); // heap commit
+		put32(optional + 108, 16); // how many directories follow
+
+		const uint32_t directories = optional + 112;
+		put32(directories + 8, descriptors_rva); // the import directory
+		put32(directories + 12, 40);
+		put32(directories + 96, iat_rva); // and the table it fills in
+		put32(directories + 100, 32);
+
+		const uint32_t section = optional + 0xf0;
+		memcpy(&file[section], ".text\0\0", 8);
+		put32(section + 8, uint32_t(pe.body.size())); // virtual size
+		put32(section + 12, pe_writer::section_rva);
+		put32(section + 16, raw_size);
+		put32(section + 20, headers); // where it is in the file
+		put32(section + 36, 0xe0000060); // code and data, read, write, execute
+
+		file.insert(file.end(), pe.body.begin(), pe.body.end());
+		file.resize(headers + raw_size, 0);
+
+		FILE* out = nullptr;
+		if (fopen_s(&out, path, "wb") != 0 || out == nullptr) return false;
+		fwrite(file.data(), 1, file.size(), out);
+		fclose(out);
+		return true;
+	}
+
 	// Compiles for the machine this is running on and calls the result. The
 	// same source through the same front end and a different back end has to
 	// give the same answer the emulator gave, which is the only claim a second
@@ -1939,6 +2244,33 @@ namespace
 			return 1;
 		}
 		printf("returned %d in %.3f ms\n", answer, milliseconds_since(started));
+		return 0;
+	}
+
+	// The same image, written out as something Windows will load itself.
+	int cc_exe_command(const char* path, const char* output, const std::vector<std::string>& includes,
+	                   const std::vector<std::string>& defines)
+	{
+		cc_options options = default_options();
+		options.machine = cc_machine_x64;
+		std::vector<uint8_t> image;
+		if (!compile_file(path, includes, defines, image, false, options)) return 1;
+
+		char target[MAX_PATH] = {};
+		if (output != nullptr) snprintf(target, sizeof(target), "%s", output);
+		else
+		{
+			snprintf(target, sizeof(target), "%s", path);
+			char* dot = strrchr(target, '.');
+			if (dot != nullptr) snprintf(dot, sizeof(target) - size_t(dot - target), ".exe");
+		}
+
+		if (!write_executable(image, target))
+		{
+			printf("Cannot write %s\n", target);
+			return 1;
+		}
+		printf("Wrote %s\n", target);
 		return 0;
 	}
 
@@ -2203,6 +2535,8 @@ namespace
 			"  ovrwincli --ccbench <file.c> [-I dir] [-D name=value]\n"
 			"                                         compile, run, and report size and work\n"
 			"  ovrwincli --ccnative <file.c> [--dump] compile for this machine and run it\n"
+			"  ovrwincli --ccexe <file.c> [-o out.exe] [-I dir] [-D name=value]\n"
+			"                                         compile to a Windows executable\n"
 			"  ovrwincli --info <file>                describe a DOS executable\n"
 			"  ovrwincli --disasm <file> [count]      disassemble from the entry point\n"
 			"  ovrwincli --run <file> [options]       run headlessly\n"
@@ -2297,6 +2631,21 @@ int main(int argc, char** argv)
 			else if (strcmp(argv[i], "--dump") == 0) dump = true;
 		}
 		return cc_native_command(argv[2], includes, defines, dump);
+	}
+	if (strcmp(command, "--ccexe") == 0 && argc > 2)
+	{
+		const char* output = nullptr;
+		std::vector<std::string> includes;
+		std::vector<std::string> defines;
+		for (int i = 3; i < argc; ++i)
+		{
+			if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) output = argv[++i];
+			else if (strcmp(argv[i], "-I") == 0 && i + 1 < argc) includes.emplace_back(argv[++i]);
+			else if (strcmp(argv[i], "-D") == 0 && i + 1 < argc) defines.emplace_back(argv[++i]);
+			else if (strncmp(argv[i], "-D", 2) == 0) defines.emplace_back(argv[i] + 2);
+			else if (strncmp(argv[i], "-I", 2) == 0) includes.emplace_back(argv[i] + 2);
+		}
+		return cc_exe_command(argv[2], output, includes, defines);
 	}
 	if (strcmp(command, "--info") == 0 && argc > 2) return show_info(argv[2]);	if (strcmp(command, "--disasm") == 0 && argc > 2)
 		return disassemble_file(argv[2], argc > 3 ? atoi(argv[3]) : 32);
