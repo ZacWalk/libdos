@@ -280,7 +280,22 @@ void emitter::drop(int first, int last) { dropped_.emplace_back(first, last); }
 
 // Writes one instruction, or counts its bytes when `into` is null. `position`
 // is where it starts, which only a relative branch needs.
-int emitter::encode(const instruction& in, int position, std::vector<uint8_t>* into) const
+int emitter::encode(instruction& in, int position, std::vector<uint8_t>* into) const
+{
+	in.fixup = 0;
+	return machine == cc_machine::x64 ? encode_x64(in, position, into)
+	                                 : encode_8086(in, position, into);
+}
+
+// How long a branch is before the layout pass has tried to shorten it.
+int emitter::branch_length(op code) const
+{
+	if (machine == cc_machine::x64) return code == op::jmp ? 5 : 6;
+	if (code == op::jmp) return 3;
+	return cpu >= cc_cpu::i80386 ? 4 : 5;
+}
+
+int emitter::encode_8086(instruction& in, int position, std::vector<uint8_t>* into) const
 {
 	sink out{into};
 	const int w = in.width == 1 ? 0 : 1;
@@ -309,7 +324,11 @@ int emitter::encode(const instruction& in, int position, std::vector<uint8_t>* i
 		int rm = 0, mod = 0;
 		memory_form(o, rm, mod);
 		out.put((mod << 6) | (field << 3) | rm);
-		if (mod == 0 && rm == 6) out.word(value_of(o));
+		if (mod == 0 && rm == 6)
+		{
+			in.fixup = out.count;
+			out.word(value_of(o));
+		}
 		else if (mod == 1) out.put(o.value & 0xff);
 		else if (mod == 2) out.word(o.value);
 	};
@@ -338,6 +357,7 @@ int emitter::encode(const instruction& in, int position, std::vector<uint8_t>* i
 			in.source.index == reg_none)
 		{
 			out.put(0xa0 + w);
+			in.fixup = out.count;
 			out.word(value_of(in.source));
 			break;
 		}
@@ -346,6 +366,7 @@ int emitter::encode(const instruction& in, int position, std::vector<uint8_t>* i
 			in.dest.index == reg_none)
 		{
 			out.put(0xa2 + w);
+			in.fixup = out.count;
 			out.word(value_of(in.dest));
 			break;
 		}
@@ -552,6 +573,7 @@ int emitter::encode(const instruction& in, int position, std::vector<uint8_t>* i
 
 	case op::call:
 		out.put(0xe8);
+		in.fixup = out.count;
 		out.word(0);
 		break;
 
@@ -564,10 +586,12 @@ int emitter::encode(const instruction& in, int position, std::vector<uint8_t>* i
 		if (in.length == 2)
 		{
 			out.put(0xeb);
+			in.fixup = out.count;
 			out.put(0);
 			break;
 		}
 		out.put(0xe9);
+		in.fixup = out.count;
 		out.word(0);
 		break;
 
@@ -575,6 +599,7 @@ int emitter::encode(const instruction& in, int position, std::vector<uint8_t>* i
 		if (in.length == 2)
 		{
 			out.put(codes_for(in.test).taken);
+			in.fixup = out.count;
 			out.put(0);
 			break;
 		}
@@ -584,15 +609,24 @@ int emitter::encode(const instruction& in, int position, std::vector<uint8_t>* i
 		{
 			out.put(0x0f);
 			out.put(codes_for(in.test).taken + 0x10);
+			in.fixup = out.count;
 			out.word(0);
 			break;
 		}
 		out.put(codes_for(in.test).inverse);
 		out.put(0x03);
 		out.put(0xe9);
+		in.fixup = out.count;
 		out.word(0);
 		break;
 	}
+
+	// An immediate that stands for an address is the last word written; a
+	// displacement recorded its own position as it went.
+	if (in.dest.kind == operand_kind::immediate && in.dest.reference != reference_kind::none)
+		in.fixup = out.count - 2;
+	else if (in.source.kind == operand_kind::immediate && in.source.reference != reference_kind::none)
+		in.fixup = out.count - 2;
 
 	(void)position;
 	return out.count;
@@ -619,8 +653,7 @@ void emitter::lay_out(int code_base)
 	// Every branch starts at its longest, so the pass can only shorten.
 	for (instruction& in : code)
 	{
-		if (in.code == op::jmp) in.length = 3;
-		else if (in.code == op::jcc) in.length = cpu >= cc_cpu::i80386 ? 4 : 5;
+		if (in.code == op::jmp || in.code == op::jcc) in.length = branch_length(in.code);
 		else in.length = 0;
 	}
 
@@ -694,10 +727,23 @@ void emitter::lay_out(int code_base)
 
 bool emitter::resolve(int code_base, int data_base)
 {
+	const bool relative = machine == cc_machine::x64;
+
 	const auto put_word = [&](int at, int value)
 	{
 		image[size_t(at)] = uint8_t(value & 0xff);
 		image[size_t(at) + 1] = uint8_t((value >> 8) & 0xff);
+	};
+	const auto put_long = [&](int at, int value)
+	{
+		put_word(at, value);
+		image[size_t(at) + 2] = uint8_t((value >> 16) & 0xff);
+		image[size_t(at) + 3] = uint8_t((value >> 24) & 0xff);
+	};
+	const auto put_address = [&](int at, int value)
+	{
+		if (relative) put_long(at, value);
+		else put_word(at, value);
 	};
 
 	for (const instruction& in : code)
@@ -711,14 +757,10 @@ bool emitter::resolve(int code_base, int data_base)
 			if (in.label < 0 || labels[size_t(in.label)] < 0) return false;
 			const int index = labels[size_t(in.label)];
 			const int target = index < int(code.size()) ? code[size_t(index)].offset : int(image.size());
-			if (in.length == 2)
-			{
-				image[size_t(in.offset) + 1] = uint8_t(target - (in.offset + 2));
-				continue;
-			}
-			if (in.code == op::jcc)
-				put_word(in.offset + (cpu >= cc_cpu::i80386 ? 2 : 3), target - (in.offset + in.length));
-			else put_word(in.offset + 1, target - (in.offset + in.length));
+			const int displacement = target - (in.offset + in.length);
+			if (in.length == 2) image[size_t(in.offset) + size_t(in.fixup)] = uint8_t(displacement);
+			else if (relative) put_long(in.offset + in.fixup, displacement);
+			else put_word(in.offset + in.fixup, displacement);
 			continue;
 		}
 
@@ -737,19 +779,12 @@ bool emitter::resolve(int code_base, int data_base)
 				value = code_base +
 					(index < int(code.size()) ? code[size_t(index)].offset : int(image.size()));
 			}
-			// An address in a memory operand is the displacement, which follows
-			// the opcode and the mod/rm byte - or the opcode alone in the
-			// accumulator short form. An address used as an immediate is the
-			// last word the instruction wrote.
-			int at = in.offset + in.length - 2;
-			if (o->kind == operand_kind::memory)
-			{
-				const bool accumulator = in.code == op::mov &&
-					((in.dest.kind == operand_kind::reg && in.dest.reg == reg_a && o == &in.source) ||
-						(in.source.kind == operand_kind::reg && in.source.reg == reg_a && o == &in.dest));
-				at = in.offset + (accumulator ? 1 : 2);
-			}
-			put_word(at, value);
+			// Where an address is reached from the instruction after it, what
+			// goes in the field is the distance rather than the address.
+			if (relative && o->kind == operand_kind::memory)
+				value -= code_base + in.offset + in.length;
+			if (o->reference == reference_kind::deferred && !relative) put_word(in.offset + in.fixup, value);
+			else put_address(in.offset + in.fixup, value);
 		}
 	}
 	return true;
