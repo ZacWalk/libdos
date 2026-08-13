@@ -89,6 +89,7 @@ static void cc_options_init(cc_options* options)
  * places are at the top of the block, above the highest address the compiled
  * program itself can reach. */
 #define CC_NATIVE_REGISTERS 0xffe0 /* ax, bx, cx, dx, si, as five words */
+#define CC_NATIVE_CARRY 0xffea /* non-zero when the service failed */
 #define CC_NATIVE_SERVICE 0xfff8 /* void (*)(void* block, int interrupt) */
 
 /* Each define is either NAME or NAME=VALUE, as a command line spells it. */

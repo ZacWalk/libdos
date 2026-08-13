@@ -28,6 +28,7 @@ $corpus = @(
 	@{ Name = 'bench'; Source = 'cc\bench\bench.c'; Args = @() },
 	@{ Name = 'bench-386'; Source = 'cc\bench\bench.c'; Args = @('--cpu', '386') },
 	@{ Name = 'bench-no-inline'; Source = 'cc\bench\bench.c'; Args = @('--no-inline') },
+	@{ Name = 'roundtrip'; Source = 'cc\bench\roundtrip.c'; Args = @() },
 	@{ Name = 'shell'; Source = 'shell\shell.c'; Args = @() },
 	@{ Name = 'hello'; Source = 'shell\hello.c'; Args = @() }
 )
@@ -68,7 +69,9 @@ if (Test-Path $bench)
 	$native = & $cli --ccnative $bench 2>&1
 	foreach ($line in $native)
 	{
-		if ($line -match '^checksum|^returned') { $lines += "{0,-16} {1}" -f 'bench-native', $line }
+		# The time it took is not a fingerprint; what it answered is.
+		if ($line -match '^checksum') { $lines += "{0,-16} {1}" -f 'bench-native', $line }
+		if ($line -match '^returned (\d+)') { $lines += "{0,-16} returned {1}" -f 'bench-native', $Matches[1] }
 	}
 }
 

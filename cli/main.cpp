@@ -10,6 +10,7 @@
 #include "../cc/support.h"
 
 #include <algorithm>
+#include <csetjmp>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -21,6 +22,20 @@ namespace
 {
 	int checks = 0;
 	int failures = 0;
+
+	LARGE_INTEGER now()
+	{
+		LARGE_INTEGER at;
+		QueryPerformanceCounter(&at);
+		return at;
+	}
+
+	double milliseconds_since(LARGE_INTEGER started)
+	{
+		LARGE_INTEGER frequency;
+		QueryPerformanceFrequency(&frequency);
+		return double(now().QuadPart - started.QuadPart) * 1000.0 / double(frequency.QuadPart);
+	}
 
 	void check(bool condition, const char* name)
 	{
@@ -1278,17 +1293,39 @@ namespace
 		}
 	}
 
-	// What a hosted image gets instead of DOS. Only what a compiled program
-	// actually asks for is here: a character out, and a string.
+	// What a hosted image gets instead of DOS. The services are the ones a
+	// compiled program actually asks for, and each is the host's own, so a
+	// native run reads and writes the same files the emulated one does.
 	struct native_registers
 	{
 		uint16_t ax, bx, cx, dx, si;
 	};
 
+	// The generated code calls back with nothing but the block, and there is one
+	// program running at a time, so the host it belongs to is kept here.
+	host_services* native_host = nullptr;
+	jmp_buf native_finished;
+	int native_exit_code = 0;
+
+	// A guest path is relative to the drive the host mounted, and the host wants
+	// it the way DOS spells it.
+	void native_path(const char* text, char* into, size_t size)
+	{
+		if (text[0] != 0 && text[1] == ':') snprintf(into, size, "%s", text);
+		else snprintf(into, size, "C:\\%s", text[0] == '\\' ? text + 1 : text);
+		for (char* at = into; *at != 0; ++at)
+			if (*at >= 'a' && *at <= 'z') *at = char(*at - 'a' + 'A');
+	}
+
 	void native_service(void* block, int number)
 	{
 		uint8_t* memory = static_cast<uint8_t*>(block);
 		native_registers* r = reinterpret_cast<native_registers*>(memory + CC_NATIVE_REGISTERS);
+		uint8_t* carry = memory + CC_NATIVE_CARRY;
+		char path[MAX_PATH] = {};
+		int result = 0;
+
+		*carry = 0;
 		if (number != 0x21) return;
 
 		switch ((r->ax >> 8) & 0xff)
@@ -1297,10 +1334,57 @@ namespace
 			putchar(r->dx & 0xff);
 			r->ax = uint16_t((r->ax & 0xff00) | (r->dx & 0xff));
 			break;
+
 		case 0x09:
 			for (int at = r->dx; at < 0x10000 && memory[at] != '$'; ++at) putchar(memory[at]);
 			break;
+
+		case 0x3c: // create
+			native_path(reinterpret_cast<const char*>(memory + r->dx), path, sizeof(path));
+			result = native_host != nullptr ? native_host->file_create(path, uint8_t(r->cx)) : -1;
+			if (result < 0) *carry = 1;
+			r->ax = uint16_t(result < 0 ? 3 : result);
+			break;
+
+		case 0x3d: // open
+			native_path(reinterpret_cast<const char*>(memory + r->dx), path, sizeof(path));
+			result = native_host != nullptr ? native_host->file_open(path, r->ax & 0xff) : -1;
+			if (result < 0) *carry = 1;
+			r->ax = uint16_t(result < 0 ? 2 : result);
+			break;
+
+		case 0x3e: // close
+			if (native_host != nullptr) native_host->file_close(r->bx);
+			break;
+
+		case 0x3f: // read
+			result = native_host != nullptr
+				         ? native_host->file_read(r->bx, memory + r->dx, r->cx)
+				         : -1;
+			if (result < 0) *carry = 1;
+			r->ax = uint16_t(result < 0 ? 5 : result);
+			break;
+
+		case 0x40: // write
+			result = native_host != nullptr
+				         ? native_host->file_write(r->bx, memory + r->dx, r->cx)
+				         : -1;
+			if (result < 0) *carry = 1;
+			r->ax = uint16_t(result < 0 ? 5 : result);
+			break;
+
+		case 0x41: // delete
+			native_path(reinterpret_cast<const char*>(memory + r->dx), path, sizeof(path));
+			if (native_host == nullptr || !native_host->file_delete(path)) *carry = 1;
+			break;
+
+		case 0x4c: // terminate
+			native_exit_code = r->ax & 0xff;
+			longjmp(native_finished, 1);
+
 		default:
+			*carry = 1;
+			r->ax = 1;
 			break;
 		}
 	}
@@ -1334,10 +1418,21 @@ namespace
 		memcpy(static_cast<uint8_t*>(block) + CC_NATIVE_SERVICE, &service, sizeof(service));
 		host.code_commit(block, block_size);
 
-		using entry_point = int (*)(void*);
-		const entry_point run = reinterpret_cast<entry_point>(block);
+		native_host = &host;
+		native_exit_code = 0;
 		fflush(stdout); // the generated code writes straight to the console
-		answer = run(block) & 0xffff;
+
+		// A program that exits in the middle comes back here instead of
+		// returning; the generated code has no frames worth unwinding.
+		if (setjmp(native_finished) == 0)
+		{
+			using entry_point = int (*)(void*);
+			const entry_point run = reinterpret_cast<entry_point>(block);
+			answer = run(block) & 0xffff;
+		}
+		else answer = native_exit_code;
+
+		native_host = nullptr;
 		host.code_free(block, block_size);
 		return true;
 #endif
@@ -1791,7 +1886,9 @@ namespace
 		m.set_render_enabled(false);
 
 		machine_state& s = m.state();
+		const LARGE_INTEGER started = now();
 		for (int frame = 0; frame < 36000 && !m.exited(); ++frame) m.exec(m.cycles_per_frame());
+		const double elapsed = milliseconds_since(started);
 		if (!m.exited())
 		{
 			printf("The benchmark did not finish\n");
@@ -1800,6 +1897,7 @@ namespace
 		printf("exit code %u, %llu instructions, %llu cycles\n", s.exit_code,
 		       static_cast<unsigned long long>(s.cpu.instructions),
 		       static_cast<unsigned long long>(s.cycles));
+		printf("emulated in %.3f ms\n", elapsed);
 		if (s.error[0] != 0) printf("first problem: %s\n", s.error);
 		return 0;
 	}
@@ -1824,14 +1922,23 @@ namespace
 		}
 		fflush(stdout); // a fault in generated code takes the process, buffer and all
 
+		// The program's drive is the directory its source came from, which is
+		// where the emulated run would have put it too.
+		char directory[MAX_PATH] = {};
+		char name[MAX_PATH] = {};
+		split_path(path, directory, MAX_PATH, name, MAX_PATH);
+
 		win32_host host;
+		host.set_root(directory);
+
 		int answer = 0;
+		const LARGE_INTEGER started = now();
 		if (!run_native(image, host, answer))
 		{
 			printf("This build cannot run what it just compiled\n");
 			return 1;
 		}
-		printf("returned %d\n", answer);
+		printf("returned %d in %.3f ms\n", answer, milliseconds_since(started));
 		return 0;
 	}
 
