@@ -59,11 +59,11 @@ struct cc_options
 
 	// Which instructions the generated code may use. A 386 still produces a
 	// 16-bit .COM; it just has more to say it with.
-	cc_cpu cpu = cc_cpu::i8086;
+	cc_cpu cpu = cc_cpu_i8086;
 
 	// What to compile for. x64 produces a block of host machine code to be
 	// called, not a DOS program.
-	cc_machine machine = cc_machine::i8088;
+	cc_machine machine = cc_machine_i8088;
 };
 
 // Each define is either NAME or NAME=VALUE, as a command line spells it.
