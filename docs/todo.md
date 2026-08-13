@@ -115,8 +115,8 @@ ovrwincli --cc doomall.c -I cc\include -DC_ONLY -DFLAT_SPAN -DVIEWWINDOWWIDTH=12
 
 What that says today:
 
-- **152 KiB of code and 74 KiB of data.** The earlier guess here was 500-600 KiB
-  of code; the measurement is a third of that. Three code segments, not nine.
+- **136 KiB of code and 74 KiB of data.** The earlier guess here was 500-600 KiB
+  of code; the measurement is a quarter of that. Three code segments, not nine.
 - The data does **not** fit in one 64 KiB segment either, so the medium model
   Doom8088's own build uses is not quite enough: either the large tables have
   to move to the code segment (they are `const`) or data needs far pointers too.
@@ -136,15 +136,17 @@ would working in offsets help, because the code already works in offsets. The
 limit is narrower than that: a near `CALL` displacement is 16 bits and `CS`
 never changes. What is missing is a memory model, not a linker.
 
-The bookkeeping a memory model needs is now there. `emitter` keeps a **layout
-record** beside the bytes: a table of labels, and a fixup for every branch,
-call and address field. Nothing refers to a byte offset that has been decided,
-so `lay_out()` can choose an encoding for each branch, drop what the program
-cannot reach, move everything that is left, and recompute every label. That is
-the smallest thing that deserves to be called an intermediate representation,
-and it is what the three pieces below all rest on. `--map` prints what came out
-of it: for Doom8088, 583 functions, the largest 3444 bytes, so dividing them
-into three segments is arithmetic.
+The bookkeeping a memory model needs is now there. `emitter` holds an
+**instruction list** rather than bytes: each entry names an operation, a width,
+and operands that may be a register, an immediate, or a memory form, and an
+operand that means an address carries a reference instead of a number. Only
+`emit.cpp` knows an opcode, so `lay_out()` can choose an encoding for each
+branch, drop what the program cannot reach, move everything that is left, and
+recompute every label - and a second back end is another file of the same
+shape. That is the smallest thing that deserves to be called an intermediate
+representation, and it is what the three pieces below all rest on. `--map`
+prints what came out of it: for Doom8088, 583 functions, so dividing them into
+three segments is arithmetic.
 
 Three pieces, smallest first, each independently useful and testable:
 
