@@ -279,10 +279,12 @@ namespace
 			if (options.machine == cc_machine_x64)
 			{
 				target_.machine = cc_machine_x64;
-				target_.frame_base = 16;
+				// The guest's frame holds no return address: a call on the host
+				// puts that on the host's own stack, so an argument is two bytes
+				// above the saved frame pointer rather than four.
+				target_.frame_base = 2;
 				target_.hosted = 1;
 				target_.code_origin = 0;
-				target_.address_limit = 0x7fffffff;
 				target_.cpu = cc_cpu_i80386;
 			}
 			else target_.cpu = options.cpu;
@@ -4316,16 +4318,53 @@ namespace
 	{
 		const int main_index = define(intern("main"), sym_function, t_int_);
 
-		// Code a host calls arrives with a stack already, and returns rather
-		// than exits. RBX, RSI and RDI belong to the caller, and the generator
-		// treats all three as scratch.
+		// Code a host calls arrives with a stack of its own and returns rather
+		// than exits. The block it is given holds the guest's data and stack, and
+		// RBX, RSI, RDI, R13, R14 and R15 all belong to the caller.
 		if (target_.hosted)
 		{
 			emit_byte(&e_, 0x53); // push rbx
 			emit_byte(&e_, 0x56); // push rsi
 			emit_byte(&e_, 0x57); // push rdi
+			emit_byte(&e_, 0x41);
+			emit_byte(&e_, 0x55); // push r13
+			emit_byte(&e_, 0x41);
+			emit_byte(&e_, 0x56); // push r14
+			emit_byte(&e_, 0x41);
+			emit_byte(&e_, 0x57); // push r15
+			emit_byte(&e_, 0x49);
+			emit_byte(&e_, 0x89);
+			emit_byte(&e_, 0xcf); // mov r15, rcx - the block
+
+			// A guest register that holds an address is used as an index, and
+			// the machine adds the whole 64 bits of it. Nothing the generated
+			// code does afterwards writes above bit 15, so clearing them once
+			// here keeps every pointer a 16-bit offset for good.
+			emit_byte(&e_, 0x31);
+			emit_byte(&e_, 0xc0); // xor eax, eax
+			emit_byte(&e_, 0x31);
+			emit_byte(&e_, 0xc9); // xor ecx, ecx
+			emit_byte(&e_, 0x31);
+			emit_byte(&e_, 0xd2); // xor edx, edx
+			emit_byte(&e_, 0x31);
+			emit_byte(&e_, 0xdb); // xor ebx, ebx
+			emit_byte(&e_, 0x31);
+			emit_byte(&e_, 0xf6); // xor esi, esi
+			emit_byte(&e_, 0x31);
+			emit_byte(&e_, 0xff); // xor edi, edi
+
+			emit_mov_sp_imm(&e_, 0);
+			stack_patch_ = emit_refers_to_deferred(&e_);
+
 			emit_call(&e_, label_of(main_index));
 			symbols_[size_t(main_index)].called = true;
+
+			emit_byte(&e_, 0x41);
+			emit_byte(&e_, 0x5f); // pop r15
+			emit_byte(&e_, 0x41);
+			emit_byte(&e_, 0x5e); // pop r14
+			emit_byte(&e_, 0x41);
+			emit_byte(&e_, 0x5d); // pop r13
 			emit_byte(&e_, 0x5f); // pop rdi
 			emit_byte(&e_, 0x5e); // pop rsi
 			emit_byte(&e_, 0x5b); // pop rbx

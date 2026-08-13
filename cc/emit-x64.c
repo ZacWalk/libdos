@@ -6,19 +6,31 @@
  * differ in the things an encoder is made of - the mod/rm table, the prefixes,
  * how far a branch reaches - and agree on nothing but the opcode bytes.
  *
- * The list still says 16 bits, so this emits 16-bit operations: on x64 that is
- * a 66h prefix in front of the same opcodes, which keeps the arithmetic and the
- * flags identical to what the interpreter would have produced. The stack and
- * frame pointers are the exception - those are the host's real RSP and RBP, so
- * anything naming them is 64-bit.
+ * The list says 16 bits, so this emits 16-bit operations: on x64 that is a 66h
+ * prefix in front of the same opcodes, which keeps the arithmetic and the flags
+ * identical to what the interpreter would have produced.
  *
- * What this cannot do is a pointer: the front end still makes them 16 bits
- * wide, so an address that has to survive in a register does not fit. Globals
- * are reached RIP-relative and locals through RBP, which is enough for
- * arithmetic, control flow and calls, and not enough for arrays or pointers.
+ * What makes a pointer work is the block. The front end compiles for the tiny
+ * model - one 64 KiB segment holding code, data and stack - so the host hands
+ * the generated code a 64 KiB block and R15 points at it. A guest pointer is
+ * then a 16-bit offset into that block exactly as it is under DOS, and every
+ * memory reference becomes [r15 + offset]. The two registers that hold offsets
+ * rather than values, SP and BP, become R14 and R13 and are worked on 32 bits
+ * at a time so that writing one clears the top of the register: an index has to
+ * be a whole 64-bit quantity when the machine adds it to R15.
+ *
+ * The host's own stack still carries return addresses, so a call is a call.
+ * Only the data stack - what push, pop and a frame pointer touch - lives in
+ * the block.
  */
 
 #include "emit.h"
+
+/* The register R15 holds the block, and the two guest registers that hold
+ * offsets into it. */
+#define X64_BLOCK 15
+#define X64_SP 14
+#define X64_BP 13
 
 typedef struct x64_sink
 {
@@ -26,7 +38,7 @@ typedef struct x64_sink
 	instruction* in;
 	cc_list* into;
 	int count;
-	int pointer_sized;
+	int offset_sized; /* the operation is on SP or BP, so it is 32 bits wide */
 } x64_sink;
 
 static int is_byte_value(int32_t v)
@@ -79,12 +91,21 @@ static int taken_code(condition c)
 	}
 }
 
-/* Whether an operand names the stack or the frame pointer as a value. Those are
- * the host's own registers and have to stay 64 bits wide; everything else in
- * the list is a 16-bit quantity. */
-static int names_pointer(const operand* o)
+/* A byte operation names AH with the same number SP has, and the front end
+ * never puts an address in a byte register, so the width settles which one is
+ * meant. */
+static int is_offset_register(const operand* o, int width)
 {
-	return o->kind == operand_kind_reg && (o->reg == reg_sp || o->reg == reg_bp);
+	return width != 1 && o->kind == operand_kind_reg && (o->reg == reg_sp || o->reg == reg_bp);
+}
+
+/* Where a guest register lives on the host, and whether that needs a REX bit. */
+static int host_register(int reg, int width)
+{
+	if (width == 1) return reg;
+	if (reg == reg_sp) return X64_SP;
+	if (reg == reg_bp) return X64_BP;
+	return reg;
 }
 
 static void x64_put(x64_sink* out, int value)
@@ -121,55 +142,130 @@ static int32_t x64_value_of(const emitter* e, const operand* o)
 	return o->value;
 }
 
-/* 66h narrows the operation to 16 bits; REX.W widens it to 64. A byte operation
- * needs neither. */
-static void x64_prefix(x64_sink* out)
+/* 66h narrows an operation to 16 bits. An operation on SP or BP is left at 32,
+ * which is also what zeroes the top of the register. */
+static void x64_size(x64_sink* out, int width)
 {
-	if (out->pointer_sized) x64_put(out, 0x48);
-	else if (out->in->width != 1) x64_put(out, 0x66);
+	if (!out->offset_sized && width != 1) x64_put(out, 0x66);
 }
 
-/* The 64-bit mod/rm forms. A displacement off RBP always needs one, and an
- * absolute address becomes a distance from the instruction after this one. */
-static void x64_modrm(x64_sink* out, const operand* o, int field)
+static void x64_rex(x64_sink* out, int w, int reg, int index, int base)
 {
-	int rm;
+	const int rex = 0x40 | (w != 0 ? 8 : 0) | (reg >= 8 ? 4 : 0) | (index >= 8 ? 2 : 0) |
+		(base >= 8 ? 1 : 0);
+	if (rex != 0x40) x64_put(out, rex);
+}
+
+/* A guest address is R15 plus a 16-bit offset, which is a base and an index.
+ * `lea` is the exception: it wants the offset itself, so it leaves R15 out. */
+static void x64_modrm(x64_sink* out, const operand* o, int field, int width, int flat)
+{
+	const int reg_field = field & 7;
 
 	if (o->kind == operand_kind_reg)
 	{
-		x64_put(out, 0xc0 | ((field & 7) << 3) | (o->reg & 7));
+		x64_put(out, 0xc0 | (reg_field << 3) | (host_register(o->reg, width) & 7));
 		return;
 	}
+
+	if (flat)
+	{
+		/* [base + displacement], with no block: the value is an offset. */
+		const int base = host_register(o->reg, 2) & 7;
+		if (is_byte_value(o->value))
+		{
+			x64_put(out, 0x40 | (reg_field << 3) | base);
+			if (base == 4) x64_put(out, 0x24); /* an index of none */
+			x64_put(out, o->value & 0xff);
+			return;
+		}
+		x64_put(out, 0x80 | (reg_field << 3) | base);
+		if (base == 4) x64_put(out, 0x24);
+		x64_dword(out, o->value);
+		return;
+	}
+
 	if (o->reg == reg_none)
 	{
-		x64_put(out, 0x00 | ((field & 7) << 3) | 5); /* RIP-relative */
+		/* An absolute guest address: [r15 + disp32]. */
+		x64_put(out, 0x80 | (reg_field << 3) | 4);
+		x64_put(out, (4 << 3) | (X64_BLOCK & 7)); /* no index, base r15 */
 		out->in->fixup = out->count;
-		x64_dword(out, 0);
+		out->in->fixup_width = 4;
+		x64_dword(out, x64_value_of(out->e, o));
 		return;
 	}
-	rm = o->reg & 7;
-	if (o->value == 0 && rm != reg_bp)
+
+	/* [r15 + guest base + displacement]. */
 	{
-		x64_put(out, 0x00 | ((field & 7) << 3) | rm);
-		return;
+		const int index = host_register(o->reg, 2) & 7;
+		if (o->value == 0)
+		{
+			x64_put(out, 0x00 | (reg_field << 3) | 4);
+			x64_put(out, (index << 3) | (X64_BLOCK & 7));
+			return;
+		}
+		if (is_byte_value(o->value))
+		{
+			x64_put(out, 0x40 | (reg_field << 3) | 4);
+			x64_put(out, (index << 3) | (X64_BLOCK & 7));
+			x64_put(out, o->value & 0xff);
+			return;
+		}
+		x64_put(out, 0x80 | (reg_field << 3) | 4);
+		x64_put(out, (index << 3) | (X64_BLOCK & 7));
+		x64_dword(out, o->value);
 	}
-	if (is_byte_value(o->value))
-	{
-		x64_put(out, 0x40 | ((field & 7) << 3) | rm);
-		x64_put(out, o->value & 0xff);
-		return;
-	}
-	x64_put(out, 0x80 | ((field & 7) << 3) | rm);
-	x64_dword(out, o->value);
 }
 
-/* An immediate is as wide as the operation, except that a pointer-sized one is
- * still only four bytes. */
-static void x64_immediate(x64_sink* out, int32_t value)
+/* The REX an instruction needs, given which operand carries the register field
+ * and which the mod/rm. */
+static void x64_prefix(x64_sink* out, int width, const operand* rm, int reg, int flat)
 {
-	if (out->in->width == 1 && !out->pointer_sized) x64_put(out, value & 0xff);
-	else if (out->pointer_sized) x64_dword(out, value);
+	int index = 0;
+	int base = 0;
+
+	x64_size(out, width);
+
+	if (rm->kind == operand_kind_reg) base = host_register(rm->reg, width);
+	else if (flat) base = host_register(rm->reg, 2);
+	else
+	{
+		base = X64_BLOCK;
+		if (rm->reg != reg_none) index = host_register(rm->reg, 2);
+	}
+	x64_rex(out, 0, reg, index, base);
+}
+
+/* An immediate is as wide as the operation. */
+static void x64_immediate(x64_sink* out, int width, int32_t value)
+{
+	if (out->offset_sized) x64_dword(out, value);
+	else if (width == 1) x64_put(out, value & 0xff);
 	else x64_word(out, value);
+}
+
+static int immediate_width(const x64_sink* out, int width)
+{
+	if (out->offset_sized) return 4;
+	return width == 1 ? 1 : 2;
+}
+
+/* push and pop work on the block, not on the host's stack: sp is a guest
+ * offset, so each becomes an explicit move. */
+static void x64_adjust_sp(x64_sink* out, int by)
+{
+	x64_put(out, 0x41); /* REX.B */
+	x64_put(out, 0x83);
+	x64_put(out, by < 0 ? 0xee : 0xc6); /* sub/add r14d, imm8 */
+	x64_put(out, (by < 0 ? -by : by) & 0xff);
+}
+
+/* [r15 + r14], the top of the guest stack. */
+static void x64_stack_slot(x64_sink* out, int reg_field)
+{
+	x64_put(out, 0x00 | ((reg_field & 7) << 3) | 4);
+	x64_put(out, ((X64_SP & 7) << 3) | (X64_BLOCK & 7));
 }
 
 int emit_encode_x64(const emitter* e, instruction* in, int position, cc_list* into)
@@ -180,7 +276,8 @@ int emit_encode_x64(const emitter* e, instruction* in, int position, cc_list* in
 	out.in = in;
 	out.into = into;
 	out.count = 0;
-	out.pointer_sized = names_pointer(&in->dest) || names_pointer(&in->source);
+	out.offset_sized = is_offset_register(&in->dest, in->width) ||
+		is_offset_register(&in->source, in->width);
 
 	switch (in->code)
 	{
@@ -189,8 +286,8 @@ int emit_encode_x64(const emitter* e, instruction* in, int position, cc_list* in
 
 	case op_literal:
 	{
-		/* Hand-assembled 8086 bytes mean nothing here, but the length has to be
-		 * right or everything after them moves. */
+		/* Bytes the generator assembled itself. The 8086 helpers mean nothing
+		 * here, but a hosted program's own startup does. */
 		int i;
 		for (i = 0; i < in->literal_length; ++i)
 			x64_put(&out, ((const uint8_t*)e->literals.items)[in->literal_at + i]);
@@ -200,55 +297,69 @@ int emit_encode_x64(const emitter* e, instruction* in, int position, cc_list* in
 	case op_mov:
 		if (in->dest.kind == operand_kind_reg && in->source.kind == operand_kind_immediate)
 		{
-			if (out.pointer_sized)
+			const int32_t value = x64_value_of(e, &in->source);
+			if (out.offset_sized)
 			{
-				x64_put(&out, 0x48);
+				/* mov r14d/r13d, imm32 */
+				x64_put(&out, 0x41);
 				x64_put(&out, 0xc7);
-				x64_put(&out, 0xc0 | (in->dest.reg & 7));
+				x64_put(&out, 0xc0 | (host_register(in->dest.reg, 2) & 7));
 				in->fixup = out.count;
-				x64_dword(&out, x64_value_of(e, &in->source));
+				in->fixup_width = 4;
+				x64_dword(&out, value);
 				break;
 			}
-			if (in->width != 1) x64_put(&out, 0x66);
-			x64_put(&out, (in->width != 1 ? 0xb8 : 0xb0) + (in->dest.reg & 7));
+			x64_size(&out, in->width);
+			x64_rex(&out, 0, 0, 0, host_register(in->dest.reg, in->width));
+			x64_put(&out, (in->width != 1 ? 0xb8 : 0xb0) + (host_register(in->dest.reg, in->width) & 7));
 			in->fixup = out.count;
-			x64_immediate(&out, x64_value_of(e, &in->source));
+			in->fixup_width = immediate_width(&out, in->width);
+			x64_immediate(&out, in->width, value);
 			break;
 		}
 		if (in->source.kind == operand_kind_immediate)
 		{
 			int32_t at;
-			x64_prefix(&out);
+			x64_prefix(&out, in->width, &in->dest, 0, 0);
 			x64_put(&out, in->width == 1 ? 0xc6 : 0xc7);
-			x64_modrm(&out, &in->dest, 0);
+			x64_modrm(&out, &in->dest, 0, in->width, 0);
 			at = out.count;
-			x64_immediate(&out, x64_value_of(e, &in->source));
-			if (in->source.reference != reference_kind_none) in->fixup = at;
+			x64_immediate(&out, in->width, x64_value_of(e, &in->source));
+			if (in->source.reference != reference_kind_none)
+			{
+				in->fixup = at;
+				in->fixup_width = immediate_width(&out, in->width);
+			}
 			break;
 		}
-		x64_prefix(&out);
 		if (in->source.kind == operand_kind_reg)
 		{
+			x64_prefix(&out, in->width, &in->dest, host_register(in->source.reg, in->width), 0);
 			x64_put(&out, in->width == 1 ? 0x88 : 0x89);
-			x64_modrm(&out, &in->dest, in->source.reg);
+			x64_modrm(&out, &in->dest, host_register(in->source.reg, in->width), in->width, 0);
 			break;
 		}
+		x64_prefix(&out, in->width, &in->source, host_register(in->dest.reg, in->width), 0);
 		x64_put(&out, in->width == 1 ? 0x8a : 0x8b);
-		x64_modrm(&out, &in->source, in->dest.reg);
+		x64_modrm(&out, &in->source, host_register(in->dest.reg, in->width), in->width, 0);
 		break;
 
 	case op_lea:
-		x64_prefix(&out);
+		/* The address of something in the block is a 16-bit offset, so this is
+		 * the one place the block register is left out. */
+		out.offset_sized = 1; /* a 32-bit lea, whose result is used 16 bits wide */
+		x64_prefix(&out, 2, &in->source, host_register(in->dest.reg, 2), 1);
 		x64_put(&out, 0x8d);
-		x64_modrm(&out, &in->source, in->dest.reg);
+		x64_modrm(&out, &in->source, host_register(in->dest.reg, 2), 2, 1);
 		break;
 
 	case op_movsx:
 	case op_movzx:
-		if (in->width != 1) x64_put(&out, 0x66);
+		x64_size(&out, in->width);
+		x64_prefix(&out, in->width, &in->source, host_register(in->dest.reg, in->width), 0);
 		x64_put(&out, 0x0f);
 		x64_put(&out, in->code == op_movzx ? 0xb6 : 0xbe);
-		x64_modrm(&out, &in->source, in->dest.reg);
+		x64_modrm(&out, &in->source, host_register(in->dest.reg, in->width), in->width, 0);
 		break;
 
 	case op_add: case op_adc: case op_sub: case op_sbb:
@@ -260,59 +371,65 @@ int emit_encode_x64(const emitter* e, instruction* in, int position, cc_list* in
 			const int32_t value = x64_value_of(e, &in->source);
 			const int plain = in->source.reference == reference_kind_none;
 			int32_t at;
-			x64_prefix(&out);
+			x64_prefix(&out, in->width, &in->dest, 0, 0);
 			if (in->width != 1 && plain && is_byte_value(value))
 			{
 				x64_put(&out, 0x83);
-				x64_modrm(&out, &in->dest, index);
+				x64_modrm(&out, &in->dest, index, in->width, 0);
 				x64_put(&out, value & 0xff);
 				break;
 			}
 			x64_put(&out, in->width == 1 ? 0x80 : 0x81);
-			x64_modrm(&out, &in->dest, index);
+			x64_modrm(&out, &in->dest, index, in->width, 0);
 			at = out.count;
-			x64_immediate(&out, value);
-			if (!plain) in->fixup = at;
+			x64_immediate(&out, in->width, value);
+			if (!plain)
+			{
+				in->fixup = at;
+				in->fixup_width = immediate_width(&out, in->width);
+			}
 			break;
 		}
-		x64_prefix(&out);
 		if (in->source.kind == operand_kind_reg)
 		{
+			x64_prefix(&out, in->width, &in->dest, host_register(in->source.reg, in->width), 0);
 			x64_put(&out, (index << 3) | (in->width == 1 ? 0 : 1));
-			x64_modrm(&out, &in->dest, in->source.reg);
+			x64_modrm(&out, &in->dest, host_register(in->source.reg, in->width), in->width, 0);
 			break;
 		}
+		x64_prefix(&out, in->width, &in->source, host_register(in->dest.reg, in->width), 0);
 		x64_put(&out, (index << 3) | (in->width == 1 ? 2 : 3));
-		x64_modrm(&out, &in->source, in->dest.reg);
+		x64_modrm(&out, &in->source, host_register(in->dest.reg, in->width), in->width, 0);
 		break;
 	}
 
 	case op_test:
-		x64_prefix(&out);
 		if (in->source.kind == operand_kind_immediate)
 		{
+			x64_prefix(&out, in->width, &in->dest, 0, 0);
 			x64_put(&out, in->width == 1 ? 0xf6 : 0xf7);
-			x64_modrm(&out, &in->dest, 0);
-			x64_immediate(&out, x64_value_of(e, &in->source));
+			x64_modrm(&out, &in->dest, 0, in->width, 0);
+			x64_immediate(&out, in->width, x64_value_of(e, &in->source));
 			break;
 		}
+		x64_prefix(&out, in->width, &in->dest, host_register(in->source.reg, in->width), 0);
 		x64_put(&out, in->width == 1 ? 0x84 : 0x85);
-		x64_modrm(&out, &in->dest, in->source.reg);
+		x64_modrm(&out, &in->dest, host_register(in->source.reg, in->width), in->width, 0);
 		break;
 
 	case op_inc:
 	case op_dec:
 		/* x64 has no one-byte inc: those opcodes became the REX prefixes. */
-		x64_prefix(&out);
+		x64_prefix(&out, in->width, &in->dest, 0, 0);
 		x64_put(&out, in->width == 1 ? 0xfe : 0xff);
-		x64_modrm(&out, &in->dest, in->code == op_inc ? 0 : 1);
+		x64_modrm(&out, &in->dest, in->code == op_inc ? 0 : 1, in->width, 0);
 		break;
 
 	case op_neg:
 	case op_not_:
-		x64_prefix(&out);
+		x64_prefix(&out, in->width, &in->dest, 0, 0);
 		x64_put(&out, in->width == 1 ? 0xf6 : 0xf7);
-		x64_modrm(&out, &in->dest, in->code == op_neg ? 3 : 2);
+		x64_modrm(&out, &in->dest, in->code == op_neg ? 3 : 2, in->width, 0);
 		break;
 
 	case op_mul:
@@ -321,41 +438,65 @@ int emit_encode_x64(const emitter* e, instruction* in, int position, cc_list* in
 	case op_idiv:
 	{
 		const int field = in->code == op_mul ? 4 : in->code == op_imul ? 5 : in->code == op_div ? 6 : 7;
-		x64_prefix(&out);
+		x64_prefix(&out, in->width, &in->dest, 0, 0);
 		x64_put(&out, in->width == 1 ? 0xf6 : 0xf7);
-		x64_modrm(&out, &in->dest, field);
+		x64_modrm(&out, &in->dest, field, in->width, 0);
 		break;
 	}
 
 	case op_shl: case op_shr: case op_sar: case op_rcl: case op_rcr:
 	{
 		const int field = shift_index_x64(in->code);
-		x64_prefix(&out);
+		x64_prefix(&out, in->width, &in->dest, 0, 0);
 		/* A count of -1 means CL, the only variable count the machine has. */
 		x64_put(&out, in->source.value < 0 ? (in->width == 1 ? 0xd2 : 0xd3)
 		                                   : (in->width == 1 ? 0xd0 : 0xd1));
-		x64_modrm(&out, &in->dest, field);
+		x64_modrm(&out, &in->dest, field, in->width, 0);
 		break;
 	}
 
 	case op_push:
 	case op_pop:
-		/* A push is 64-bit whatever else happens, so only a 16-bit one needs
-		 * saying. The frame pointer wants the whole register. */
-		if (!out.pointer_sized) x64_put(&out, 0x66);
-		if (in->dest.kind == operand_kind_reg)
+	{
+		/* The guest's stack is in the block, so this is an explicit move. */
+		const int is_offset = is_offset_register(&in->dest, 2);
+		const int reg = host_register(in->dest.reg, 2);
+
+		if (in->code == op_push)
 		{
-			x64_put(&out, (in->code == op_push ? 0x50 : 0x58) + (in->dest.reg & 7));
+			/* A slot on the guest stack is two bytes whatever the register is,
+			 * so even the frame pointer is stored 16 bits at a time. */
+			x64_adjust_sp(&out, -2);
+			x64_put(&out, 0x66);
+			x64_rex(&out, 0, reg, X64_SP, X64_BLOCK);
+			x64_put(&out, 0x89);
+			x64_stack_slot(&out, reg);
 			break;
 		}
-		x64_put(&out, in->code == op_push ? 0xff : 0x8f);
-		x64_modrm(&out, &in->dest, in->code == op_push ? 6 : 0);
+
+		if (is_offset)
+		{
+			/* movzx r13d, word [r15+r14], so the whole register is the offset. */
+			x64_rex(&out, 0, reg, X64_SP, X64_BLOCK);
+			x64_put(&out, 0x0f);
+			x64_put(&out, 0xb7);
+			x64_stack_slot(&out, reg);
+		}
+		else
+		{
+			x64_put(&out, 0x66);
+			x64_rex(&out, 0, reg, X64_SP, X64_BLOCK);
+			x64_put(&out, 0x8b);
+			x64_stack_slot(&out, reg);
+		}
+		x64_adjust_sp(&out, 2);
 		break;
+	}
 
 	case op_xchg:
-		x64_prefix(&out);
+		x64_prefix(&out, in->width, &in->dest, host_register(in->source.reg, in->width), 0);
 		x64_put(&out, in->width == 1 ? 0x86 : 0x87);
-		x64_modrm(&out, &in->dest, in->source.reg);
+		x64_modrm(&out, &in->dest, host_register(in->source.reg, in->width), in->width, 0);
 		break;
 
 	case op_cbw:
@@ -384,12 +525,27 @@ int emit_encode_x64(const emitter* e, instruction* in, int position, cc_list* in
 	case op_call:
 		x64_put(&out, 0xe8);
 		in->fixup = out.count;
+		in->fixup_width = 4;
 		x64_dword(&out, 0);
 		break;
 
 	case op_call_at:
-		x64_put(&out, 0xff);
-		x64_modrm(&out, &in->dest, 2);
+		/* The slot holds a guest offset, so it has to be added to the block
+		 * before anything can be called through it. AX is scratch here: the
+		 * arguments are already on the stack and the result comes back in it. */
+		x64_put(&out, 0x66); /* mov ax, [ ... ] */
+		x64_rex(&out, 0, 0, host_register(in->dest.reg, 2), X64_BLOCK);
+		x64_put(&out, 0x8b);
+		x64_modrm(&out, &in->dest, 0, 2, 0);
+		x64_put(&out, 0x0f); /* movzx eax, ax */
+		x64_put(&out, 0xb7);
+		x64_put(&out, 0xc0);
+		x64_put(&out, 0x49); /* lea rax, [r15 + rax] */
+		x64_put(&out, 0x8d);
+		x64_put(&out, 0x04);
+		x64_put(&out, 0x07);
+		x64_put(&out, 0xff); /* call rax */
+		x64_put(&out, 0xd0);
 		break;
 
 	case op_ret:
@@ -407,11 +563,13 @@ int emit_encode_x64(const emitter* e, instruction* in, int position, cc_list* in
 		{
 			x64_put(&out, 0xeb);
 			in->fixup = out.count;
+			in->fixup_width = 1;
 			x64_put(&out, 0);
 			break;
 		}
 		x64_put(&out, 0xe9);
 		in->fixup = out.count;
+		in->fixup_width = 4;
 		x64_dword(&out, 0);
 		break;
 
@@ -420,12 +578,14 @@ int emit_encode_x64(const emitter* e, instruction* in, int position, cc_list* in
 		{
 			x64_put(&out, taken_code(in->test));
 			in->fixup = out.count;
+			in->fixup_width = 1;
 			x64_put(&out, 0);
 			break;
 		}
 		x64_put(&out, 0x0f);
 		x64_put(&out, taken_code(in->test) + 0x10);
 		in->fixup = out.count;
+		in->fixup_width = 4;
 		x64_dword(&out, 0);
 		break;
 	}

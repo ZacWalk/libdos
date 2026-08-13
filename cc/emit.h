@@ -115,6 +115,7 @@ typedef struct instruction
 	int32_t offset;
 	int32_t length;
 	int32_t fixup; /* where in the instruction an address goes, from the start */
+	int32_t fixup_width; /* and how many bytes of it there are */
 } instruction;
 
 /* An instruction range that is not to be emitted. */

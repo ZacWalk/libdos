@@ -1282,6 +1282,10 @@ namespace
 	// can be executed, and calls it. The same source through the same front end
 	// and a different back end has to give the same answer as the emulator did,
 	// which is the only claim a second back end is really making.
+	//
+	// The block is the whole of the program's world: code, data and stack, the
+	// 64 KiB a .COM gets, with its address handed to the entry point so that a
+	// guest pointer can stay the 16-bit offset the front end thinks it is.
 	bool run_native(const std::vector<uint8_t>& image, host_services& host, int& answer)
 	{
 #if !defined(_M_X64) && !defined(__x86_64__)
@@ -1290,35 +1294,52 @@ namespace
 		(void)answer;
 		return false; // the back end emits x64, and this is not one
 #else
-		const uint32_t size = uint32_t(image.size());
-		void* code = host.code_alloc(size);
-		if (code == nullptr) return false;
-		memcpy(code, image.data(), size);
-		host.code_commit(code, size);
+		const uint32_t block_size = 0x10000;
+		if (image.size() > block_size) return false;
 
-		using entry_point = int (*)();
-		const entry_point run = reinterpret_cast<entry_point>(code);
-		answer = run() & 0xffff;
-		host.code_free(code, size);
+		void* block = host.code_alloc(block_size);
+		if (block == nullptr) return false;
+		memset(block, 0, block_size);
+		memcpy(block, image.data(), image.size());
+		host.code_commit(block, block_size);
+
+		using entry_point = int (*)(void*);
+		const entry_point run = reinterpret_cast<entry_point>(block);
+		answer = run(block) & 0xffff;
+		host.code_free(block, block_size);
 		return true;
 #endif
 	}
 
 	void test_native_backend()
 	{
-		// No pointers and no 32-bit arithmetic: the front end still makes both
-		// of those 16 bits wide, which the host cannot honour.
+		// A pointer is a 16-bit offset into the block the host hands the entry
+		// point, exactly as it is under DOS, so arrays, structures and the
+		// address of a local all mean the same thing on both machines.
 		const char* source =
 			"int fib(int n) { if (n < 2) return n; return fib(n - 1) + fib(n - 2); }\n"
 			"int counter;\n"
 			"int scale(int v, int f) { return (v * f) >> 2; }\n"
+			"struct point { int x; int y; };\n"
+			"struct point grid[4];\n"
+			"int total(int *values, int count) {\n"
+			"  int sum; int i; sum = 0;\n"
+			"  for (i = 0; i < count; i = i + 1) sum = sum + values[i];\n"
+			"  return sum;\n"
+			"}\n"
+			"int length(char *s) { int n; n = 0; while (*s) { n = n + 1; s = s + 1; } return n; }\n"
 			"int main(void) {\n"
-			"  int i; int sum;\n"
+			"  int i; int sum; int local[4]; char *text;\n"
 			"  sum = 0;\n"
 			"  for (i = 0; i < 10; i = i + 1) sum = sum + scale(i, 6);\n"
 			"  counter = 0;\n"
 			"  while (counter < 5) counter = counter + 1;\n"
 			"  switch (counter) { case 4: return 1; case 5: break; default: return 2; }\n"
+			"  for (i = 0; i < 4; i = i + 1) { local[i] = i * 2; grid[i].x = i; grid[i].y = i + 1; }\n"
+			"  sum = sum + total(local, 4);\n"
+			"  for (i = 0; i < 4; i = i + 1) sum = sum + grid[i].x * grid[i].y;\n"
+			"  text = \"abcdef\";\n"
+			"  sum = sum + length(text);\n"
 			"  return sum + fib(12) + counter;\n"
 			"}\n";
 
@@ -1342,7 +1363,7 @@ namespace
 			for (int frame = 0; frame < 400 && !m.exited(); ++frame) m.exec(m.cycles_per_frame());
 			if (m.exited()) expected = int(m.exit_code());
 		}
-		check(expected == 214, "the emulator agrees on what the program means");
+		check(expected == 252, "the emulator agrees on what the program means");
 
 		cc_options as_host = default_options();
 		as_host.machine = cc_machine_x64;
