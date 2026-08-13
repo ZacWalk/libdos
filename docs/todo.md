@@ -124,6 +124,13 @@ when a review turns one up, add it here rather than in AGENTS.md.
   157 ms. `cc\bench\roundtrip.c` does the same for the file services. What is
   missing there is the rest of DOS: no find-first, no keyboard, no EXEC, so the
   shell does not run this way yet.
+- `ovrwincli --ccexe <file.c>` writes the same image out as a Windows
+  executable: one section holding the block, a startup that hands the program
+  its own base, and a service routine that turns INT 21h into `WriteFile` and
+  `ExitProcess`. It is not relocatable - there is no relocation table, so the
+  loader has to honour the image base - and its DOS is smaller still than the
+  in-process one: only 02h, 09h and 4Ch, so a program that opens a file runs but
+  gets a failure back.
 
 ## Running a large program: the memory model
 
