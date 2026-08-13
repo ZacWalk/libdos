@@ -634,6 +634,7 @@ namespace
 		operand place_of(const value& target, int extra = 0);
 		void memory_operation(op kind, int width, const value& target, const operand& source,
 		                      int extra = 0);
+		bool operate_from_memory(tok what, const value& right);
 
 		value expression();
 		value assignment_expression();
@@ -1785,8 +1786,11 @@ namespace
 					else if (size == 1)
 					{
 						load(v);
-						load_to_cx(index);
-						e_.add_ax_cx();
+						if (!operate_from_memory(tok::plus, index))
+						{
+							load_to_cx(index);
+							e_.add_ax_cx();
+						}
 					}
 					else
 					{
@@ -1795,6 +1799,9 @@ namespace
 						load(index);
 						scale_ax(size);
 						if (add_address_to_ax(base))
+						{
+						}
+						else if (operate_from_memory(tok::plus, base))
 						{
 						}
 						else if (fits_cx(base))
@@ -1821,7 +1828,7 @@ namespace
 					expect(tok::r_bracket, "expected ]");
 					load(subscript);
 					scale_ax(size);
-					if (!add_address_to_ax(base))
+					if (!add_address_to_ax(base) && !operate_from_memory(tok::plus, base))
 					{
 						load_to_cx(base);
 						e_.add_ax_cx();
@@ -2415,7 +2422,7 @@ namespace
 					else if (op == tok::plus && add_address_to_ax(right))
 					{
 					}
-					else
+					else if (!operate_from_memory(op, right))
 					{
 						load_to_cx(right);
 						apply_operator(op, unsigned_operation);
@@ -3270,6 +3277,34 @@ namespace
 	{
 		e_.emit(kind, width, place_of(target, extra), source);
 		if (target.kind != val_local) data_reference(target.offset + extra);
+	}
+
+	// The mirror of it: the second operand of an operator is read where it
+	// lies rather than loaded into CX first. Only the operators with a
+	// register/memory form qualify - a multiply, a divide and a shift all want
+	// a particular register.
+	bool generator::operate_from_memory(tok what, const value& right)
+	{
+		if (right.kind != val_local && right.kind != val_global) return false;
+		if (is_array(right.type) || is_record(right.type)) return false;
+
+		op kind;
+		switch (what)
+		{
+		case tok::plus: kind = ::op::add; break;
+		case tok::minus: kind = ::op::sub; break;
+		case tok::amp: kind = ::op::and_; break;
+		case tok::pipe: kind = ::op::or_; break;
+		case tok::caret: kind = ::op::xor_; break;
+		default:
+			if (!is_comparison(what)) return false;
+			kind = ::op::cmp;
+			break;
+		}
+
+		e_.emit(kind, 2, operand::in(reg_a), place_of(right));
+		if (right.kind != val_local) data_reference(right.offset);
+		return true;
 	}
 
 	// A statement whose result nobody wants - i++, x += 8, p = p + 1 - is one
