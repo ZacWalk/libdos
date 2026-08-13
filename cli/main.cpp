@@ -8,6 +8,7 @@
 #include "../host/host-win32.h"
 #include "../cc/cc.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -108,9 +109,59 @@ namespace
 		return true;
 	}
 
-	// Loads a block of machine code at 2000:0000 and points the CPU at it.
-	void load_code(machine& m, const uint8_t* code, uint32_t length)
+	bool write_wav(const char* path, const int16_t* samples, uint32_t count)	{
+		FILE* file = nullptr;
+		if (fopen_s(&file, path, "wb") != 0 || file == nullptr) return false;
+
+		const uint32_t data_size = count * 2;
+		const uint32_t file_size = 36 + data_size;
+		const uint32_t format_size = 16;
+		const uint16_t pcm = 1, channels = 1, bits = 16, align = 2;
+		const uint32_t rate = sound_sample_rate;
+		const uint32_t byte_rate = rate * align;
+		fwrite("RIFF", 1, 4, file);
+		fwrite(&file_size, 4, 1, file);
+		fwrite("WAVEfmt ", 1, 8, file);
+		fwrite(&format_size, 4, 1, file);
+		fwrite(&pcm, 2, 1, file);
+		fwrite(&channels, 2, 1, file);
+		fwrite(&rate, 4, 1, file);
+		fwrite(&byte_rate, 4, 1, file);
+		fwrite(&align, 2, 1, file);
+		fwrite(&bits, 2, 1, file);
+		fwrite("data", 1, 4, file);
+		fwrite(&data_size, 4, 1, file);
+		fwrite(samples, 2, count, file);
+		fclose(file);
+		return true;
+	}
+
+	// Types one character on the emulated keyboard. Going through machine_key
+	// rather than the BIOS buffer means a program reading raw scancodes sees
+	// what it expects.
+	machine_key key_from_char(char c)
 	{
+		if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
+		const char* const rows[3] = {"qwertyuiop", "asdfghjkl", "zxcvbnm"};
+		const machine_key first[3] = {machine_key::q, machine_key::a, machine_key::z};
+		for (int row = 0; row < 3; ++row)
+		{
+			const char* at = strchr(rows[row], c);
+			if (at != nullptr) return machine_key(int(first[row]) + int(at - rows[row]));
+		}
+		const char* digits = strchr("1234567890", c);
+		if (digits != nullptr) return machine_key(int(machine_key::num1) + int(digits - "1234567890"));
+		switch (c)
+		{
+		case ' ': return machine_key::space;
+		case '\n': case '\r': return machine_key::enter;
+		case 27: return machine_key::escape;
+		default: return machine_key::none;
+		}
+	}
+
+	// Loads a block of machine code at 2000:0000 and points the CPU at it.
+	void load_code(machine& m, const uint8_t* code, uint32_t length)	{
 		machine_state& s = m.state();
 		for (uint32_t i = 0; i < length; ++i) s.memory[0x20000 + i] = code[i];
 		s.cpu.set_cs(0x2000);
@@ -234,6 +285,119 @@ namespace
 			step(m, 2);
 			check_equal(s.cpu.bx(), 0x1234, "les offset");
 			check_equal(s.cpu.es(), 0xb800, "les segment");
+		}
+	}
+
+	// The 80386 instructions a 16-bit program built with -3 actually contains.
+	void test_cpu_386()
+	{
+		machine m;
+
+		{
+			// xor ax,ax / je near +3 / mov ax,2222h / mov ax,1111h
+			const uint8_t code[] = {
+				0x31, 0xc0, 0x0f, 0x84, 0x03, 0x00, 0xb8, 0x22, 0x22, 0xb8, 0x11, 0x11
+			};
+			load_code(m, code, sizeof(code));
+			step(m, 3);
+			check_equal(m.state().cpu.ax(), 0x1111, "near jcc taken");
+		}
+
+		{
+			// mov ax,5 / cmp ax,5 / sete bl / setne bh
+			const uint8_t code[] = {
+				0xb8, 0x05, 0x00, 0x3d, 0x05, 0x00, 0x0f, 0x94, 0xc3, 0x0f, 0x95, 0xc7
+			};
+			load_code(m, code, sizeof(code));
+			step(m, 4);
+			check_equal(m.state().cpu.bl(), 1, "sete");
+			check_equal(m.state().cpu.bh(), 0, "setne");
+		}
+
+		{
+			// mov bl,0FFh / movzx ax,bl / movsx cx,bl
+			const uint8_t code[] = {0xb3, 0xff, 0x0f, 0xb6, 0xc3, 0x0f, 0xbe, 0xcb};
+			load_code(m, code, sizeof(code));
+			step(m, 3);
+			check_equal(m.state().cpu.ax(), 0x00ff, "movzx zero extends");
+			check_equal(m.state().cpu.cx(), 0xffff, "movsx sign extends");
+		}
+
+		{
+			// mov ax,0 / bts ax,5 / bt ax,5
+			const uint8_t code[] = {
+				0xb8, 0x00, 0x00, 0x0f, 0xba, 0xe8, 0x05, 0x0f, 0xba, 0xe0, 0x05
+			};
+			load_code(m, code, sizeof(code));
+			step(m, 2);
+			check_equal(m.state().cpu.ax(), 0x0020, "bts sets the bit");
+			check(!m.state().cpu.cf(), "bts reports the old bit");
+			step(m, 1);
+			check(m.state().cpu.cf(), "bt reads the bit back");
+		}
+
+		{
+			// mov ax,0100h / bsf bx,ax / bsr cx,ax
+			const uint8_t code[] = {0xb8, 0x00, 0x01, 0x0f, 0xbc, 0xd8, 0x0f, 0xbd, 0xc8};
+			load_code(m, code, sizeof(code));
+			step(m, 3);
+			check_equal(m.state().cpu.bx(), 8, "bsf finds the low bit");
+			check_equal(m.state().cpu.cx(), 8, "bsr finds the high bit");
+		}
+
+		{
+			// mov ax,1234h / mov bx,5678h / shld ax,bx,4
+			const uint8_t code[] = {
+				0xb8, 0x34, 0x12, 0xbb, 0x78, 0x56, 0x0f, 0xa4, 0xd8, 0x04
+			};
+			load_code(m, code, sizeof(code));
+			step(m, 3);
+			check_equal(m.state().cpu.ax(), 0x2345, "shld");
+		}
+
+		{
+			// mov ax,1234h / mov bx,5678h / shrd ax,bx,4
+			const uint8_t code[] = {
+				0xb8, 0x34, 0x12, 0xbb, 0x78, 0x56, 0x0f, 0xac, 0xd8, 0x04
+			};
+			load_code(m, code, sizeof(code));
+			step(m, 3);
+			check_equal(m.state().cpu.ax(), 0x8123, "shrd");
+		}
+
+		{
+			// mov ax,5 / mov bx,-3 / imul ax,bx
+			const uint8_t code[] = {0xb8, 0x05, 0x00, 0xbb, 0xfd, 0xff, 0x0f, 0xaf, 0xc3};
+			load_code(m, code, sizeof(code));
+			step(m, 3);
+			check_equal(m.state().cpu.ax(), 0xfff1, "imul r16,rm16");
+		}
+
+		{
+			// mov si,2000h / lfs bx,[si], then read through the fs override
+			machine_state& s = m.state();
+			const uint8_t code[] = {0xbe, 0x00, 0x20, 0x0f, 0xb4, 0x1c, 0x64, 0xa0, 0x10, 0x00};
+			load_code(m, code, sizeof(code));
+			s.memory[0x22000] = 0x34;
+			s.memory[0x22001] = 0x12;
+			s.memory[0x22002] = 0x00;
+			s.memory[0x22003] = 0x30;
+			s.memory[0x30010] = 0x5a;
+			step(m, 4); // the fs prefix is a step of its own
+			check_equal(s.cpu.bx(), 0x1234, "lfs offset");
+			check_equal(s.cpu.fs(), 0x3000, "lfs segment");
+			check_equal(s.cpu.al(), 0x5a, "fs segment override");
+		}
+
+		{
+			// mov ax,4321h / mov fs,ax / push fs / pop gs
+			const uint8_t code[] = {
+				0xb8, 0x21, 0x43, 0x8e, 0xe0, 0x0f, 0xa0, 0x0f, 0xa9
+			};
+			load_code(m, code, sizeof(code));
+			step(m, 4);
+			check_equal(m.state().cpu.fs(), 0x4321, "mov fs,ax");
+			check_equal(m.state().cpu.gs(), 0x4321, "push fs / pop gs");
 		}
 	}
 
@@ -453,6 +617,19 @@ namespace
 		peak = 0;
 		for (const int16_t sample : samples) peak = sample > peak ? sample : peak;
 		check(peak > 200, "the PC speaker produces output when gated on");
+
+		// Audio is the host's setting: starting a program must not silence it.
+		machine_reset(s);
+		check(s.sound.enabled, "a reset keeps audio enabled");
+		io_write8(s, 0x43, 0xb6);
+		io_write8(s, 0x42, 0x00);
+		io_write8(s, 0x42, 0x10);
+		io_write8(s, 0x61, 0x03);
+		s.cycles += 100000;
+		m.generate_audio(samples, 735);
+		peak = 0;
+		for (const int16_t sample : samples) peak = sample > peak ? sample : peak;
+		check(peak > 200, "the speaker still sounds after a reset");
 	}
 
 	void test_shell()
@@ -560,10 +737,11 @@ namespace
 		bool load(const char*, std::string&) override { return false; }
 	};
 
-	bool compile_text(const char* source, std::vector<uint8_t>& image, const char* name)
+	bool compile_text(const char* source, std::vector<uint8_t>& image, const char* name,
+	                  const cc_options& options = {})
 	{
 		no_sources sources;
-		const cc_result result = cc_compile(source, name, sources);
+		const cc_result result = cc_compile(source, name, sources, {}, options);
 		if (!result.ok) printf("      %s(%d): %s\n", name, result.line, result.message.c_str());
 		image = result.image;
 		return result.ok;
@@ -680,6 +858,159 @@ namespace
 			check(screen.find("H5000000") != std::string::npos, "a 32-bit global accumulates");
 			check(screen.find("I4") != std::string::npos, "long is four bytes");
 		}
+
+		// The shapes the code generator has special cases for: an operand that
+		// can be placed rather than pushed, a comparison left in the flags, a
+		// dereference whose address stays in memory, a statement applied
+		// straight to a variable, and a loop with its condition at the bottom.
+		const char* placement =
+			"int __int21(int ax, int bx, int cx, int dx);\n"
+			"void putch(int c) { __int21(0x0200, 0, 0, c); }\n"
+			"void puts(char *s) { while (*s) { putch(*s); s = s + 1; } }\n"
+			"void putu(unsigned v) {\n"
+			"  char d[8]; int at;\n"
+			"  if (v == 0) { putch('0'); return; }\n"
+			"  at = 0;\n"
+			"  while (v) { d[at] = (char)('0' + v % 10); v = v / 10; at = at + 1; }\n"
+			"  while (at > 0) { at = at - 1; putch(d[at]); }\n"
+			"}\n"
+			"int failed; int counter; int numbers[8]; long total;\n"
+			"struct point { int x; int y; long z; };\n"
+			"struct point points[4];\n"
+			"void expect(int ok, int id) { if (!ok) { failed = 1; puts(\"X\"); putu(id); } }\n"
+			"int bump(void) { counter = counter + 1; return counter; }\n"
+			"int main(void) {\n"
+			"  int i; int j; long a; int *p; struct point *q; unsigned u; char c;\n"
+			"  failed = 0;\n"
+			"  i = 5; i++; ++i; i--; expect(i == 6, 1);\n"
+			"  i += 10; i -= 6; i = i + 3; expect(i == 13, 2);\n"
+			"  i &= 12; i |= 1; i ^= 5; expect(i == 8, 3);\n"
+			"  j = 4; i = i + j; expect(i == 12, 4);\n"
+			"  i = 5; j = i++; expect(j == 5 && i == 6, 5);\n"
+			"  j = ++i; expect(j == 7 && i == 7, 6);\n"
+			"  total = 100000; total += 100000; a = 7; total = total + a;\n"
+			"  expect(total == 200007, 7);\n"
+			"  numbers[0] = 11; numbers[1] = 22; numbers[2] = 33;\n"
+			"  p = &numbers[0]; p++; expect(*p == 22, 8);\n"
+			"  p += 1; expect(*p == 33, 9); p = p - 2; expect(*p == 11, 10);\n"
+			"  points[1].x = 4; points[1].y = 5; points[1].z = 400000;\n"
+			"  q = &points[1];\n"
+			"  expect(q->x == 4 && q->y == 5 && q->z == 400000, 11);\n"
+			"  q->y = q->y + 2; q->z += 1;\n"
+			"  expect(points[1].y == 7 && points[1].z == 400001, 12);\n"
+			"  i = 3; j = 4;\n"
+			"  expect((i < j) == 1 && (i > j) == 0 && !(i > j), 13);\n"
+			"  expect((i < j) + (j < i) == 1, 14);\n"
+			"  u = 40000; expect(u > 100 && !(u < 100), 15);\n"
+			"  counter = 0; i = bump() + counter; expect(i == 1 || i == 2, 16);\n"
+			"  counter = 0; i = counter + bump(); expect(i == 1 || i == 2, 17);\n"
+			"  a = 0x12345678;\n"
+			"  expect((a >> 16) == 0x1234 && (a >> 8) == 0x123456, 18);\n"
+			"  expect((a << 4) == 0x23456780 && (a & 0xffff) == 0x5678, 19);\n"
+			"  a = -70000;\n"
+			"  expect((a >> 16) == -2 && (a >> 1) == -35000, 20);\n"
+			"  expect(a * 4 == -280000 && a / 8 == -8750, 21);\n"
+			"  i = 100; u = 100;\n"
+			"  expect(i * 8 == 800 && i / 4 == 25, 22);\n"
+			"  expect(u / 8 == 12 && u % 8 == 4, 23);\n"
+			"  expect((i << 3) == 800 && (i >> 2) == 25, 24);\n"
+			"  for (i = 0; i < 8; i++) numbers[i] = i * i;\n"
+			"  j = 0; for (i = 0; i < 8; i++) j += numbers[i];\n"
+			"  expect(j == 140, 25);\n"
+			"  i = 0; j = 0; while (i < 8) { j = j + numbers[i]; i++; }\n"
+			"  expect(j == 140, 26);\n"
+			"  j = 0; i = 0; do { j = j + 1; i++; } while (i < 4);\n"
+			"  expect(j == 4, 27);\n"
+			"  j = 0;\n"
+			"  for (i = 0; i < 20; i++) { if (i == 3) continue; if (i == 6) break; j = j + i; }\n"
+			"  expect(j == 12, 28);\n"
+			"  c = -3; expect(c < 0 && c + 5 == 2, 29);\n"
+			"  numbers[3] = 7; p = &numbers[3];\n"
+			"  (*p)++; expect(numbers[3] == 8, 30);\n"
+			"  ++(*p); expect(numbers[3] == 9, 31);\n"
+			"  *p += 5; expect(numbers[3] == 14, 32);\n"
+			"  *p = *p * 2; expect(numbers[3] == 28, 33);\n"
+			"  q = &points[2]; q->z = 70000; q->z >>= 1;\n"
+			"  expect(points[2].z == 35000, 34);\n"
+			"  if (!failed) puts(\"OK\");\n"
+			"  return 0;\n"
+			"}\n";
+
+		check(compile_text(placement, image, "placement.c"), "the compiler accepts the placement program");
+		if (!image.empty())
+		{
+			const std::string screen = run_image(image, nullptr);
+			check(screen.find("OK") != std::string::npos, "the generated code is right where it is clever");
+		}
+
+		// A body copied to its call site has to mean exactly what calling it
+		// would have: the same answers, whatever the size limit is set to.
+		const char* whole_program =
+			"int __int21(int ax, int bx, int cx, int dx);\n"
+			"void putch(int c) { __int21(0x0200, 0, 0, c); }\n"
+			"void puts(char *s) { while (*s) { putch(*s); s = s + 1; } }\n"
+			"void putu(unsigned v) {\n"
+			"  char d[8]; int at;\n"
+			"  if (v == 0) { putch('0'); return; }\n"
+			"  at = 0;\n"
+			"  while (v) { d[at] = (char)('0' + v % 10); v = v / 10; at = at + 1; }\n"
+			"  while (at > 0) { at = at - 1; putch(d[at]); }\n"
+			"}\n"
+			"int failed; int counter; int numbers[4];\n"
+			"void expect(int ok, int id) { if (!ok) { failed = 1; puts(\"X\"); putu(id); } }\n"
+			"int scale(int v, int f) { return (v * f) >> 2; }\n"
+			"int clamp(int v, int low, int high) {\n"
+			"  if (v < low) return low;\n"
+			"  if (v > high) return high;\n"
+			"  return v;\n"
+			"}\n"
+			"int consume(int n) { n = n + 1; n = n * 2; return n; }\n"
+			"long widen(int v) { return (long)v * 100000; }\n"
+			"int bump(void) { counter = counter + 1; return counter; }\n"
+			"int fib(int n) { if (n < 2) return n; return fib(n - 1) + fib(n - 2); }\n"
+			"int never_called(int a) { return a * 12345; }\n"
+			"void fill(int *p, int v) { p[0] = v; p[1] = v + 1; }\n"
+			"int main(void) {\n"
+			"  int i; long l;\n"
+			"  failed = 0; counter = 0;\n"
+			"  expect(scale(100, 3) == 75, 1);\n"
+			"  i = 7; expect(scale(i, 4) == 7, 2);\n"
+			"  expect(clamp(5, 0, 10) == 5 && clamp(-1, 0, 10) == 0 && clamp(99, 0, 10) == 10, 3);\n"
+			"  i = 4; expect(consume(i) == 10 && i == 4, 4);\n"
+			"  l = widen(3); expect(l == 300000, 5);\n"
+			"  expect(bump() == 1 && bump() == 2 && counter == 2, 6);\n"
+			"  expect(fib(10) == 55, 7);\n"
+			"  fill(numbers, 9); expect(numbers[0] == 9 && numbers[1] == 10, 8);\n"
+			"  i = 0;\n"
+			"  while (i < 3) { i = i + scale(4, 1); }\n"
+			"  expect(i == 3, 9);\n"
+			"  if (!failed) puts(\"OK\");\n"
+			"  return 0;\n"
+			"}\n";
+
+		for (const int limit : {0, 24, 200})
+		{
+			cc_options options;
+			options.inline_limit = limit;
+			check(compile_text(whole_program, image, "inline.c", options),
+			      "the compiler accepts the whole-program test");
+			if (image.empty()) continue;
+			const std::string screen = run_image(image, nullptr);
+			check(screen.find("OK") != std::string::npos,
+			      limit == 0
+				      ? "calling and copying a body agree, with no copying"
+				      : "calling and copying a body agree, with copying");
+		}
+
+		// A function nothing can reach costs nothing, and one that was copied
+		// everywhere stops being reached.
+		cc_options keep;
+		keep.drop_unreachable = false;
+		std::vector<uint8_t> lean, fat;
+		check(compile_text(whole_program, lean, "inline.c"), "the lean build compiles");
+		check(compile_text(whole_program, fat, "inline.c", keep), "the kept build compiles");
+		check(!lean.empty() && !fat.empty() && lean.size() < fat.size(),
+		      "an unreachable function is left out");
 
 		// Function pointers, which reach a callee through a frame slot rather
 		// than a relative call, and goto.
@@ -889,11 +1220,37 @@ namespace
 
 		line = disassemble(s, 0x2000, 8);
 		check(strcmp(line.text, "rep movsb") == 0, "disassembles a repeated string op");
+
+		const uint8_t wide[] = {
+			0x0f, 0x84, 0x03, 0x00, // je near
+			0x0f, 0x94, 0xc3, // sete bl
+			0x0f, 0xb6, 0xc3, // movzx ax,bl
+			0x0f, 0xba, 0xe8, 0x05, // bts ax,5
+			0x64, 0xa0, 0x10, 0x00, // mov al,fs:[0010h]
+		};
+		for (uint32_t i = 0; i < sizeof(wide); ++i) s.memory[0x21000 + i] = wide[i];
+
+		line = disassemble(s, 0x2100, 0);
+		check(strcmp(line.text, "je 0007h") == 0, "disassembles a near jcc");
+		check_equal(line.length, 4, "near jcc is four bytes");
+
+		line = disassemble(s, 0x2100, 4);
+		check(strcmp(line.text, "sete bl") == 0, "disassembles setcc");
+
+		line = disassemble(s, 0x2100, 7);
+		check(strcmp(line.text, "movzx ax,bl") == 0, "disassembles movzx");
+
+		line = disassemble(s, 0x2100, 10);
+		check(strcmp(line.text, "bts ax,05h") == 0, "disassembles bts");
+
+		line = disassemble(s, 0x2100, 14);
+		check(strcmp(line.text, "mov al,fs:[0010h]") == 0, "disassembles an fs override");
 	}
 
 	int run_tests()
 	{
 		test_cpu();
+		test_cpu_386();
 		test_interrupts();
 		test_timer();
 		test_video();
@@ -941,7 +1298,8 @@ namespace
 
 	// Compiles a C file and returns the .COM image, reporting any error.
 	bool compile_file(const char* path, const std::vector<std::string>& includes,
-	                  const std::vector<std::string>& defines, std::vector<uint8_t>& image, bool quiet)
+	                  const std::vector<std::string>& defines, std::vector<uint8_t>& image, bool quiet,
+	                  const cc_options& options = {}, bool map = false)
 	{
 		uint8_t* data = nullptr;
 		uint32_t size = 0;
@@ -959,7 +1317,20 @@ namespace
 
 		directory_sources sources(directory);
 		for (const std::string& entry : includes) sources.add(entry.c_str());
-		const cc_result result = cc_compile(text.c_str(), name, sources, defines);
+		const cc_result result = cc_compile(text.c_str(), name, sources, defines, options);
+		if (map && !result.functions.empty())
+		{
+			std::vector<std::pair<std::string, int>> sizes = result.functions;
+			std::sort(sizes.begin(), sizes.end(),
+			          [](const std::pair<std::string, int>& a, const std::pair<std::string, int>& b)
+			          {
+				          return a.second > b.second;
+			          });
+			int total = 0;
+			for (const auto& entry : sizes) total += entry.second;
+			printf("%d functions, %d bytes of them\n", int(sizes.size()), total);
+			for (const auto& entry : sizes) printf("  %6d  %s\n", entry.second, entry.first.c_str());
+		}
 		if (!result.ok)
 		{
 			printf("%s(%d): %s\n", result.file.empty() ? name : result.file.c_str(), result.line,
@@ -974,10 +1345,10 @@ namespace
 	}
 
 	int compile_command(const char* path, const char* output, const std::vector<std::string>& includes,
-	                    const std::vector<std::string>& defines)
+	                    const std::vector<std::string>& defines, const cc_options& options, bool map)
 	{
 		std::vector<uint8_t> image;
-		if (!compile_file(path, includes, defines, image, false)) return 1;
+		if (!compile_file(path, includes, defines, image, false, options, map)) return 1;
 
 		char target[MAX_PATH] = {};
 		if (output != nullptr) snprintf(target, sizeof(target), "%s", output);
@@ -1076,41 +1447,104 @@ namespace
 		return 0;
 	}
 
+	// Mounts the folder a program lives in and loads it, which is what every
+	// command that actually runs one needs.
+	bool mount_and_load(const char* path, win32_host& host, machine& m, const char* command_line,
+	                    char* dos_path, int dos_path_size)
+	{
+		uint8_t* data = nullptr;
+		uint32_t size = 0;
+		if (!read_file(path, data, size))
+		{
+			printf("Cannot read %s\n", path);
+			return false;
+		}
+
+		char directory[MAX_PATH] = {};
+		char name[MAX_PATH] = {};
+		split_path(path, directory, MAX_PATH, name, MAX_PATH);
+		if (!host.set_root(directory))
+		{
+			printf("Cannot mount %s\n", directory);
+			delete[] data;
+			return false;
+		}
+
+		m.set_host(&host);
+		snprintf(dos_path, size_t(dos_path_size), "C:\\%s", name);
+		const bool loaded = m.load_program(data, size, dos_path, command_line);
+		if (!loaded) printf("%s\n", m.error());
+		delete[] data;
+		return loaded;
+	}
+
+	// What the compiler's output costs the guest: the size of the image, and the
+	// work the program does to run to completion. Both have to come down before
+	// a program the size of a game is worth attempting, and neither is visible
+	// in the host-side --bench numbers.
+	int cc_bench_command(const char* path, const std::vector<std::string>& includes,
+	                     const std::vector<std::string>& defines, const cc_options& options)
+	{
+		std::vector<uint8_t> image;
+		if (!compile_file(path, includes, defines, image, false, options)) return 1;
+
+		// The program has to exist on a drive the emulator can mount, and it is
+		// not something to leave behind next to the source.
+		char directory[MAX_PATH] = {};
+		if (GetTempPathA(MAX_PATH, directory) == 0) return 1;
+		char target[MAX_PATH] = {};
+		snprintf(target, sizeof(target), "%sCCBENCH.COM", directory);
+		FILE* file = nullptr;
+		if (fopen_s(&file, target, "wb") != 0 || file == nullptr)
+		{
+			printf("Cannot write %s\n", target);
+			return 1;
+		}
+		fwrite(image.data(), 1, image.size(), file);
+		fclose(file);
+
+		win32_host host;
+		machine m;
+		char dos_path[160] = {};
+		if (!mount_and_load(target, host, m, "", dos_path, sizeof(dos_path))) return 1;
+		m.set_render_enabled(false);
+
+		machine_state& s = m.state();
+		for (int frame = 0; frame < 36000 && !m.exited(); ++frame) m.exec(m.cycles_per_frame());
+		if (!m.exited())
+		{
+			printf("The benchmark did not finish\n");
+			return 1;
+		}
+		printf("exit code %u, %llu instructions, %llu cycles\n", s.exit_code,
+		       static_cast<unsigned long long>(s.cpu.instructions),
+		       static_cast<unsigned long long>(s.cycles));
+		if (s.error[0] != 0) printf("first problem: %s\n", s.error);
+		return 0;
+	}
+
 	int run_program(const char* path, int frames, bool show_screen, bool trace, bool show_state,
-	                const char* command_line, int trace_tail, const char* bmp_path)
+	                const char* command_line, int trace_tail, const char* bmp_path, const char* wav_path,
+	                const char* keys, int key_delay)
 	{
 		const DWORD attributes = GetFileAttributesA(path);
 		const bool is_directory = attributes != INVALID_FILE_ATTRIBUTES &&
 			(attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 
-		uint8_t* data = nullptr;
-		uint32_t size = 0;
-		if (!is_directory && !read_file(path, data, size))
-		{
-			printf("Cannot read %s\n", path);
-			return 1;
-		}
-
-		char directory[MAX_PATH] = {};
-		char name[MAX_PATH] = {};
-		if (is_directory) snprintf(directory, sizeof(directory), "%s", path);
-		else split_path(path, directory, MAX_PATH, name, MAX_PATH);
-
 		win32_host host;
 		host.set_verbose(trace);
-		if (!host.set_root(directory))
-		{
-			printf("Cannot mount %s\n", directory);
-			delete[] data;
-			return 1;
-		}
-
 		machine m;
-		m.set_host(&host);
-		m.state().trace = trace;
 
 		if (is_directory)
 		{
+			if (!host.set_root(path))
+			{
+				printf("Cannot mount %s\n", path);
+				return 1;
+			}
+			m.set_host(&host);
+			m.state().trace = trace;
+
 			// A folder mounts the drive and drops you at the shell prompt;
 			// --args is typed in for you.
 			printf("Mounted %s, at the shell prompt\n", host.root());
@@ -1125,16 +1559,10 @@ namespace
 		else
 		{
 			char dos_path[160] = {};
-			snprintf(dos_path, sizeof(dos_path), "C:\\%s", name);
-			if (!m.load_program(data, size, dos_path, command_line))
-			{
-				printf("%s\n", m.error());
-				delete[] data;
-				return 1;
-			}
+			if (!mount_and_load(path, host, m, command_line, dos_path, sizeof(dos_path))) return 1;
+			m.state().trace = trace;
 			printf("Running %s from %s for %d frames\n", dos_path, host.root(), frames);
 		}
-		delete[] data;
 
 		if (trace_tail > 0)
 		{
@@ -1185,7 +1613,39 @@ namespace
 		}
 		else
 		{
-			for (int frame = 0; frame < frames && !m.exited(); ++frame) m.exec(m.cycles_per_frame());
+			constexpr int samples_per_frame = sound_sample_rate / 60;
+			std::vector<int16_t> audio;
+			if (wav_path != nullptr) m.set_audio_enabled(true);
+			int typed = 0;
+			machine_key held = machine_key::none;
+			for (int frame = 0; frame < frames && !m.exited(); ++frame)
+			{
+				if (held != machine_key::none)
+				{
+					m.key_up(held);
+					held = machine_key::none;
+				}
+				else if (keys != nullptr && keys[typed] != 0 && frame % key_delay == 0)
+				{
+					held = key_from_char(keys[typed++]);
+					if (held != machine_key::none) m.key_down(held);
+				}
+				m.exec(m.cycles_per_frame());
+				if (wav_path == nullptr) continue;
+				audio.resize(audio.size() + samples_per_frame);
+				m.generate_audio(audio.data() + audio.size() - samples_per_frame, samples_per_frame);
+			}
+			if (wav_path != nullptr)
+			{
+				int16_t peak = 0;
+				for (const int16_t sample : audio)
+					if (sample > peak || -sample > peak) peak = int16_t(sample < 0 ? -sample : sample);
+				if (write_wav(wav_path, audio.data(), uint32_t(audio.size())))
+					printf("Wrote %s (%.1f s, peak %d of 32767)\n", wav_path,
+					       double(audio.size()) / sound_sample_rate, peak);
+				else
+					printf("Cannot write %s\n", wav_path);
+			}
 		}
 
 		machine_state& s = m.state();
@@ -1220,6 +1680,100 @@ namespace
 		return 0;
 	}
 
+	// What the interpreter actually costs, and therefore what cpu_hz a 60 Hz
+	// frame could afford. Phase 0 of docs/jit.md: nothing about a JIT is worth
+	// starting until these numbers say where the time goes.
+	struct bench_pass
+	{
+		double seconds = 0;
+		uint64_t instructions = 0;
+		uint64_t cycles = 0;
+		int frames = 0;
+		bool exited = false;
+	};
+
+	bench_pass bench_measure(machine& m, double seconds, bool render)
+	{
+		m.set_render_enabled(render);
+		machine_state& s = m.state();
+		const uint64_t instructions = s.cpu.instructions;
+		const uint64_t cycles = s.cycles;
+
+		LARGE_INTEGER frequency{}, start{}, now{};
+		QueryPerformanceFrequency(&frequency);
+		QueryPerformanceCounter(&start);
+
+		bench_pass pass;
+		do
+		{
+			m.exec(m.cycles_per_frame());
+			++pass.frames;
+			QueryPerformanceCounter(&now);
+			pass.seconds = double(now.QuadPart - start.QuadPart) / double(frequency.QuadPart);
+		}
+		while (pass.seconds < seconds && !m.exited());
+
+		pass.instructions = s.cpu.instructions - instructions;
+		pass.cycles = s.cycles - cycles;
+		pass.exited = m.exited();
+		return pass;
+	}
+
+	void bench_report(const char* label, const bench_pass& pass, uint32_t cpu_hz)
+	{
+		const double rate = pass.seconds > 0 ? double(pass.cycles) / pass.seconds : 0;
+		printf("  %-12s %10.1f M %11.1f %10.1fx %14.1f\n",
+		       label,
+		       pass.seconds > 0 ? double(pass.instructions) / pass.seconds / 1e6 : 0,
+		       rate / 1e6,
+		       cpu_hz > 0 ? rate / double(cpu_hz) : 0,
+		       pass.instructions > 0 ? double(pass.cycles) / double(pass.instructions) : 0);
+	}
+
+	int run_bench(const char* path, double seconds, int warmup, uint32_t cpu_hz, const char* command_line)
+	{
+		win32_host host;
+		machine m;
+		char dos_path[160] = {};
+		if (!mount_and_load(path, host, m, command_line, dos_path, sizeof(dos_path))) return 1;
+		if (cpu_hz > 0) m.state().cpu_hz = cpu_hz;
+
+		printf("Benchmarking %s from %s\n", dos_path, host.root());
+		printf("  warmup %d frames, %.1f s per pass, cpu_hz %u\n\n", warmup, seconds, m.state().cpu_hz);
+		for (int frame = 0; frame < warmup && !m.exited(); ++frame) m.exec(m.cycles_per_frame());
+		if (m.exited())
+		{
+			printf("Program exited during warmup with code %u\n", m.state().exit_code);
+			return 1;
+		}
+
+		printf("  pass         instructions/s   guest MHz   real-time   cycles/instr\n");
+		const bench_pass full = bench_measure(m, seconds, true);
+		bench_report("full", full, m.state().cpu_hz);
+		bench_pass bare;
+		if (!full.exited)
+		{
+			bare = bench_measure(m, seconds, false);
+			bench_report("no render", bare, m.state().cpu_hz);
+		}
+		m.set_render_enabled(true);
+
+		const double full_rate = full.seconds > 0 ? double(full.cycles) / full.seconds : 0;
+		const double bare_rate = bare.seconds > 0 ? double(bare.cycles) / bare.seconds : 0;
+		printf("\n");
+		if (bare_rate > 0)
+			printf("  vga_render is %.0f%% of the frame\n", (1.0 - full_rate / bare_rate) * 100.0);
+		printf("  sustains 60 fps at cpu_hz = %.1f MHz (%.1fx the configured %.1f MHz)\n",
+		       full_rate / 1e6, full_rate / double(m.state().cpu_hz), double(m.state().cpu_hz) / 1e6);
+
+		machine_state& s = m.state();
+		printf("  video mode %02Xh %dx%d, %d frames measured%s\n",
+		       s.vga.mode, s.vga.width, s.vga.height, full.frames,
+		       full.exited ? ", program exited during the pass" : "");
+		if (s.error[0] != 0) printf("  first problem: %s\n", s.error);
+		return 0;
+	}
+
 	void usage()
 	{
 		printf(
@@ -1227,10 +1781,12 @@ namespace
 			"  ovrwincli --test                       run the behavioural test suite\n"
 			"  ovrwincli --cc <file.c> [-o out.com] [-I dir] [-D name=value]\n"
 			"                                         compile C to a DOS program\n"
-			"  ovrwincli --info <file>                describe a DOS executable\n"
+			"  ovrwincli --ccbench <file.c> [-I dir] [-D name=value]\n"
+			"                                         compile, run, and report size and work\n"			"  ovrwincli --info <file>                describe a DOS executable\n"
 			"  ovrwincli --disasm <file> [count]      disassemble from the entry point\n"
 			"  ovrwincli --run <file> [options]       run headlessly\n"
-			"  ovrwincli --run <folder> --args \"dir\"  mount a folder and use the shell\n\n"
+			"  ovrwincli --run <folder> --args \"dir\"  mount a folder and use the shell\n"
+			"  ovrwincli --bench <file> [options]     measure interpreter throughput\n\n"
 			"Run options:\n"
 			"  --frames <n>    how many 60 Hz frames to run (default 600)\n"
 			"  --screen        print the text screen afterwards\n"
@@ -1238,7 +1794,20 @@ namespace
 			"  --trace         report DOS and BIOS calls as they happen\n"
 			"  --trace-tail n  print the last n instructions executed\n"
 			"  --bmp <file>    write the final frame as a bitmap\n"
-			"  --args <text>   command line to hand to the program\n");
+			"  --wav <file>    write the audio the program produced\n"
+			"  --keys <text>   type these keys as it runs, one every --key-delay frames\n"
+			"  --key-delay <n> frames between typed keys (default 60)\n"
+			"  --args <text>   command line to hand to the program\n\n"
+			"Bench options:\n"
+			"  --seconds <n>   wall clock per pass (default 3)\n"
+			"  --warmup <n>    frames to run before measuring (default 300)\n"
+			"  --cpu-hz <n>    emulated clock to measure at (default 8000000)\n\n"
+			"Compiler options:\n"
+			"  --inline <n>    how big a body may be, in tokens, to be copied to\n"
+			"                  its call site rather than called (default 24)\n"
+			"  --no-inline     never copy a body to its call site\n"
+			"  --keep-unused   keep the functions nothing can reach\n"
+			"  --map           list what each function cost, largest first\n");
 	}
 }
 
@@ -1257,19 +1826,57 @@ int main(int argc, char** argv)
 		const char* output = nullptr;
 		std::vector<std::string> includes;
 		std::vector<std::string> defines;
+		cc_options options;
+		bool map = false;
 		for (int i = 3; i < argc; ++i)
 		{
 			if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) output = argv[++i];
 			else if (strcmp(argv[i], "-I") == 0 && i + 1 < argc) includes.emplace_back(argv[++i]);
 			else if (strcmp(argv[i], "-D") == 0 && i + 1 < argc) defines.emplace_back(argv[++i]);
+			else if (strcmp(argv[i], "--inline") == 0 && i + 1 < argc) options.inline_limit = atoi(argv[++i]);
+			else if (strcmp(argv[i], "--no-inline") == 0) options.inline_limit = 0;
+			else if (strcmp(argv[i], "--keep-unused") == 0) options.drop_unreachable = false;
+			else if (strcmp(argv[i], "--map") == 0) map = true;
 			else if (strncmp(argv[i], "-D", 2) == 0) defines.emplace_back(argv[i] + 2);
 			else if (strncmp(argv[i], "-I", 2) == 0) includes.emplace_back(argv[i] + 2);
 		}
-		return compile_command(argv[2], output, includes, defines);
+		return compile_command(argv[2], output, includes, defines, options, map);
+	}
+	if (strcmp(command, "--ccbench") == 0 && argc > 2)
+	{
+		std::vector<std::string> includes;
+		std::vector<std::string> defines;
+		cc_options options;
+		for (int i = 3; i < argc; ++i)
+		{
+			if (strcmp(argv[i], "-I") == 0 && i + 1 < argc) includes.emplace_back(argv[++i]);
+			else if (strcmp(argv[i], "-D") == 0 && i + 1 < argc) defines.emplace_back(argv[++i]);
+			else if (strcmp(argv[i], "--inline") == 0 && i + 1 < argc) options.inline_limit = atoi(argv[++i]);
+			else if (strcmp(argv[i], "--no-inline") == 0) options.inline_limit = 0;
+			else if (strcmp(argv[i], "--keep-unused") == 0) options.drop_unreachable = false;
+			else if (strncmp(argv[i], "-D", 2) == 0) defines.emplace_back(argv[i] + 2);
+			else if (strncmp(argv[i], "-I", 2) == 0) includes.emplace_back(argv[i] + 2);
+		}
+		return cc_bench_command(argv[2], includes, defines, options);
 	}
 	if (strcmp(command, "--info") == 0 && argc > 2) return show_info(argv[2]);
 	if (strcmp(command, "--disasm") == 0 && argc > 2)
 		return disassemble_file(argv[2], argc > 3 ? atoi(argv[3]) : 32);
+	if (strcmp(command, "--bench") == 0 && argc > 2)
+	{
+		double seconds = 3.0;
+		int warmup = 300;
+		uint32_t bench_hz = 0;
+		const char* bench_args = "";
+		for (int i = 3; i < argc; ++i)
+		{
+			if (strcmp(argv[i], "--seconds") == 0 && i + 1 < argc) seconds = atof(argv[++i]);
+			else if (strcmp(argv[i], "--warmup") == 0 && i + 1 < argc) warmup = atoi(argv[++i]);
+			else if (strcmp(argv[i], "--cpu-hz") == 0 && i + 1 < argc) bench_hz = uint32_t(atoi(argv[++i]));
+			else if (strcmp(argv[i], "--args") == 0 && i + 1 < argc) bench_args = argv[++i];
+		}
+		return run_bench(argv[2], seconds, warmup, bench_hz, bench_args);
+	}
 
 	const char* path = nullptr;
 	if (strcmp(command, "--run") == 0 && argc > 2) path = argv[2];
@@ -1287,6 +1894,9 @@ int main(int argc, char** argv)
 	int trace_tail = 0;
 	const char* command_line = "";
 	const char* bmp_path = nullptr;
+	const char* wav_path = nullptr;
+	const char* keys = nullptr;
+	int key_delay = 60;
 	for (int i = 2; i < argc; ++i)
 	{
 		if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) frames = atoi(argv[++i]);
@@ -1295,7 +1905,12 @@ int main(int argc, char** argv)
 		else if (strcmp(argv[i], "--state") == 0) state = true;
 		else if (strcmp(argv[i], "--trace-tail") == 0 && i + 1 < argc) trace_tail = atoi(argv[++i]);
 		else if (strcmp(argv[i], "--bmp") == 0 && i + 1 < argc) bmp_path = argv[++i];
+		else if (strcmp(argv[i], "--wav") == 0 && i + 1 < argc) wav_path = argv[++i];
+		else if (strcmp(argv[i], "--keys") == 0 && i + 1 < argc) keys = argv[++i];
+		else if (strcmp(argv[i], "--key-delay") == 0 && i + 1 < argc) key_delay = atoi(argv[++i]);
 		else if (strcmp(argv[i], "--args") == 0 && i + 1 < argc) command_line = argv[++i];
 	}
-	return run_program(path, frames, screen, trace, state, command_line, trace_tail, bmp_path);
+	if (key_delay < 2) key_delay = 2;
+	return run_program(path, frames, screen, trace, state, command_line, trace_tail, bmp_path, wav_path,
+	                   keys, key_delay);
 }

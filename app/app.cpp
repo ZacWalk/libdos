@@ -653,14 +653,19 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR command_line, int show)
 		}
 		if (wave == nullptr)
 		{
+			// A fixed step, not "one frame since we last finished": resetting the
+			// reference to the actual time accumulates the Sleep granularity and
+			// lands at about 57 unevenly spaced frames a second.
+			const LONGLONG period = frequency.QuadPart / 60;
 			LARGE_INTEGER now = {};
 			QueryPerformanceCounter(&now);
-			if ((now.QuadPart - last.QuadPart) * 60 < frequency.QuadPart)
+			if (now.QuadPart - last.QuadPart < period)
 			{
 				Sleep(1);
 				continue;
 			}
-			last = now;
+			last.QuadPart += period;
+			if (now.QuadPart - last.QuadPart > period * 4) last = now; // too far behind to catch up
 		}
 
 		emulator->exec(emulator->cycles_per_frame());

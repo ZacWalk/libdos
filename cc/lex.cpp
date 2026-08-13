@@ -197,6 +197,7 @@ namespace
 		if (is_digit(c) || (c == '.' && s.position + 1 < s.text.size() && is_digit(s.text[s.position + 1])))
 		{
 			long value = 0;
+			bool base_ten = false;
 
 			// A decimal run followed by a point or an exponent is a real, which
 			// this compiler only ever evaluates at compile time.
@@ -270,6 +271,7 @@ namespace
 			}
 			else
 			{
+				base_ten = true;
 				while (s.position < s.text.size() && is_digit(s.text[s.position]))
 					value = value * 10 + (s.text[s.position++] - '0');
 			}
@@ -283,6 +285,10 @@ namespace
 			token.kind = tok::number;
 			token.value = value;
 			if (value > 65535 || value < -32768) token.wide = true;
+			// A decimal literal is never unsigned unless it says so, so one that
+			// does not fit in an int is a long. A hex or octal one may be an
+			// unsigned int first, which is what makes 0xFFFF mean 65535.
+			else if (base_ten && value > 32767) token.wide = true;
 			have = true;
 			return true;
 		}

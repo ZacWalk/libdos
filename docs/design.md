@@ -102,6 +102,13 @@ instructions late-80s games assume: `PUSHA`/`POPA`, `PUSH imm`, `IMUL imm`,
 `ENTER`/`LEAVE`, `INS`/`OUTS`, `BOUND`, and shifts by an immediate count (with
 the 186's 5-bit count mask).
 
+The 80386's two-byte opcodes are there too, in their 16-bit forms, because a
+16-bit program built for a 386 is full of them: near `Jcc`, `SETcc`,
+`MOVZX`/`MOVSX`, `BT`/`BTS`/`BTR`/`BTC`, `BSF`/`BSR`, `SHLD`/`SHRD`,
+`IMUL r,rm`, `FS` and `GS` with their overrides, and `LSS`/`LFS`/`LGS`. What is
+not there is the other half of a 386 - 32-bit operands and addresses, and
+protected mode - so the register file is still 16 bits wide.
+
 State that must survive between `cpu_step` calls - the opcode, the REP mode,
 the segment override, the instruction's first byte - lives in `cpu_state`.
 Everything else is a per-instruction `x86` struct built on the stack.
@@ -143,11 +150,14 @@ keeps every glyph pixel square once the host has scaled it.
 `exec` calls it at the point in the budget where the emulated vertical retrace
 falls, not at the end. A game that waits for retrace before drawing has
 finished by then, so what the host presents is a whole frame rather than a
-half-drawn one. The host in turn composes the picture and its letterbox into an
-off-screen DIB and presents it with a single `BitBlt`, and marks itself
-per-monitor DPI aware so Windows does not stretch the window as a bitmap. Both
-of those are the difference between a steady picture and a flickering, soft
-one.
+half-drawn one. The retrace period is the VGA's ~70 Hz while a host asks for
+60 frames a second, so a budget can span two of them; `exec` samples at the
+*last* retrace inside the budget, because taking the first leaves the picture
+ageing by a varying fraction of a frame and that reads as judder. The host in
+turn composes the picture and its letterbox into an off-screen DIB and presents
+it with a single `BitBlt`, and marks itself per-monitor DPI aware so Windows
+does not stretch the window as a bitmap. Both of those are the difference
+between a steady picture and a flickering, soft one.
 
 Colour goes attribute → attribute palette register → DAC. The DAC default
 depends on the mode, and this matters: a VGA in a 16-colour or text mode loads
@@ -183,6 +193,11 @@ audio, without every note change snapping to a frame boundary.
 The one exception is the AdLib detection sequence, which writes the timer
 control register and reads the status back immediately; that path is tracked
 outside the queue so it can answer at once.
+
+Whether audio is on is the host's setting, not the machine's, so `machine_reset`
+preserves it alongside the host pointer and the clock speed. It has to: the
+shell resets the machine to start a program, and losing the flag there silences
+everything the user actually runs.
 
 ## Command interpreter
 

@@ -158,12 +158,17 @@ on failure. The same binary is the debugger:
 .\bin\ovrwincli64d.exe --run GAME.EXE --trace           # every DOS and BIOS call
 .\bin\ovrwincli64d.exe --run GAME.EXE --trace-tail 200  # the last instructions executed
 .\bin\ovrwincli64d.exe --run GAME.EXE --screen --state  # text screen, registers, memory
+.\bin\ovrwincli64d.exe --run GAME.EXE --keys " \n" --key-delay 240 --bmp shot.bmp
+.\bin\ovrwincli64d.exe --run GAME.EXE --wav sound.wav    # what came out of the speaker
 .\bin\ovrwincli64d.exe --run .\GAME --args "dir" --screen  # mount a folder, use the shell
+.\bin\ovrwincli64d.exe --bench GAME.EXE --seconds 3     # guest instructions a second
 ```
 
 `--trace` and `--trace-tail` are how you find out why a program gave up: the
 first shows which service it asked for and what it got back, the second shows
-the instructions it ran on the way there.
+the instructions it ran on the way there. `--keys` types on the emulated
+keyboard as the program runs, which is what gets a game past its title screen
+without the app.
 
 ## Embedding
 
@@ -172,3 +177,5 @@ link the matching `ovrwin<arch><cfg>.lib`. Implement `host_services` from
 `src/host.h` to decide what the emulated drive is, then feed the machine an
 image (`load_program`), step it with `exec(cycles)`, and read `framebuffer()`
 and `generate_audio()`. `app/app.cpp` is a complete worked host.
+
+Contributing, or working on this with an AI agent? See [AGENTS.md](AGENTS.md).
