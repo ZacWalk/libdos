@@ -372,6 +372,13 @@ int emitter::encode(const instruction& in, int position, std::vector<uint8_t>* i
 		modrm(in.source, in.dest.reg);
 		break;
 
+	case op::movsx:
+	case op::movzx:
+		out.put(0x0f);
+		out.put(in.code == op::movzx ? 0xb6 : 0xbe); // the source is always a byte
+		modrm(in.source, in.dest.reg);
+		break;
+
 	case op::add: case op::adc: case op::sub: case op::sbb:
 	case op::and_: case op::or_: case op::xor_: case op::cmp:
 	{
@@ -520,7 +527,20 @@ int emitter::encode(const instruction& in, int position, std::vector<uint8_t>* i
 		break;
 
 	case op::setcc:
-		// An 8086 has no SETcc, so the value comes from a branch over a clear.
+		// A 386 sets the byte and clears the rest; an 8086 has to branch
+		// over a clear, because it has no SETcc at all.
+		if (cpu >= cc_cpu::i80386 && in.dest.reg < 4)
+		{
+			out.put(0x0f);
+			out.put(codes_for(in.test).taken + 0x20);
+			out.put(0xc0 | in.dest.reg);
+			if (w != 0)
+			{
+				out.put(0x30); // xor high,high
+				out.put(0xc0 | ((in.dest.reg + 4) << 3) | (in.dest.reg + 4));
+			}
+			break;
+		}
 		out.put((w != 0 ? 0xb8 : 0xb0) + in.dest.reg);
 		if (w != 0) out.word(1);
 		else out.put(1);
@@ -558,6 +578,15 @@ int emitter::encode(const instruction& in, int position, std::vector<uint8_t>* i
 			out.put(0);
 			break;
 		}
+		// A 386 branches that far in one instruction. An 8086 has no near
+		// conditional branch, so it jumps over an unconditional one.
+		if (cpu >= cc_cpu::i80386)
+		{
+			out.put(0x0f);
+			out.put(codes_for(in.test).taken + 0x10);
+			out.word(0);
+			break;
+		}
 		out.put(codes_for(in.test).inverse);
 		out.put(0x03);
 		out.put(0xe9);
@@ -591,7 +620,7 @@ void emitter::lay_out(int code_base)
 	for (instruction& in : code)
 	{
 		if (in.code == op::jmp) in.length = 3;
-		else if (in.code == op::jcc) in.length = 5;
+		else if (in.code == op::jcc) in.length = cpu >= cc_cpu::i80386 ? 4 : 5;
 		else in.length = 0;
 	}
 
@@ -687,7 +716,8 @@ bool emitter::resolve(int code_base, int data_base)
 				image[size_t(in.offset) + 1] = uint8_t(target - (in.offset + 2));
 				continue;
 			}
-			if (in.code == op::jcc) put_word(in.offset + 3, target - (in.offset + in.length));
+			if (in.code == op::jcc)
+				put_word(in.offset + (cpu >= cc_cpu::i80386 ? 2 : 3), target - (in.offset + in.length));
 			else put_word(in.offset + 1, target - (in.offset + in.length));
 			continue;
 		}

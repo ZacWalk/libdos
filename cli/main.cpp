@@ -737,9 +737,14 @@ namespace
 		bool load(const char*, std::string&) override { return false; }
 	};
 
+	// Every compiler test runs at each CPU level, so the 386 encodings are
+	// covered by the same answers rather than by a separate set of checks.
+	cc_cpu compiling_for = cc_cpu::i8086;
+
 	bool compile_text(const char* source, std::vector<uint8_t>& image, const char* name,
-	                  const cc_options& options = {})
+	                  cc_options options = {})
 	{
+		options.cpu = compiling_for;
 		no_sources sources;
 		const cc_result result = cc_compile(source, name, sources, {}, options);
 		if (!result.ok) printf("      %s(%d): %s\n", name, result.line, result.message.c_str());
@@ -1259,7 +1264,12 @@ namespace
 		test_program_run();
 		test_sound();
 		test_shell();
-		test_compiler();
+		for (const cc_cpu cpu : {cc_cpu::i8086, cc_cpu::i80386})
+		{
+			compiling_for = cpu;
+			test_compiler();
+		}
+		compiling_for = cc_cpu::i8086;
 		test_keyboard();
 		test_disassembler();
 
@@ -1807,6 +1817,7 @@ namespace
 			"                  its call site rather than called (default 24)\n"
 			"  --no-inline     never copy a body to its call site\n"
 			"  --keep-unused   keep the functions nothing can reach\n"
+			"  --cpu <n>       8086 or 386; a 386 still produces a 16-bit .COM\n"
 			"  --map           list what each function cost, largest first\n");
 	}
 }
@@ -1837,6 +1848,8 @@ int main(int argc, char** argv)
 			else if (strcmp(argv[i], "--no-inline") == 0) options.inline_limit = 0;
 			else if (strcmp(argv[i], "--keep-unused") == 0) options.drop_unreachable = false;
 			else if (strcmp(argv[i], "--map") == 0) map = true;
+			else if (strcmp(argv[i], "--cpu") == 0 && i + 1 < argc)
+				options.cpu = atoi(argv[++i]) >= 386 ? cc_cpu::i80386 : cc_cpu::i8086;
 			else if (strncmp(argv[i], "-D", 2) == 0) defines.emplace_back(argv[i] + 2);
 			else if (strncmp(argv[i], "-I", 2) == 0) includes.emplace_back(argv[i] + 2);
 		}
@@ -1854,6 +1867,8 @@ int main(int argc, char** argv)
 			else if (strcmp(argv[i], "--inline") == 0 && i + 1 < argc) options.inline_limit = atoi(argv[++i]);
 			else if (strcmp(argv[i], "--no-inline") == 0) options.inline_limit = 0;
 			else if (strcmp(argv[i], "--keep-unused") == 0) options.drop_unreachable = false;
+			else if (strcmp(argv[i], "--cpu") == 0 && i + 1 < argc)
+				options.cpu = atoi(argv[++i]) >= 386 ? cc_cpu::i80386 : cc_cpu::i8086;
 			else if (strncmp(argv[i], "-D", 2) == 0) defines.emplace_back(argv[i] + 2);
 			else if (strncmp(argv[i], "-I", 2) == 0) includes.emplace_back(argv[i] + 2);
 		}

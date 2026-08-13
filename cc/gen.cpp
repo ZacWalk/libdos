@@ -246,6 +246,8 @@ namespace
 		explicit generator(cc_token_stream& tokens, const cc_options& options)
 			: tokens_(tokens), options_(options)
 		{
+			target_.cpu = options.cpu;
+			e_.cpu = options.cpu;
 		}
 
 		void run();

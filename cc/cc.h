@@ -17,6 +17,8 @@
 #include <utility>
 #include <vector>
 
+#include "target.h"
+
 // The compiler never opens a file. A caller supplies source text the same way
 // a host supplies the emulated drive.
 class cc_sources
@@ -54,6 +56,10 @@ struct cc_options
 
 	// Leave out the functions nothing can reach.
 	bool drop_unreachable = true;
+
+	// Which instructions the generated code may use. A 386 still produces a
+	// 16-bit .COM; it just has more to say it with.
+	cc_cpu cpu = cc_cpu::i8086;
 };
 
 // Each define is either NAME or NAME=VALUE, as a command line spells it.

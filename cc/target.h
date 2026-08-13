@@ -19,9 +19,20 @@ enum class cc_machine
 	x64, // 64-bit, sixteen general registers
 };
 
+// Which instructions the back end may use, which is a separate question from
+// the width it compiles for: a 16-bit DOS program built for a 386 is still
+// 16-bit, it just has SETcc, MOVZX and a near conditional branch available.
+enum class cc_cpu
+{
+	i8086,
+	i80186,
+	i80386,
+};
+
 struct cc_target
 {
 	cc_machine machine = cc_machine::i8088;
+	cc_cpu cpu = cc_cpu::i8086;
 
 	int int_size = 2;
 	int long_size = 4;
@@ -46,6 +57,7 @@ struct cc_target
 		switch (m)
 		{
 		case cc_machine::i386:
+			t.cpu = cc_cpu::i80386;
 			t.int_size = 4;
 			t.pointer_size = 4;
 			t.native_width = 4;
@@ -53,6 +65,7 @@ struct cc_target
 			t.address_limit = 0x7fffffff;
 			break;
 		case cc_machine::x64:
+			t.cpu = cc_cpu::i80386;
 			t.int_size = 4;
 			t.pointer_size = 8;
 			t.native_width = 8;
