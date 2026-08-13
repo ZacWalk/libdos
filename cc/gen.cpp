@@ -12,6 +12,7 @@
 #include "cc.h"
 #include "emit.h"
 #include "lex.h"
+#include "target.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -22,9 +23,6 @@
 
 namespace
 {
-	constexpr int com_origin = 0x100;
-	constexpr int stack_size = 2048;
-
 	struct compile_error
 	{
 		std::string message;
@@ -257,6 +255,7 @@ namespace
 	private:
 		cc_token_stream& tokens_;
 		cc_options options_;
+		cc_target target_;
 		emitter e_;
 		std::vector<uint8_t> data_;
 		std::vector<data_fixup> data_fixups_;
@@ -371,7 +370,7 @@ namespace
 				if (types_[i].kind == ty_pointer && types_[i].base == base) return int(i);
 			type_info info;
 			info.kind = ty_pointer;
-			info.size = 2;
+			info.size = target_.pointer_size;
 			info.base = base;
 			return add_type(info);
 		}
@@ -4255,19 +4254,19 @@ namespace
 		info.size = 1;
 		t_uchar_ = add_type(info);
 		info.kind = ty_int;
-		info.size = 2;
+		info.size = target_.int_size;
 		t_int_ = add_type(info);
 		info.kind = ty_uint;
-		info.size = 2;
+		info.size = target_.int_size;
 		t_uint_ = add_type(info);
 		info.kind = ty_long;
-		info.size = 4;
+		info.size = target_.long_size;
 		t_long_ = add_type(info);
 		info.kind = ty_ulong;
-		info.size = 4;
+		info.size = target_.long_size;
 		t_ulong_ = add_type(info);
 		info.kind = ty_real;
-		info.size = 4;
+		info.size = target_.long_size;
 		t_real_ = add_type(info);
 
 		emit_startup();
@@ -4370,14 +4369,14 @@ namespace
 		e_.lay_out();
 		// Data follows the code, so its address is only known after that.
 		while (e_.code.size() % 2 != 0) e_.byte(0x90);
-		const int data_base = com_origin + int(e_.code.size());
+		const int data_base = target_.code_origin + int(e_.code.size());
 
 		code_size = int(e_.code.size());
 		data_size = int(data_.size());
 
 		const int image_end = data_base + data_size;
-		const int stack_top = (image_end + stack_size + 1) & ~1;
-		if (stack_top > 0xfff0)
+		const int stack_top = (image_end + target_.stack_size + 1) & ~1;
+		if (stack_top > target_.address_limit)
 		{
 			char message[160] = {};
 			snprintf(message, sizeof(message),
@@ -4387,7 +4386,7 @@ namespace
 		}
 		e_.set_value(stack_patch_, stack_top);
 		e_.set_value(paragraph_patch_, (stack_top + 15) / 16);
-		if (!e_.resolve(com_origin, data_base))
+		if (!e_.resolve(target_.code_origin, data_base))
 			throw compile_error{"a jump was never given somewhere to go", 0, 0};
 
 		// The data section holds pointers of its own, and it does not move.
@@ -4401,7 +4400,7 @@ namespace
 		{
 			const symbol& entry = symbols_[size_t(fixup.function)];
 			if (!entry.defined) throw compile_error{("undefined function: " + entry.name).c_str(), 0, 0};
-			put_word(fixup.position, com_origin + e_.offset_of(entry.label));
+			put_word(fixup.position, target_.code_origin + e_.offset_of(entry.label));
 		}
 
 		for (const data_fixup& fixup : data_fixups_)
