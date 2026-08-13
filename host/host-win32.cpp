@@ -344,6 +344,28 @@ void win32_host::clock(int& year, int& month, int& day, int& weekday, int& hour,
 	hundredths = now.wMilliseconds / 10;
 }
 
+void* win32_host::code_alloc(uint32_t size)
+{
+	if (size == 0) return nullptr;
+	return VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+}
+
+void win32_host::code_free(void* code, uint32_t size)
+{
+	(void)size;
+	if (code != nullptr) VirtualFree(code, 0, MEM_RELEASE);
+}
+
+// The page is writable until this is called and executable afterwards, so it is
+// never both at once.
+void win32_host::code_commit(void* code, uint32_t size)
+{
+	if (code == nullptr || size == 0) return;
+	DWORD was = 0;
+	if (VirtualProtect(code, size, PAGE_EXECUTE_READ, &was))
+		FlushInstructionCache(GetCurrentProcess(), code, size);
+}
+
 void win32_host::trace(const char* text)
 {
 	if (verbose_) printf("[host] %s\n", text);
