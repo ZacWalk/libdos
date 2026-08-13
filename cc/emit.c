@@ -682,6 +682,7 @@ static int encode_8086(const emitter* e, instruction* in, int position, cc_list*
 		{
 			put(&out, 0xeb);
 			in->fixup = out.count;
+			in->fixup_width = 1;
 			put(&out, 0);
 			break;
 		}
@@ -695,6 +696,7 @@ static int encode_8086(const emitter* e, instruction* in, int position, cc_list*
 		{
 			put(&out, codes_for(in->test).taken);
 			in->fixup = out.count;
+			in->fixup_width = 1;
 			put(&out, 0);
 			break;
 		}
@@ -732,6 +734,7 @@ static int encode_8086(const emitter* e, instruction* in, int position, cc_list*
 int emit_encode(const emitter* e, instruction* in, int position, cc_list* into)
 {
 	in->fixup = 0;
+	in->fixup_width = 2;
 	return e->machine == cc_machine_x64 ? emit_encode_x64(e, in, position, into)
 	                                    : encode_8086(e, in, position, into);
 }
@@ -870,9 +873,23 @@ static void image_long(emitter* e, int at, int value)
 	EMIT_IMAGE(*e, at + 3) = (uint8_t)((value >> 24) & 0xff);
 }
 
+static void image_put(emitter* e, int at, int value, int width)
+{
+	if (width == 1)
+	{
+		EMIT_IMAGE(*e, at) = (uint8_t)value;
+		return;
+	}
+	if (width == 4)
+	{
+		image_long(e, at, value);
+		return;
+	}
+	image_word(e, at, value);
+}
+
 int emit_resolve(emitter* e, int code_base, int data_base)
 {
-	const int relative = e->machine == cc_machine_x64;
 	int i;
 
 	for (i = 0; i < e->code.count; ++i)
@@ -895,9 +912,7 @@ int emit_resolve(emitter* e, int code_base, int data_base)
 			index = EMIT_LABEL(*e, in->label);
 			target = index < e->code.count ? EMIT_CODE(*e, index).offset : e->image.count;
 			displacement = target - (in->offset + in->length);
-			if (in->length == 2) EMIT_IMAGE(*e, in->offset + in->fixup) = (uint8_t)displacement;
-			else if (relative) image_long(e, in->offset + in->fixup, displacement);
-			else image_word(e, in->offset + in->fixup, displacement);
+			image_put(e, in->offset + in->fixup, displacement, in->fixup_width);
 			continue;
 		}
 
@@ -921,14 +936,10 @@ int emit_resolve(emitter* e, int code_base, int data_base)
 				index = EMIT_LABEL(*e, o->target);
 				value = code_base + (index < e->code.count ? EMIT_CODE(*e, index).offset : e->image.count);
 			}
-			/* Where an address is reached from the instruction after it, what
-			 * goes in the field is the distance rather than the address. */
-			if (relative && o->kind == operand_kind_memory)
-				value -= code_base + in->offset + in->length;
-			if (o->reference == reference_kind_deferred && !relative)
-				image_word(e, in->offset + in->fixup, value);
-			else if (relative) image_long(e, in->offset + in->fixup, value);
-			else image_word(e, in->offset + in->fixup, value);
+			/* Both machines address by the number itself: on the 8086 it is an
+			 * offset into the segment, on x64 an offset into the block. Only
+			 * how wide the field is differs, and the encoder said. */
+			image_put(e, in->offset + in->fixup, value, in->fixup_width);
 		}
 	}
 	return 1;
