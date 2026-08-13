@@ -72,8 +72,8 @@ public:
 		(void)size;
 	}
 
-	// Called once the bytes are written. A host that keeps code pages
-	// write-protected flips them here; one with a plain RWX page need not.
+	// Called once the bytes are written, so a host can flush whatever caches
+	// the instruction fetch path keeps.
 	virtual void code_commit(void* code, uint32_t size)
 	{
 		(void)code;

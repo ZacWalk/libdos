@@ -1160,6 +1160,85 @@ namespace
 		}
 	}
 
+	// Compiles for the machine this is running on, puts the result somewhere it
+	// can be executed, and calls it. The same source through the same front end
+	// and a different back end has to give the same answer as the emulator did,
+	// which is the only claim a second back end is really making.
+	bool run_native(const std::vector<uint8_t>& image, host_services& host, int& answer)
+	{
+#if !defined(_M_X64) && !defined(__x86_64__)
+		(void)image;
+		(void)host;
+		(void)answer;
+		return false; // the back end emits x64, and this is not one
+#else
+		const uint32_t size = uint32_t(image.size());
+		void* code = host.code_alloc(size);
+		if (code == nullptr) return false;
+		memcpy(code, image.data(), size);
+		host.code_commit(code, size);
+
+		using entry_point = int (*)();
+		const entry_point run = reinterpret_cast<entry_point>(code);
+		answer = run() & 0xffff;
+		host.code_free(code, size);
+		return true;
+#endif
+	}
+
+	void test_native_backend()
+	{
+		// No pointers and no 32-bit arithmetic: the front end still makes both
+		// of those 16 bits wide, which the host cannot honour.
+		const char* source =
+			"int fib(int n) { if (n < 2) return n; return fib(n - 1) + fib(n - 2); }\n"
+			"int counter;\n"
+			"int scale(int v, int f) { return (v * f) >> 2; }\n"
+			"int main(void) {\n"
+			"  int i; int sum;\n"
+			"  sum = 0;\n"
+			"  for (i = 0; i < 10; i = i + 1) sum = sum + scale(i, 6);\n"
+			"  counter = 0;\n"
+			"  while (counter < 5) counter = counter + 1;\n"
+			"  switch (counter) { case 4: return 1; case 5: break; default: return 2; }\n"
+			"  return sum + fib(12) + counter;\n"
+			"}\n";
+
+		// What the interpreter says it means, through the 8086 back end.
+		std::vector<uint8_t> guest;
+		cc_options as_dos;
+		as_dos.cpu = cc_cpu::i8086;
+		{
+			no_sources sources;
+			const cc_result result = cc_compile(source, "native.c", sources, {}, as_dos);
+			check(result.ok, "the differential program compiles for the 8086");
+			guest = result.image;
+		}
+		if (guest.empty()) return;
+
+		machine m;
+		int expected = -1;
+		if (m.load_program(guest.data(), uint32_t(guest.size()), "C:\\NATIVE.COM", ""))
+		{
+			for (int frame = 0; frame < 400 && !m.exited(); ++frame) m.exec(m.cycles_per_frame());
+			if (m.exited()) expected = int(m.exit_code());
+		}
+		check(expected == 214, "the emulator agrees on what the program means");
+
+		cc_options as_host;
+		as_host.machine = cc_machine::x64;
+		no_sources sources;
+		const cc_result native = cc_compile(source, "native.c", sources, {}, as_host);
+		check(native.ok, "the same program compiles for the host");
+		if (!native.ok) return;
+
+		win32_host host;
+		int answer = -1;
+		if (!run_native(native.image, host, answer)) return; // not a host that can run it
+		check_equal(uint32_t(answer), uint32_t(expected),
+		            "the host back end computes what the emulator computed");
+	}
+
 	// A key travels from the host through the keyboard controller, IRQ 1 and
 	// the BIOS before anything can read it. Pushing straight into the BIOS
 	// buffer, as test_shell does, skips all of that.
@@ -1270,6 +1349,7 @@ namespace
 			test_compiler();
 		}
 		compiling_for = cc_cpu::i8086;
+		test_native_backend();
 		test_keyboard();
 		test_disassembler();
 
@@ -1533,6 +1613,37 @@ namespace
 		return 0;
 	}
 
+	// Compiles for the machine this is running on and calls the result. The
+	// same source through the same front end and a different back end has to
+	// give the same answer the emulator gave, which is the only claim a second
+	// back end is really making.
+	int cc_native_command(const char* path, const std::vector<std::string>& includes,
+	                      const std::vector<std::string>& defines, bool dump)
+	{
+		cc_options options;
+		options.machine = cc_machine::x64;
+		std::vector<uint8_t> image;
+		if (!compile_file(path, includes, defines, image, false, options)) return 1;
+
+		if (dump)
+		{
+			for (size_t i = 0; i < image.size(); ++i)
+				printf("%02X%s", image[i], (i + 1) % 16 == 0 ? "\n" : " ");
+			printf("\n");
+		}
+		fflush(stdout); // a fault in generated code takes the process, buffer and all
+
+		win32_host host;
+		int answer = 0;
+		if (!run_native(image, host, answer))
+		{
+			printf("This build cannot run what it just compiled\n");
+			return 1;
+		}
+		printf("returned %d\n", answer);
+		return 0;
+	}
+
 	int run_program(const char* path, int frames, bool show_screen, bool trace, bool show_state,
 	                const char* command_line, int trace_tail, const char* bmp_path, const char* wav_path,
 	                const char* keys, int key_delay)
@@ -1792,7 +1903,9 @@ namespace
 			"  ovrwincli --cc <file.c> [-o out.com] [-I dir] [-D name=value]\n"
 			"                                         compile C to a DOS program\n"
 			"  ovrwincli --ccbench <file.c> [-I dir] [-D name=value]\n"
-			"                                         compile, run, and report size and work\n"			"  ovrwincli --info <file>                describe a DOS executable\n"
+			"                                         compile, run, and report size and work\n"
+			"  ovrwincli --ccnative <file.c> [--dump] compile for this machine and run it\n"
+			"  ovrwincli --info <file>                describe a DOS executable\n"
 			"  ovrwincli --disasm <file> [count]      disassemble from the entry point\n"
 			"  ovrwincli --run <file> [options]       run headlessly\n"
 			"  ovrwincli --run <folder> --args \"dir\"  mount a folder and use the shell\n"
@@ -1874,8 +1987,20 @@ int main(int argc, char** argv)
 		}
 		return cc_bench_command(argv[2], includes, defines, options);
 	}
-	if (strcmp(command, "--info") == 0 && argc > 2) return show_info(argv[2]);
-	if (strcmp(command, "--disasm") == 0 && argc > 2)
+	if (strcmp(command, "--ccnative") == 0 && argc > 2)
+	{
+		std::vector<std::string> includes;
+		std::vector<std::string> defines;
+		bool dump = false;
+		for (int i = 3; i < argc; ++i)
+		{
+			if (strcmp(argv[i], "-I") == 0 && i + 1 < argc) includes.emplace_back(argv[++i]);
+			else if (strcmp(argv[i], "-D") == 0 && i + 1 < argc) defines.emplace_back(argv[++i]);
+			else if (strcmp(argv[i], "--dump") == 0) dump = true;
+		}
+		return cc_native_command(argv[2], includes, defines, dump);
+	}
+	if (strcmp(command, "--info") == 0 && argc > 2) return show_info(argv[2]);	if (strcmp(command, "--disasm") == 0 && argc > 2)
 		return disassemble_file(argv[2], argc > 3 ? atoi(argv[3]) : 32);
 	if (strcmp(command, "--bench") == 0 && argc > 2)
 	{

@@ -347,7 +347,9 @@ void win32_host::clock(int& year, int& month, int& day, int& weekday, int& hour,
 void* win32_host::code_alloc(uint32_t size)
 {
 	if (size == 0) return nullptr;
-	return VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+	// A compiled image carries its own data section, which it writes to, so
+	// the block has to stay writable as well as executable.
+	return VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
 }
 
 void win32_host::code_free(void* code, uint32_t size)
@@ -356,14 +358,9 @@ void win32_host::code_free(void* code, uint32_t size)
 	if (code != nullptr) VirtualFree(code, 0, MEM_RELEASE);
 }
 
-// The page is writable until this is called and executable afterwards, so it is
-// never both at once.
 void win32_host::code_commit(void* code, uint32_t size)
 {
-	if (code == nullptr || size == 0) return;
-	DWORD was = 0;
-	if (VirtualProtect(code, size, PAGE_EXECUTE_READ, &was))
-		FlushInstructionCache(GetCurrentProcess(), code, size);
+	if (code != nullptr && size != 0) FlushInstructionCache(GetCurrentProcess(), code, size);
 }
 
 void win32_host::trace(const char* text)
