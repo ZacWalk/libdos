@@ -7,6 +7,7 @@
 #include "../src/debug.h"
 #include "../host/host-win32.h"
 #include "../cc/cc.h"
+#include "../cc/support.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -739,7 +740,7 @@ namespace
 
 	// Every compiler test runs at each CPU level, so the 386 encodings are
 	// covered by the same answers rather than by a separate set of checks.
-	cc_cpu compiling_for = cc_cpu::i8086;
+	cc_cpu compiling_for = cc_cpu_i8086;
 
 	bool compile_text(const char* source, std::vector<uint8_t>& image, const char* name,
 	                  cc_options options = {})
@@ -761,6 +762,104 @@ namespace
 		char screen[8192] = {};
 		m.text_screen(screen, sizeof(screen));
 		return screen;
+	}
+
+	// The memory model the C compiler is being rewritten onto: an arena, a
+	// growable list, a sorted table and interned names. Everything the ported
+	// front end will stand on, so it is worth pinning on its own.
+	void test_support()
+	{
+		cc_arena arena;
+		cc_arena_init(&arena, 1024); // small, so the block chain is exercised
+
+		{
+			char* first = (char*)cc_arena_alloc(&arena, 3);
+			char* second = (char*)cc_arena_alloc(&arena, 1);
+			char* large = (char*)cc_arena_alloc(&arena, 40000);
+			check(first != nullptr && second != nullptr && large != nullptr, "the arena hands out memory");
+			check((reinterpret_cast<uintptr_t>(second) & 7) == 0, "every allocation is aligned");
+			check(second >= first + 3, "allocations do not overlap");
+			check(first[0] == 0 && large[39999] == 0, "an allocation arrives zeroed");
+			memset(large, 0x5a, 40000); // a block of its own, so this must not tread on anything
+			check(first[0] == 0, "an oversized allocation gets its own block");
+
+			const char* text = cc_arena_copy(&arena, "abcdef", 3);
+			check(text != nullptr && strcmp(text, "abc") == 0, "a copy is terminated at the length given");
+		}
+
+		{
+			cc_list list;
+			cc_list_init(&list, int(sizeof(int)));
+			for (int i = 0; i < 100; ++i) *(int*)cc_list_add(&list) = i * 3;
+			check(list.count == 100 && CC_AT(list, int, 99) == 297, "a list grows and keeps its contents");
+
+			cc_list_set_count(&list, 10);
+			check(list.count == 10 && CC_AT(list, int, 9) == 27, "rewinding a list keeps what is left");
+			cc_list_set_count(&list, 12);
+			check(CC_AT(list, int, 11) == 0, "extending a list zeroes what it adds");
+			cc_list_free(&list);
+		}
+
+		{
+			cc_map map;
+			cc_map_init(&map);
+			const int keys[] = {40, 10, 30, 20, 10};
+			for (int i = 0; i < 5; ++i) cc_map_set(&map, keys[i], keys[i] * 2);
+			check(cc_map_count(&map) == 4, "setting a key twice replaces it");
+			check(cc_map_get(&map, 30, -1) == 60, "a key can be found");
+			check(cc_map_get(&map, 35, -1) == -1, "a missing key gives the default");
+			check(cc_map_pair(&map, 0)->key == 10 && cc_map_pair(&map, 3)->key == 40,
+			      "a map is walked in key order whatever order it was filled in");
+			cc_map_free(&map);
+		}
+
+		{
+			cc_names names;
+			cc_names_init(&names, &arena);
+			const int a = cc_intern(&names, "counter", -1);
+			const int b = cc_intern(&names, "counter_x", 7);
+			const int c = cc_intern(&names, "counters", -1);
+			check(a != 0 && a == b, "the same name interns to the same id");
+			check(c != a, "a longer name is a different name");
+			check(strcmp(cc_name_text(&names, a), "counter") == 0, "an id gives its text back");
+			check(strcmp(cc_name_text(&names, 0), "") == 0, "zero is no name at all");
+
+			// Enough to force the table to grow more than once, all still distinct.
+			char name[32] = {};
+			for (int i = 0; i < 1000; ++i)
+			{
+				snprintf(name, sizeof(name), "name_%d", i);
+				cc_intern(&names, name, -1);
+			}
+			check(cc_names_count(&names) == 1002, "growing the table keeps every name exactly once");
+			check(cc_intern(&names, "name_500", -1) == cc_intern(&names, "name_500", -1),
+			      "a name interned before the table grew is still found");
+			cc_names_free(&names);
+		}
+
+		{
+			size_t length = 0;
+			const char* text = cc_normalise_source(&arena, "a\r\nb\rc\n", 7, &length);
+			check(text != nullptr && strcmp(text, "a\nb\nc\n") == 0 && length == 6,
+			      "line endings become one thing");
+
+			text = cc_normalise_source(&arena, "\xef\xbb\xbf" "int x;", 9, &length);
+			check(strcmp(text, "int x;") == 0, "a UTF-8 byte order mark is dropped");
+
+			text = cc_normalise_source(&arena, "code\x1a" "junk", 9, &length);
+			check(strcmp(text, "code") == 0 && length == 4, "the text stops at Ctrl+Z");
+
+			const char utf16[] = "\xff\xfe" "i\0n\0t\0 \0=\0";
+			text = cc_normalise_source(&arena, utf16, 12, &length);
+			check(strcmp(text, "int =") == 0, "UTF-16 becomes UTF-8");
+
+			const char pair[] = "\xff\xfe" "\x3d\xd8\x00\xde";
+			text = cc_normalise_source(&arena, pair, 6, &length);
+			check(length == 4 && (unsigned char)text[0] == 0xf0, "a surrogate pair becomes four bytes");
+		}
+
+		cc_arena_free(&arena);
+		check(arena.block == nullptr, "the arena gives everything back at once");
 	}
 
 	void test_compiler()
@@ -1207,7 +1306,7 @@ namespace
 		// What the interpreter says it means, through the 8086 back end.
 		std::vector<uint8_t> guest;
 		cc_options as_dos;
-		as_dos.cpu = cc_cpu::i8086;
+		as_dos.cpu = cc_cpu_i8086;
 		{
 			no_sources sources;
 			const cc_result result = cc_compile(source, "native.c", sources, {}, as_dos);
@@ -1226,7 +1325,7 @@ namespace
 		check(expected == 214, "the emulator agrees on what the program means");
 
 		cc_options as_host;
-		as_host.machine = cc_machine::x64;
+		as_host.machine = cc_machine_x64;
 		no_sources sources;
 		const cc_result native = cc_compile(source, "native.c", sources, {}, as_host);
 		check(native.ok, "the same program compiles for the host");
@@ -1343,12 +1442,13 @@ namespace
 		test_program_run();
 		test_sound();
 		test_shell();
-		for (const cc_cpu cpu : {cc_cpu::i8086, cc_cpu::i80386})
+		test_support();
+		for (const cc_cpu cpu : {cc_cpu_i8086, cc_cpu_i80386})
 		{
 			compiling_for = cpu;
 			test_compiler();
 		}
-		compiling_for = cc_cpu::i8086;
+		compiling_for = cc_cpu_i8086;
 		test_native_backend();
 		test_keyboard();
 		test_disassembler();
@@ -1621,7 +1721,7 @@ namespace
 	                      const std::vector<std::string>& defines, bool dump)
 	{
 		cc_options options;
-		options.machine = cc_machine::x64;
+		options.machine = cc_machine_x64;
 		std::vector<uint8_t> image;
 		if (!compile_file(path, includes, defines, image, false, options)) return 1;
 
@@ -1962,7 +2062,7 @@ int main(int argc, char** argv)
 			else if (strcmp(argv[i], "--keep-unused") == 0) options.drop_unreachable = false;
 			else if (strcmp(argv[i], "--map") == 0) map = true;
 			else if (strcmp(argv[i], "--cpu") == 0 && i + 1 < argc)
-				options.cpu = atoi(argv[++i]) >= 386 ? cc_cpu::i80386 : cc_cpu::i8086;
+				options.cpu = atoi(argv[++i]) >= 386 ? cc_cpu_i80386 : cc_cpu_i8086;
 			else if (strncmp(argv[i], "-D", 2) == 0) defines.emplace_back(argv[i] + 2);
 			else if (strncmp(argv[i], "-I", 2) == 0) includes.emplace_back(argv[i] + 2);
 		}
@@ -1981,7 +2081,7 @@ int main(int argc, char** argv)
 			else if (strcmp(argv[i], "--no-inline") == 0) options.inline_limit = 0;
 			else if (strcmp(argv[i], "--keep-unused") == 0) options.drop_unreachable = false;
 			else if (strcmp(argv[i], "--cpu") == 0 && i + 1 < argc)
-				options.cpu = atoi(argv[++i]) >= 386 ? cc_cpu::i80386 : cc_cpu::i8086;
+				options.cpu = atoi(argv[++i]) >= 386 ? cc_cpu_i80386 : cc_cpu_i8086;
 			else if (strncmp(argv[i], "-D", 2) == 0) defines.emplace_back(argv[i] + 2);
 			else if (strncmp(argv[i], "-I", 2) == 0) includes.emplace_back(argv[i] + 2);
 		}

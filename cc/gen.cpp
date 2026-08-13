@@ -246,17 +246,19 @@ namespace
 		explicit generator(cc_token_stream& tokens, const cc_options& options)
 			: tokens_(tokens), options_(options)
 		{
+			cc_target_init(&target_);
+
 			// Only the image shape changes with the machine. The widths stay 16
 			// bits until the front end is parameterised over them, so an x64 build
 			// is 16-bit arithmetic encoded for the host, not a 64-bit program.
-			if (options.machine == cc_machine::x64)
+			if (options.machine == cc_machine_x64)
 			{
-				target_.machine = cc_machine::x64;
+				target_.machine = cc_machine_x64;
 				target_.frame_base = 16;
-				target_.hosted = true;
+				target_.hosted = 1;
 				target_.code_origin = 0;
 				target_.address_limit = 0x7fffffff;
-				target_.cpu = cc_cpu::i80386;
+				target_.cpu = cc_cpu_i80386;
 			}
 			else target_.cpu = options.cpu;
 			e_.cpu = target_.cpu;
@@ -726,7 +728,7 @@ namespace
 	// the register allocator can see the slot is not a whole word.
 	void generator::load_byte_widened(const operand& from, bool is_signed, int data_offset)
 	{
-		if (target_.cpu >= cc_cpu::i80386)
+		if (target_.cpu >= cc_cpu_i80386)
 		{
 			e_.emit(is_signed ? ::op::movsx : ::op::movzx, 1, operand::in(reg_a), from);
 			if (data_offset >= 0) data_reference(data_offset);

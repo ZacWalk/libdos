@@ -104,12 +104,16 @@
     <ClCompile Include="..\cc\emit-x64.cpp" />
     <ClCompile Include="..\cc\gen.cpp" />
     <ClCompile Include="..\cc\lex.cpp" />
+    <ClCompile Include="..\cc\support.c">
+      <CompileAs>CompileAsC</CompileAs>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\host\host-win32.h" />
     <ClInclude Include="..\cc\cc.h" />
     <ClInclude Include="..\cc\emit.h" />
     <ClInclude Include="..\cc\lex.h" />
+    <ClInclude Include="..\cc\support.h" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\src\ovrwin.vcxproj">
