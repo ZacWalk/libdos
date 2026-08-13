@@ -25,11 +25,26 @@ Three ways this can end. They differ enormously in cost.
 the CLI `code_alloc`s it and calls it, and *that* compiles `bench.c` into the
 same `.COM` bytes the MSVC-built compiler produced. No linker, no executable
 format, no C runtime: the driver hands the compiled compiler an arena and an
-array of `(name, text)` pairs and gets back an image. `--ccnative` already does
-the calling half.
+array of `(name, text)` pairs and gets back an image.
 
-This is the cheapest honest proof, and it is the recommended target. What it
-needs is in "The width problem" below.
+This is the cheapest honest proof, and it is the recommended target. **The back
+end half of it is done**: `ovrwincli --ccnative cc\bench\bench.c` compiles the
+benchmark for this machine, runs it in process, prints its checksum and returns
+216 - the same answer the emulated 8086 build gives, from the same front end
+through a different encoder.
+
+What made a pointer work was giving the guest a block. The front end compiles
+for the tiny model, so the host allocates the 64 KiB a `.COM` gets, copies the
+image in and passes the address; the entry point keeps it in R15 and every
+memory reference becomes `[r15 + offset]`. A pointer stays the 16-bit offset the
+front end believes in, which is why nothing above the encoder had to change.
+SP and BP became R14 and R13 - the two registers that hold offsets rather than
+values - the guest's data stack lives in the block while the host's stack still
+carries return addresses, and a service call writes the registers to an agreed
+place at the top of the block and calls through a function pointer beside them.
+
+What is left for the compiler to compile *itself* this way is the width
+problem below: a compiler needs more than 64 KiB.
 
 **B. Hosted x64, a real `cc.exe`.** Everything in A plus a PE/COFF writer, an
 import table, and a decision about the C runtime. Nothing here is hard, but
