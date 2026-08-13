@@ -50,6 +50,10 @@ public:
 	void clock(int& year, int& month, int& day, int& weekday, int& hour, int& minute, int& second,
 	           int& hundredths) override;
 
+	void* code_alloc(uint32_t size) override;
+	void code_free(void* code, uint32_t size) override;
+	void code_commit(void* code, uint32_t size) override;
+
 	void trace(const char* text) override;
 
 private:
