@@ -63,9 +63,11 @@ when a review turns one up, add it here rather than in AGENTS.md.
   that is then tested; a dereference remembers that its address is still in a
   pointer variable and uses `[bx+displacement]`; a constant index or a member
   offset folds into the address; a statement whose result nobody wants is
-  applied straight to memory; and a loop puts its condition at the bottom.
+  applied straight to memory; an operator with a register/memory form reads its
+  second operand where it lies rather than through CX; and a loop puts its
+  condition at the bottom.
 
-  And across the whole program, from the layout record described below: a
+  And across the whole program, from the instruction list described below: a
   branch that reaches gets the two-byte form, a branch to the next instruction
   goes altogether, a function nothing can reach is left out, and a body short
   enough is copied to its call site instead of called - with any argument that
@@ -73,12 +75,26 @@ when a review turns one up, add it here rather than in AGENTS.md.
   smaller as well as faster. `--inline <n>`, `--no-inline` and `--keep-unused`
   control it; `--map` says where the code went.
 
+  And per function, over its finished instructions: the two frame slots it
+  touches most move into SI and DI, weighting a use inside a loop far above one
+  on a straight line - a loop being nothing more, here, than a branch back to
+  something already generated. A pointer that lands in a register then addresses
+  memory itself, which needs to know that BX is dead, which is a backward
+  liveness pass over the same list. None of this could have been decided while
+  parsing: which slot is worth a register is only known once the last statement
+  has been read.
+
   What is not:
 
-  - Nothing is kept in a register between statements. SI and DI are never used
-    at all, so a loop reloads its induction variable from the frame every time.
-    This is the largest remaining gap, and the one that needs real machinery: a
-    notion of which values are live, which the generator does not have.
+  - Only two registers, and only whole-function live ranges. A value that is
+    hot in one loop and dead elsewhere holds its register for the whole body,
+    and a third candidate gets nothing. Splitting a range at a basic block
+    boundary is the next step, and the liveness pass is already there.
+  - Nothing is hoisted out of a loop, so an invariant operand is reloaded every
+    iteration once the two registers are spoken for.
+  - The address of a global folds into an `add` rather than into the
+    displacement of the access that follows it, costing an instruction at every
+    subscript of a global array.
   - A 32-bit operand pair lives in DX:AX, with CX:BX for the second operand,
     and anything harder than an add or a constant shift calls one of the
     helpers emitted after the program.
@@ -115,7 +131,7 @@ ovrwincli --cc doomall.c -I cc\include -DC_ONLY -DFLAT_SPAN -DVIEWWINDOWWIDTH=12
 
 What that says today:
 
-- **136 KiB of code and 74 KiB of data.** The earlier guess here was 500-600 KiB
+- **132 KiB of code and 74 KiB of data.** The earlier guess here was 500-600 KiB
   of code; the measurement is a quarter of that. Three code segments, not nine.
 - The data does **not** fit in one 64 KiB segment either, so the medium model
   Doom8088's own build uses is not quite enough: either the large tables have
