@@ -192,32 +192,50 @@ flag instead:
 ## Order of work
 
 Every step keeps `.\dd.ps1 test` green. The trick that makes this possible: C
-compiles in the existing project. Rename a file to `.c`, wrap its header in
-`extern "C"`, and MSVC builds it as C while `cli/main.cpp` stays C++.
+compiles in the existing project. Add a `.c` file with
+`<CompileAs>CompileAsC</CompileAs>` - the project passes `/TP` to everything
+otherwise - wrap its header in `extern "C"`, and MSVC builds it as C while
+`cli/main.cpp` stays C++.
 
-0. **Pin the current behaviour.** Record the exact bytes of `bench.c` compiled
-   at the default options, and the code/data sizes of the Doom translation unit.
-   Add a test that compares the image against a checked-in golden file. The port
-   must not change a single byte; without this test there is no way to know.
-1. **Infrastructure**, as new files, used by nobody: `arena`, `list`, interning,
-   `lower_bound`, the source normaliser. Unit-tested in `cli/main.cpp`.
-2. **`target.h`** - already almost C. Drop `enum class` and the static factory.
-3. **`emit.h`/`emit.cpp`/`emit-x64.cpp`** (1,400 lines). The operand factories
-   become `operand operand_in(int r)`; struct returns are fine for MSVC now and
-   are on the feature list for `cc`. Mostly mechanical.
-4. **`lex.h`/`lex.cpp`** (1,000 lines). The biggest change is tokens carrying
-   `name_id`, which touches the parser too - do the token change and the parser's
-   use of it in one commit.
-5. **`gen.cpp`** (4,400 lines), the bulk. `class generator` becomes
-   `struct generator` and every method a function taking `generator* g`. Do it in
-   passes over the file rather than all at once: fields first, then lambdas, then
-   strings, then the maps.
-6. **`cc.h`** - the public header, `extern "C"`, no `std::` in the signature.
+The second trick is what makes the enums affordable. Renaming `enum class tok`
+to a C enum would touch 577 `tok::x` sites in the parser. Instead the C header
+declares `cc_tok` with `tok_x` enumerators and, for C++ only, a `namespace tok`
+holding `const cc_tok end = tok_end;` and the rest. Every one of those 577 sites
+keeps compiling untouched, a const enum variable is still a valid `case` label,
+and the only edits needed are the places `tok` was used as a *type* - a
+namespace and a type cannot share a name. The shim goes when the file that needs
+it becomes C. `op::`, `condition::`, `operand_kind::` and `reference_kind::`
+will go the same way.
+
+0. **Pin the current behaviour.** `tools/cc-fingerprint.ps1` compiles a corpus -
+   bench.c at three settings, the shell, hello - and records the size and hash
+   of each `.COM`, plus what `--ccbench` costs to run. `-Save` re-records it.
+   The port is not meant to change a byte of any of them. *(done)*
+1. **Infrastructure.** `cc/support.{h,c}`: the arena, `cc_list`, the sorted
+   `cc_map`, interned `cc_names`, and the source normaliser. Unit-tested from
+   `cli/main.cpp`. *(done)*
+2. **`target.h`** - already almost C. Dropped `enum class` and the unused static
+   factory; the defaults moved into `cc_target_init`. *(done)*
+3. **`sources.h`** - the virtual `cc_sources` became a struct holding a `load`
+   function pointer, which a host embeds as its first member. *(done)*
+4. **`lex.h`/`lex.c`** - the tokeniser and preprocessor. A token now carries an
+   interned `name` for comparison and a `text` pointer for printing, and a
+   string literal carries its length because it may contain a NUL. The
+   file-name table is gone: a token's `file` is an interned pointer. *(done)*
+5. **`emit.h`/`emit.cpp`/`emit-x64.cpp`** (1,400 lines). The operand factories
+   become `operand_in(int r)` and the ~140 shape helpers become `cc_emit_*`
+   functions, reached from the parser through the same kind of shim until the
+   parser follows.
+6. **`gen.cpp`** (4,400 lines), the bulk. `class generator` becomes
+   `struct generator` and every method a function taking `generator* g`. Do it
+   in passes over the file rather than all at once: fields first, then lambdas,
+   then strings, then the maps.
+7. **`cc.h`** - the public header, `extern "C"`, no `std::` in the signature.
    `cli/main.cpp` changes with it.
-7. **`build-cc.ps1`** (below), building the same sources outside MSBuild.
+8. **`build-cc.ps1`** (below), building the same sources outside MSBuild.
 
-At the end of step 7 nothing self-hosts yet, the compiler is C, the tests still
-pass, and the golden image is unchanged.
+At the end of step 8 nothing self-hosts yet, the compiler is C, the tests still
+pass, and the fingerprint is unchanged.
 
 ## What `cc` still cannot compile
 
@@ -282,13 +300,13 @@ no MSBuild. The emulator keeps its solution; only the compiler gets a script.
 
 ## What to be suspicious of
 
-- **The golden image test is the whole safety net for goal 1.** Any commit that
+- **The fingerprint is the whole safety net for goal 1.** Any commit that
   changes it has changed behaviour, whatever the tests say.
 - Saved pointers into a `list` across a push. C++ hid some of these behind
   index-based access; C will not.
 - Interning changes iteration order anywhere a `std::map<std::string, ...>` was
   walked. If the output depends on that order - the string table and the
-  function map are candidates - the golden image will catch it, and the fix is
+  function map are candidates - the fingerprint will catch it, and the fix is
   to sort explicitly rather than to keep the map.
 - The register allocator and `fold_address_copies` are pointer-heavy passes over
   the instruction list and are where a port bug will hide. They already have the
