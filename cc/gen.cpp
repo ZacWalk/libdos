@@ -274,6 +274,9 @@ namespace
 		int scope_ = 0;
 		int frame_ = 0;
 		int frame_patch_ = -1;
+		int prologue_slots_ = -1; // reserved room for the register saves
+		int body_start_ = 0;
+		std::vector<int> epilogue_slots_;
 		int stack_patch_ = -1;
 		int paragraph_patch_ = -1;
 		int return_type_ = 0;
@@ -635,6 +638,7 @@ namespace
 		void memory_operation(op kind, int width, const value& target, const operand& source,
 		                      int extra = 0);
 		bool operate_from_memory(tok what, const value& right);
+		void promote_locals();
 
 		value expression();
 		value assignment_expression();
@@ -3259,6 +3263,11 @@ namespace
 
 	void generator::emit_return()
 	{
+		// Room for the register restores, which are only known once the whole
+		// body has been generated. A nop is no bytes at all if nothing needs it.
+		epilogue_slots_.push_back(e_.at());
+		e_.emit(op::nop, 2);
+		e_.emit(op::nop, 2);
 		e_.mov_sp_bp();
 		e_.pop_bp();
 		e_.ret();
@@ -3305,6 +3314,106 @@ namespace
 		e_.emit(kind, 2, operand::in(reg_a), place_of(right));
 		if (right.kind != val_local) data_reference(right.offset);
 		return true;
+	}
+
+	// Register allocation, over a function's whole body. Deciding this in the
+	// parsing pass is impossible - which slot is worth a register is only
+	// known once the last statement has been read - so it is a pass over the
+	// instruction list instead, which is what having one is for. The two
+	// busiest frame slots move into SI and DI, the only registers nothing else
+	// in the generated code claims.
+	void generator::promote_locals()
+	{
+		if (prologue_slots_ < 0) return;
+		const int first = body_start_;
+		const int last = e_.at();
+
+		// A use inside a loop is worth many on a straight line, and from here
+		// a loop is simply a branch back to somewhere already generated.
+		std::vector<int> weight(size_t(last - first), 1);
+		for (int i = first; i < last; ++i)
+		{
+			const instruction& in = e_.code[size_t(i)];
+			if ((in.code != op::jmp && in.code != op::jcc) || in.label < 0) continue;
+			const int target = e_.labels[size_t(in.label)];
+			if (target < first || target >= i) continue;
+			for (int k = target; k <= i; ++k)
+				if (weight[size_t(k - first)] < 512) weight[size_t(k - first)] *= 8;
+		}
+
+		std::map<int, int> uses;
+		std::map<int, bool> rejected;
+		for (int i = first; i < last; ++i)
+		{
+			const instruction& in = e_.code[size_t(i)];
+			// A run of hand-assembled bytes says nothing about what it touches.
+			if (in.code == op::literal) return;
+			for (const operand* o : {&in.dest, &in.source})
+			{
+				if (o->reg == reg_si || o->reg == reg_di || o->index == reg_si || o->index == reg_di)
+					if (o->kind != operand_kind::immediate) return;
+				if (o->kind != operand_kind::memory || o->reg != reg_bp || o->index != reg_none)
+					continue;
+				// An address that escapes reaches slots this pass cannot see,
+				// so one of them anywhere in the body settles the question.
+				if (in.code == op::lea) return;
+				if (in.width != 2) rejected[o->value] = true;
+				else uses[o->value] += weight[size_t(i - first)];
+			}
+		}
+
+		std::vector<std::pair<int, int>> ranked;
+		for (const auto& entry : uses)
+			if (!rejected[entry.first]) ranked.emplace_back(entry.second, entry.first);
+		std::sort(ranked.begin(), ranked.end(), std::greater<std::pair<int, int>>());
+
+		// A register costs one save, one restore per return and, for a
+		// parameter, one load, so a slot has to be worth more than that.
+		const int registers[2] = {reg_si, reg_di};
+		int chosen[2] = {0, 0};
+		int count = 0;
+		for (const auto& entry : ranked)
+		{
+			if (count == 2 || entry.first < 4 + int(epilogue_slots_.size())) break;
+			chosen[count++] = entry.second;
+		}
+		if (count == 0) return;
+
+		for (int i = first; i < last; ++i)
+		{
+			instruction& in = e_.code[size_t(i)];
+			for (operand* o : {&in.dest, &in.source})
+			{
+				if (o->kind != operand_kind::memory || o->reg != reg_bp) continue;
+				for (int n = 0; n < count; ++n)
+					if (o->value == chosen[n]) *o = operand::in(registers[n]);
+			}
+		}
+
+		// The saved copies go below every local, so no offset already handed
+		// out has to move.
+		const int save[2] = {-(frame_ + 2), -(frame_ + 4)};
+		frame_ += 2 * count;
+
+		const auto put = [&](int at, const operand& dest, const operand& source)
+		{
+			instruction moved;
+			moved.code = op::mov;
+			moved.width = 2;
+			moved.dest = dest;
+			moved.source = source;
+			e_.code[size_t(at)] = moved;
+		};
+
+		for (int n = 0; n < count; ++n)
+		{
+			put(prologue_slots_ + n, emitter::frame(save[n]), operand::in(registers[n]));
+			// A parameter arrives on the stack, so it is fetched once.
+			if (chosen[n] > 0)
+				put(prologue_slots_ + 2 + n, operand::in(registers[n]), emitter::frame(chosen[n]));
+			for (const int at : epilogue_slots_)
+				put(at + n, operand::in(registers[n]), emitter::frame(save[n]));
+		}
 	}
 
 	// A statement whose result nobody wants - i++, x += 8, p = p + 1 - is one
@@ -3491,6 +3600,10 @@ namespace
 		e_.sub_sp_imm(0);
 		frame_patch_ = e_.refers_to_deferred();
 		frame_ = 0;
+		prologue_slots_ = e_.at();
+		for (int i = 0; i < 4; ++i) e_.emit(op::nop, 2);
+		epilogue_slots_.clear();
+		body_start_ = e_.at();
 
 		++scope_;
 		int offset = 4; // return address and the saved BP
@@ -3522,9 +3635,10 @@ namespace
 		}
 		pending_gotos_.clear();
 
+		emit_return();
+		promote_locals();
 		e_.set_deferred(frame_patch_, frame_);
 		symbols_[size_t(function_index)].frame = frame_;
-		emit_return();
 		symbols_[size_t(function_index)].finish = e_.here();
 		leave_scope(--scope_);
 		hoisted_ = false;
