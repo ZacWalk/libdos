@@ -48,14 +48,14 @@ namespace
 
 	struct record_member
 	{
-		std::string name;
+		int name = 0;
 		int type = 0;
 		int offset = 0;
 	};
 
 	struct record_info
 	{
-		std::string name;
+		int name = 0;
 		std::vector<record_member> members;
 		int size = 0;
 		bool is_union = false;
@@ -65,7 +65,7 @@ namespace
 
 	struct symbol
 	{
-		std::string name;
+		int name = 0;
 		symbol_kind kind = sym_global;
 		int type = 0;
 		int offset = 0; // data offset for globals, frame offset for locals
@@ -79,7 +79,7 @@ namespace
 		bool called = false; // something other than a dropped function reached it
 		int body = -1; // the token the body starts at, for inlining
 		int frame = 0; // how much stack the body needs, for inlining
-		std::vector<std::string> parameter_names;
+		std::vector<int> parameter_names;
 	};
 
 	enum value_kind { val_const, val_reg, val_local, val_global, val_deref, val_flags };
@@ -112,6 +112,15 @@ namespace
 	{
 		int position;
 		int function;
+	};
+
+	// A string literal already in the data section, kept so that the same text
+	// is only stored once. It may contain a NUL, so it carries its length.
+	struct string_entry
+	{
+		const char* text;
+		int length;
+		int offset;
 	};
 
 	struct switch_context
@@ -286,10 +295,10 @@ namespace
 		std::vector<record_info> records_;
 		std::vector<std::vector<int>> signatures_;
 		std::vector<symbol> symbols_;
-		std::map<std::string, int> strings_;
+		std::vector<string_entry> strings_;
 		std::vector<function_fixup> function_fixups_;
-		std::map<std::string, int> labels_;
-		std::vector<std::pair<std::string, int>> pending_gotos_;
+		std::map<int, int> labels_;
+		std::vector<std::pair<int, int>> pending_gotos_;
 		std::vector<int> break_labels_;
 		std::vector<int> continue_labels_;
 		std::vector<switch_context> switches_;
@@ -447,14 +456,20 @@ namespace
 		}
 
 		// ---- symbols ----
-		int find(const std::string& name) const
+		const char* name_text(int name) const { return cc_name_text(tokens_.names, name); }
+
+		// A name the compiler makes up for itself, such as a runtime thunk's.
+		int intern(const char* text) const { return cc_intern(tokens_.names, text, -1); }
+
+		int find(int name) const
 		{
+			if (name == 0) return -1;
 			for (size_t i = symbols_.size(); i > 0; --i)
 				if (symbols_[i - 1].name == name) return int(i) - 1;
 			return -1;
 		}
 
-		int define(const std::string& name, symbol_kind kind, int type)
+		int define(int name, symbol_kind kind, int type)
 		{
 			symbol entry;
 			entry.name = name;
@@ -474,11 +489,12 @@ namespace
 			// but was pushed after the locals around it, so the pop above stops
 			// at it and leaves them behind. What is left is retired in place
 			// rather than removed, because a fixup refers to a symbol by index.
-			for (symbol& entry : symbols_)
+			for (size_t i = 0; i < symbols_.size(); ++i)
 			{
+				symbol& entry = symbols_[i];
 				if (entry.scope <= level) continue;
 				entry.scope = level;
-				entry.name.clear();
+				entry.name = 0;
 			}
 		}
 
@@ -491,14 +507,16 @@ namespace
 			return offset;
 		}
 
-		int add_string(const std::string& text)
+		int add_string(const char* text, int length)
 		{
-			const auto found = strings_.find(text);
-			if (found != strings_.end()) return found->second;
+			for (size_t i = 0; i < strings_.size(); ++i)
+				if (strings_[i].length == length && memcmp(strings_[i].text, text, size_t(length)) == 0)
+					return strings_[i].offset;
+
 			const int offset = int(data_.size());
-			for (const char c : text) data_.push_back(uint8_t(c));
+			for (int i = 0; i < length; ++i) data_.push_back(uint8_t(text[i]));
 			data_.push_back(0);
-			strings_[text] = offset;
+			strings_.push_back({text, length, offset});
 			return offset;
 		}
 
@@ -639,16 +657,16 @@ namespace
 
 		bool is_type_start(int ahead = 0) const;
 		int parse_type_specifier();
-		int parse_declarator(int base, std::string& name, bool& is_function, std::vector<int>& parameters,
-		                     std::vector<std::string>& parameter_names);
+		int parse_declarator(int base, int& name, bool& is_function, std::vector<int>& parameters,
+		                     std::vector<int>& parameter_names);
 		int parse_declarator_suffix(int base, bool& is_function, std::vector<int>& parameters,
-		                            std::vector<std::string>& parameter_names);
+		                            std::vector<int>& parameter_names);
 		int parse_record(bool is_union);
 		int parse_enum();
 		long constant_expression();
 		void declaration();
 		void function_body(int function_index, const std::vector<int>& parameters,
-		                   const std::vector<std::string>& parameter_names);
+		                   const std::vector<int>& parameter_names);
 		void statement();
 		void compound_statement();
 		void local_declaration();
@@ -679,7 +697,7 @@ namespace
 		value call(int function_index);
 		value indirect_call(value& target);
 		bool can_inline(int function_index) const;
-		bool assigned_in_body(int body, const std::string& name) const;
+		bool assigned_in_body(int body, int name) const;
 		value inline_call(int function_index);
 		std::vector<value> inline_arguments(int function_index);
 		int push_arguments(const std::vector<int>& parameters);
@@ -1400,8 +1418,8 @@ namespace
 		const symbol& entry = symbols_[size_t(function_index)];
 		if (!entry.defined || entry.body < 0) return false;
 		if (entry.parameters.size() != entry.parameter_names.size()) return false;
-		for (const std::string& name : entry.parameter_names)
-			if (name.empty()) return false;
+		for (size_t i = 0; i < entry.parameter_names.size(); ++i)
+			if (entry.parameter_names[i] == 0) return false;
 		if (function_index == current_function_) return false;
 		if (inline_stack_.size() >= 4) return false;
 		for (const int active : inline_stack_)
@@ -1454,7 +1472,7 @@ namespace
 
 	// Whether the body ever writes to a name. A parameter it never writes to
 	// can be the argument itself rather than a copy of it.
-	bool generator::assigned_in_body(int body, const std::string& name) const
+	bool generator::assigned_in_body(int body, int name) const
 	{
 		int depth = 0;
 		for (size_t scan = size_t(body); scan + 1 < size_t(tokens_.tokens.count); ++scan)
@@ -1462,7 +1480,7 @@ namespace
 			const cc_token& token = CC_TOKEN(tokens_, int(scan));
 			if (token.kind == tok::l_brace) ++depth;
 			else if (token.kind == tok::r_brace && --depth == 0) return false;
-			if (token.kind != tok::identifier || name != token.text) continue;
+			if (token.kind != tok::identifier || token.name != name) continue;
 
 			const cc_tok before = scan > 0 ? CC_TOKEN(tokens_, int(scan) - 1).kind : tok::end;
 			if (before == tok::amp || before == tok::inc || before == tok::dec) return true;
@@ -1488,7 +1506,7 @@ namespace
 	std::vector<value> generator::inline_arguments(int function_index)
 	{
 		const std::vector<int> parameters = symbols_[size_t(function_index)].parameters;
-		const std::vector<std::string> names = symbols_[size_t(function_index)].parameter_names;
+		const std::vector<int> names = symbols_[size_t(function_index)].parameter_names;
 		const int body = symbols_[size_t(function_index)].body;
 
 		expect(tok::l_paren, "expected (");
@@ -1561,7 +1579,7 @@ namespace
 
 	value generator::inline_call(int function_index)
 	{
-		const std::vector<std::string> names = symbols_[size_t(function_index)].parameter_names;
+		const std::vector<int> names = symbols_[size_t(function_index)].parameter_names;
 		const int body = symbols_[size_t(function_index)].body;
 		const int result_type = symbols_[size_t(function_index)].type;
 
@@ -1584,8 +1602,8 @@ namespace
 		// function has to be put aside for the length of it.
 		const size_t saved_at = at_;
 		const int saved_return = return_type_;
-		std::map<std::string, int> saved_labels;
-		std::vector<std::pair<std::string, int>> saved_gotos;
+		std::map<int, int> saved_labels;
+		std::vector<std::pair<int, int>> saved_gotos;
 		std::vector<int> saved_breaks, saved_continues;
 		saved_labels.swap(labels_);
 		saved_gotos.swap(pending_gotos_);
@@ -1669,7 +1687,7 @@ namespace
 			advance();
 			v.kind = val_global;
 			v.type = array_of(t_char_, token.length + 1);
-			v.offset = add_string(std::string(token.text, size_t(token.length)));
+			v.offset = add_string(token.text, token.length);
 			return v;
 		}
 
@@ -1689,7 +1707,7 @@ namespace
 				advance();
 				expect(tok::l_paren, "expected ( after __args");
 				if (kind() != tok::identifier) fail("__args needs the last named parameter");
-				const int index = find(peek().text);
+				const int index = find(peek().name);
 				if (index < 0 || symbols_[size_t(index)].kind != sym_local ||
 					symbols_[size_t(index)].offset < 0)
 					fail("__args needs the last named parameter");
@@ -1703,13 +1721,13 @@ namespace
 			}
 
 			advance();
-			int index = find(token.text);
+			int index = find(token.name);
 			if (index < 0)
 			{
 				// An undeclared name is only allowed as a call, which is
 				// assumed to return int as pre-standard C did.
 				if (kind() != tok::l_paren) fail(("undeclared identifier: " + std::string(token.text)).c_str());
-				index = define(token.text, sym_function, t_int_);
+				index = define(token.name, sym_function, t_int_);
 				symbols_[size_t(index)].scope = 0;
 				if (scope_ != 0) hoisted_ = true;
 			}
@@ -1893,7 +1911,7 @@ namespace
 				const bool through_pointer = kind() == tok::arrow;
 				advance();
 				if (kind() != tok::identifier) fail("expected a member name");
-				const std::string member = peek().text;
+				const int member = peek().name;
 				advance();
 
 				const int record_type = through_pointer ? target_of(v.type) : v.type;
@@ -1902,8 +1920,9 @@ namespace
 
 				const record_info& info = records_[size_t(type(record_type).record)];
 				const record_member* found = nullptr;
-				for (const record_member& m : info.members) if (m.name == member) found = &m;
-				if (found == nullptr) fail(("no such member: " + member).c_str());
+				for (size_t i = 0; i < info.members.size(); ++i)
+					if (info.members[i].name == member) found = &info.members[i];
+				if (found == nullptr) fail(("no such member: " + std::string(name_text(member))).c_str());
 
 				// A member of a record that is itself in memory needs no
 				// address computing: it is another object in memory, and one
@@ -2770,7 +2789,7 @@ namespace
 			return true;
 		case tok::identifier:
 		{
-			const int index = find(peek(ahead).text);
+			const int index = find(peek(ahead).name);
 			return index >= 0 && symbols_[size_t(index)].kind == sym_typedef;
 		}
 		default:
@@ -2780,15 +2799,15 @@ namespace
 
 	int generator::parse_record(bool is_union)
 	{
-		std::string name;
+		int name = 0;
 		if (kind() == tok::identifier)
 		{
-			name = peek().text;
+			name = peek().name;
 			advance();
 		}
 
 		// A named record that is already known and not being defined here.
-		if (!name.empty() && kind() != tok::l_brace)
+		if (name != 0 && kind() != tok::l_brace)
 		{
 			for (size_t i = 0; i < records_.size(); ++i)
 			{
@@ -2804,7 +2823,7 @@ namespace
 		// that refers to itself.
 		int record_index = -1;
 		int type_index = -1;
-		if (!name.empty())
+		if (name != 0)
 		{
 			for (size_t i = 0; i < records_.size(); ++i)
 			{
@@ -2841,13 +2860,13 @@ namespace
 			const int base = parse_type_specifier();
 			for (;;)
 			{
-				std::string member_name;
+				int member_name = 0;
 				bool is_function = false;
 				std::vector<int> parameters;
-				std::vector<std::string> parameter_names;
+				std::vector<int> parameter_names;
 				const int member_type = parse_declarator(base, member_name, is_function, parameters,
 				                                         parameter_names);
-				if (member_name.empty()) fail("expected a member name");
+				if (member_name == 0) fail("expected a member name");
 
 				record_member member;
 				member.name = member_name;
@@ -2886,7 +2905,7 @@ namespace
 			while (!accept(tok::r_brace))
 			{
 				if (kind() != tok::identifier) fail("expected an enumeration name");
-				const std::string name = peek().text;
+				const int name = peek().name;
 				advance();
 				if (accept(tok::assign)) next = constant_expression();
 				const int index = define(name, sym_constant, t_int_);
@@ -2949,7 +2968,7 @@ namespace
 			return parse_enum();
 		case tok::identifier:
 		{
-			const int index = find(peek().text);
+			const int index = find(peek().name);
 			if (index >= 0 && symbols_[size_t(index)].kind == sym_typedef)
 			{
 				advance();
@@ -2965,8 +2984,8 @@ namespace
 		fail("expected a type");
 	}
 
-	int generator::parse_declarator(int base, std::string& name, bool& is_function,
-	                                std::vector<int>& parameters, std::vector<std::string>& parameter_names)
+	int generator::parse_declarator(int base, int& name, bool& is_function,
+	                                std::vector<int>& parameters, std::vector<int>& parameter_names)
 	{
 		skip_qualifiers();
 		while (accept(tok::star))
@@ -2997,7 +3016,7 @@ namespace
 			at_ = group + 1;
 			bool nested = false;
 			std::vector<int> nested_parameters;
-			std::vector<std::string> nested_names;
+			std::vector<int> nested_names;
 			const int declared = parse_declarator(inner_base, name, nested, nested_parameters, nested_names);
 			expect(tok::r_paren, "expected ) in a declarator");
 			at_ = after;
@@ -3007,7 +3026,7 @@ namespace
 
 		if (kind() == tok::identifier)
 		{
-			name = peek().text;
+			name = peek().name;
 			advance();
 		}
 
@@ -3015,7 +3034,7 @@ namespace
 	}
 
 	int generator::parse_declarator_suffix(int base, bool& is_function, std::vector<int>& parameters,
-	                                       std::vector<std::string>& parameter_names)
+	                                       std::vector<int>& parameter_names)
 	{
 		if (kind() == tok::l_paren)
 		{
@@ -3029,10 +3048,10 @@ namespace
 				// itself needs nothing beyond being allowed here.
 				if (accept(tok::ellipsis)) break;
 				const int parameter_base = parse_type_specifier();
-				std::string parameter_name;
+				int parameter_name = 0;
 				bool nested = false;
 				std::vector<int> nested_parameters;
-				std::vector<std::string> nested_names;
+				std::vector<int> nested_names;
 				int parameter_type = parse_declarator(parameter_base, parameter_name, nested,
 				                                      nested_parameters, nested_names);
 				// A parameter declared as an array or a function is really a pointer.
@@ -3126,7 +3145,7 @@ namespace
 
 		const bool address_of = accept(tok::amp);
 		if (kind() != tok::identifier) return false;
-		const int index = find(peek().text);
+		const int index = find(peek().name);
 		if (index < 0 || symbols_[size_t(index)].kind != sym_global) return false;
 		advance();
 		symbol = index;
@@ -3151,7 +3170,8 @@ namespace
 				if (!is_record(current)) return false;
 				const record_info& info = records_[size_t(type(current).record)];
 				const record_member* found = nullptr;
-				for (const record_member& m : info.members) if (m.name == peek(1).text) found = &m;
+				for (size_t i = 0; i < info.members.size(); ++i)
+					if (info.members[i].name == peek(1).name) found = &info.members[i];
 				if (found == nullptr) return false;
 				offset += found->offset;
 				current = found->type;
@@ -3216,7 +3236,7 @@ namespace
 		{
 			const int name = kind() == tok::amp && peek(1).kind == tok::identifier ? 1 : 0;
 			if (peek(name).kind != tok::identifier) return false;
-			const int index = find(peek(name).text);
+			const int index = find(peek(name).name);
 			if (index < 0 || symbols_[size_t(index)].kind != sym_function) return false;
 			if (peek(name + 1).kind == tok::l_paren) return false;
 			for (int i = 0; i <= name; ++i) advance();
@@ -3230,11 +3250,13 @@ namespace
 
 		if (kind() == tok::string && is_array(type_index) && type_size(target_of(type_index)) == 1)
 		{
-			const std::string text(peek().text, size_t(peek().length));
+			const char* text = peek().text;
+			const int length = peek().length;
 			advance();
-			if (offset < 0 || size_t(offset) + text.size() > data_.size()) fail("the initialiser does not fit");
-			for (size_t i = 0; i < text.size() && int(i) < type_size(type_index); ++i)
-				data_[size_t(offset) + i] = uint8_t(text[i]);
+			if (offset < 0 || size_t(offset) + size_t(length) > data_.size())
+				fail("the initialiser does not fit");
+			for (int i = 0; i < length && i < type_size(type_index); ++i)
+				data_[size_t(offset) + size_t(i)] = uint8_t(text[i]);
 			return;
 		}
 
@@ -3282,7 +3304,7 @@ namespace
 		// it needs a fixup once the data section is placed.
 		if (kind() == tok::string && is_pointer(type_index))
 		{
-			const int text_offset = add_string(std::string(peek().text, size_t(peek().length)));
+			const int text_offset = add_string(peek().text, peek().length);
 			advance();
 			data_pointer(offset, text_offset);
 			return;
@@ -3382,8 +3404,10 @@ namespace
 			const instruction& in = EMIT_CODE(e_, int(i));
 			// A run of hand-assembled bytes says nothing about what it touches.
 			if (in.code == op_literal) return;
-			for (const operand* o : {&in.dest, &in.source})
+			const operand* operands[2] = {&in.dest, &in.source};
+			for (int side = 0; side < 2; ++side)
 			{
+				const operand* o = operands[side];
 				if (o->reg == reg_si || o->reg == reg_di || o->index == reg_si || o->index == reg_di)
 					if (o->kind != operand_kind_immediate) return;
 				if (o->kind != operand_kind_memory || o->reg != reg_bp || o->index != reg_none)
@@ -3416,8 +3440,10 @@ namespace
 		for (int i = first; i < last; ++i)
 		{
 			instruction& in = EMIT_CODE(e_, int(i));
-			for (operand* o : {&in.dest, &in.source})
+			operand* operands[2] = {&in.dest, &in.source};
+			for (int side = 0; side < 2; ++side)
 			{
+				operand* o = operands[side];
 				if (o->kind != operand_kind_memory || o->reg != reg_bp) continue;
 				for (int n = 0; n < count; ++n)
 					if (o->value == chosen[n]) *o = operand_in(registers[n]);
@@ -3463,8 +3489,10 @@ namespace
 			// takes whatever the program put in the registers, so both count.
 			if (in.code == op_call || in.code == op_call_at || in.code == op_interrupt)
 				return true;
-			for (const operand* o : {&in.dest, &in.source})
+			const operand* operands[2] = {&in.dest, &in.source};
+			for (int side = 0; side < 2; ++side)
 			{
+				const operand* o = operands[side];
 				if (o->kind == operand_kind_memory && (o->reg == which || o->index == which))
 					return true;
 				if (o->kind != operand_kind_reg || o->reg != which) continue;
@@ -3657,7 +3685,7 @@ namespace
 				return false;
 		}
 
-		const int index = find(CC_TOKEN(tokens_, int(name)).text);
+		const int index = find(CC_TOKEN(tokens_, int(name)).name);
 		if (index < 0) return false;
 		const symbol& entry = symbols_[size_t(index)];
 		if (entry.kind != sym_local && entry.kind != sym_global) return false;
@@ -3753,7 +3781,7 @@ namespace
 	}
 
 	void generator::function_body(int function_index, const std::vector<int>& parameters,
-	                              const std::vector<std::string>& parameter_names)
+	                              const std::vector<int>& parameter_names)
 	{
 		emit_bind(&e_, label_of(function_index));
 		symbols_[size_t(function_index)].defined = true;
@@ -3778,7 +3806,7 @@ namespace
 		for (size_t i = 0; i < parameters.size(); ++i)
 		{
 			const int width = is_wide(parameters[i]) ? 4 : 2;
-			if (!parameter_names[i].empty())
+			if (parameter_names[i] != 0)
 			{
 				const int index = define(parameter_names[i], sym_local, parameters[i]);
 				symbols_[size_t(index)].offset = offset;
@@ -3795,11 +3823,11 @@ namespace
 			statement();
 		}
 
-		for (const auto& entry : pending_gotos_)
+		for (size_t i = 0; i < pending_gotos_.size(); ++i)
 		{
-			const auto found = labels_.find(entry.first);
+			const auto found = labels_.find(pending_gotos_[i].first);
 			if (found == labels_.end() || !emit_is_bound(&e_, found->second))
-				fail(("undefined label: " + entry.first).c_str());
+				fail(("undefined label: " + std::string(name_text(pending_gotos_[i].first))).c_str());
 		}
 		pending_gotos_.clear();
 
@@ -3830,12 +3858,12 @@ namespace
 
 		for (;;)
 		{
-			std::string name;
+			int name = 0;
 			bool is_function = false;
 			std::vector<int> parameters;
-			std::vector<std::string> parameter_names;
+			std::vector<int> parameter_names;
 			int declared = parse_declarator(base, name, is_function, parameters, parameter_names);
-			if (name.empty()) fail("expected a name");
+			if (name == 0) fail("expected a name");
 
 			// An array declared without a length takes it from its initialiser,
 			// which has to be measured before any storage is reserved.
@@ -3887,8 +3915,8 @@ namespace
 					// the declaration has to give way to the real thing.
 					const int old_offset = symbols_[size_t(index)].offset;
 					const int fresh = reserve_data(type_size(declared));
-					for (data_fixup& fixup : data_fixups_)
-						if (fixup.offset == old_offset) fixup.offset = fresh;
+					for (size_t i = 0; i < data_fixups_.size(); ++i)
+						if (data_fixups_[i].offset == old_offset) data_fixups_[i].offset = fresh;
 					symbols_[size_t(index)].offset = fresh;
 					symbols_[size_t(index)].type = declared;
 				}
@@ -4194,7 +4222,7 @@ namespace
 		{
 			advance();
 			if (kind() != tok::identifier) fail("expected a label after goto");
-			const std::string name = peek().text;
+			const int name = peek().name;
 			advance();
 			expect(tok::semicolon, "expected ; after goto");
 			if (labels_.find(name) == labels_.end()) labels_[name] = emit_label(&e_);
@@ -4231,7 +4259,7 @@ namespace
 
 		if (kind() == tok::identifier && peek(1).kind == tok::colon)
 		{
-			const std::string name = peek().text;
+			const int name = peek().name;
 			if (labels_.find(name) == labels_.end()) labels_[name] = emit_label(&e_);
 			emit_bind(&e_, labels_[name]);
 			advance();
@@ -4250,7 +4278,7 @@ namespace
 
 	void generator::emit_startup()
 	{
-		const int main_index = define("main", sym_function, t_int_);
+		const int main_index = define(intern("main"), sym_function, t_int_);
 
 		// Code a host calls arrives with a stack already, and returns rather
 		// than exits. RBX, RSI and RDI belong to the caller, and the generator
@@ -4518,20 +4546,20 @@ namespace
 	{
 		// The registers an INT 21h call left behind, so C code can read the
 		// ones the return value does not carry.
-		const int cf = define("__cf", sym_global, t_int_);
+		const int cf = define(intern("__cf"), sym_global, t_int_);
 		symbols_[size_t(cf)].offset = reserve_data(2);
-		const int bx = define("__bx", sym_global, t_int_);
+		const int bx = define(intern("__bx"), sym_global, t_int_);
 		symbols_[size_t(bx)].offset = reserve_data(2);
-		const int cx = define("__cx", sym_global, t_int_);
+		const int cx = define(intern("__cx"), sym_global, t_int_);
 		symbols_[size_t(cx)].offset = reserve_data(2);
-		const int dx = define("__dx", sym_global, t_int_);
+		const int dx = define(intern("__dx"), sym_global, t_int_);
 		symbols_[size_t(dx)].offset = reserve_data(2);
 
 		// The thunks are generated before anything can call them, so each one
 		// is a function whose body is already there.
 		const auto thunk = [&](const char* name, int type)
 		{
-			const int index = define(name, sym_function, type);
+			const int index = define(intern(name), sym_function, type);
 			symbols_[size_t(index)].defined = true;
 			symbols_[size_t(index)].start = emit_here(&e_);
 			symbols_[size_t(index)].label = symbols_[size_t(index)].start;
@@ -4657,10 +4685,12 @@ namespace
 		{
 			const instruction& in = EMIT_CODE(e_, i);
 			if (in.code == op_call) reference(i, in.label);
-			for (const operand* o : {&in.dest, &in.source})
-				if (o->reference == reference_kind_code) reference(i, o->target);
+			const operand* operands[2] = {&in.dest, &in.source};
+			for (int side = 0; side < 2; ++side)
+				if (operands[side]->reference == reference_kind_code) reference(i, operands[side]->target);
 		}
-		for (const function_fixup& fixup : function_fixups_) roots.push_back(fixup.function);
+		for (size_t i = 0; i < function_fixups_.size(); ++i)
+			roots.push_back(function_fixups_[i].function);
 
 		std::vector<bool> reached(symbols_.size(), false);
 		std::vector<int> pending = roots;
@@ -4675,17 +4705,21 @@ namespace
 			for (const int next : found->second) pending.push_back(next);
 		}
 
-		for (const span& s : spans)
-			if (!reached[size_t(s.symbol)])
-				emit_drop(&e_, symbols_[size_t(s.symbol)].start, symbols_[size_t(s.symbol)].finish);
+		for (size_t i = 0; i < spans.size(); ++i)
+		{
+			const int which = spans[i].symbol;
+			if (!reached[size_t(which)])
+				emit_drop(&e_, symbols_[size_t(which)].start, symbols_[size_t(which)].finish);
+		}
 	}
 
 	void generator::finish(cc_result& result)
 	{
-		for (const symbol& entry : symbols_)
+		for (size_t i = 0; i < symbols_.size(); ++i)
 		{
+			const symbol& entry = symbols_[i];
 			if (entry.kind != sym_function || !entry.called || entry.defined) continue;
-			throw compile_error{("undefined function: " + entry.name).c_str(), 0, 0};
+			throw compile_error{"undefined function: " + std::string(name_text(entry.name)), 0, 0};
 		}
 
 		// Nothing has an address until now: the layout pass picks the shortest
@@ -4724,15 +4758,17 @@ namespace
 			data_[size_t(at) + 1] = uint8_t((value >> 8) & 0xff);
 		};
 
-		for (const function_fixup& fixup : function_fixups_)
+		for (size_t i = 0; i < function_fixups_.size(); ++i)
 		{
+			const function_fixup& fixup = function_fixups_[i];
 			const symbol& entry = symbols_[size_t(fixup.function)];
-			if (!entry.defined) throw compile_error{("undefined function: " + entry.name).c_str(), 0, 0};
+			if (!entry.defined)
+				throw compile_error{"undefined function: " + std::string(name_text(entry.name)), 0, 0};
 			put_word(fixup.position, target_.code_origin + emit_offset_of(&e_, entry.label));
 		}
 
-		for (const data_fixup& fixup : data_fixups_)
-			put_word(fixup.position, data_base + fixup.offset);
+		for (size_t i = 0; i < data_fixups_.size(); ++i)
+			put_word(data_fixups_[i].position, data_base + data_fixups_[i].offset);
 
 		// Code first, padded to an even boundary, then the data section.
 		uint8_t* image = (uint8_t*)cc_arena_alloc(&result.arena, size_t(code_size + data_size) + 1);
@@ -4749,10 +4785,11 @@ namespace
 	void generator::report(cc_result& result) const
 	{
 		int count = 0;
-		for (const symbol& entry : symbols_)
+		for (size_t i = 0; i < symbols_.size(); ++i)
 		{
+			const symbol& entry = symbols_[i];
 			if (entry.kind != sym_function || !entry.defined) continue;
-			if (entry.start < 0 || entry.finish < 0 || entry.name.empty()) continue;
+			if (entry.start < 0 || entry.finish < 0 || entry.name == 0) continue;
 			if (emit_offset_of(&e_, entry.finish) - emit_offset_of(&e_, entry.start) > 0) ++count;
 		}
 
@@ -4761,14 +4798,14 @@ namespace
 		result.functions = functions;
 		result.function_count = 0;
 
-		for (const symbol& entry : symbols_)
+		for (size_t i = 0; i < symbols_.size(); ++i)
 		{
+			const symbol& entry = symbols_[i];
 			if (entry.kind != sym_function || !entry.defined) continue;
-			if (entry.start < 0 || entry.finish < 0 || entry.name.empty()) continue;
+			if (entry.start < 0 || entry.finish < 0 || entry.name == 0) continue;
 			const int size = emit_offset_of(&e_, entry.finish) - emit_offset_of(&e_, entry.start);
 			if (size <= 0) continue;
-			functions[result.function_count].name =
-				cc_arena_copy(&result.arena, entry.name.c_str(), entry.name.size());
+			functions[result.function_count].name = name_text(entry.name);
 			functions[result.function_count].size = size;
 			++result.function_count;
 		}
