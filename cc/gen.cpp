@@ -4410,11 +4410,11 @@ namespace
 		emit_push_bp(&e_);
 		emit_mov_bp_sp(&e_);
 		if (with_si) emit_op(&e_, op_push, 2, operand_in(reg_si), operand_none());
-		from_frame(reg_a, 4);
-		from_frame(reg_b, 6);
-		from_frame(reg_c, 8);
-		from_frame(reg_d, 10);
-		if (with_si) from_frame(reg_si, 12);
+		from_frame(reg_a, target_.frame_base);
+		from_frame(reg_b, target_.frame_base + 2);
+		from_frame(reg_c, target_.frame_base + 4);
+		from_frame(reg_d, target_.frame_base + 6);
+		if (with_si) from_frame(reg_si, target_.frame_base + 8);
 		emit_interrupt(&e_, number);
 
 		to_global(bx, reg_b);
@@ -4453,6 +4453,79 @@ namespace
 		if (used[h_ldiv] || used[h_uldiv] || used[h_lmod] || used[h_ulmod]) used[h_uldivmod] = true;
 
 		const auto bytes = [&](std::initializer_list<int> list) { for (const int b : list) emit_byte(&e_, b); };
+
+		// On the host the machine has the 32-bit operation itself, so each
+		// helper is that one instruction with the pair put together around it.
+		// The convention is the 8086's: DX:AX and CX:BX in, DX:AX out.
+		if (target_.machine == cc_machine_x64)
+		{
+			const auto compose_left = [&]
+			{
+				// movzx eax,ax / movzx edx,dx / shl edx,16 / or eax,edx
+				bytes({0x0f, 0xb7, 0xc0, 0x0f, 0xb7, 0xd2, 0xc1, 0xe2, 0x10, 0x09, 0xd0});
+			};
+			const auto compose_right = [&]
+			{
+				// movzx ebx,bx / movzx ecx,cx / shl ecx,16 / or ecx,ebx
+				bytes({0x0f, 0xb7, 0xdb, 0x0f, 0xb7, 0xc9, 0xc1, 0xe1, 0x10, 0x09, 0xd9});
+			};
+			const auto split_and_return = [&]
+			{
+				bytes({0x89, 0xc2, 0xc1, 0xea, 0x10, 0xc3}); // mov edx,eax / shr edx,16 / ret
+			};
+
+			if (used[h_lmul])
+			{
+				emit_bind(&e_, helper_label(h_lmul));
+				compose_left();
+				compose_right();
+				bytes({0x0f, 0xaf, 0xc1}); // imul eax,ecx
+				split_and_return();
+			}
+
+			const int divides[4] = {h_ldiv, h_uldiv, h_lmod, h_ulmod};
+			for (const int which : divides)
+			{
+				if (!used[which]) continue;
+				emit_bind(&e_, helper_label(which));
+				compose_left();
+				compose_right();
+				if (which == h_ldiv || which == h_lmod) bytes({0x99, 0xf7, 0xf9}); // cdq / idiv ecx
+				else bytes({0x31, 0xd2, 0xf7, 0xf1}); // xor edx,edx / div ecx
+				if (which == h_lmod || which == h_ulmod) bytes({0x89, 0xd0}); // mov eax,edx
+				split_and_return();
+			}
+
+			const int wide_shifts[3] = {h_lshl, h_lshr, h_lsar};
+			for (const int which : wide_shifts)
+			{
+				if (!used[which]) continue;
+				emit_bind(&e_, helper_label(which));
+				compose_left();
+				bytes({0x88, 0xd9, 0x80, 0xe1, 0x1f}); // mov cl,bl / and cl,31
+				if (which == h_lshl) bytes({0xd3, 0xe0}); // shl eax,cl
+				else if (which == h_lshr) bytes({0xd3, 0xe8}); // shr eax,cl
+				else bytes({0xd3, 0xf8}); // sar eax,cl
+				split_and_return();
+			}
+
+			for (const int which : {int(h_lcmp), int(h_ulcmp)})
+			{
+				if (!used[which]) continue;
+				// The same -1, 0 or 1 the 8086 helper leaves in AX, so the
+				// caller's comparison does not have to know which it called.
+				emit_bind(&e_, helper_label(which));
+				compose_left();
+				compose_right();
+				bytes({0x39, 0xc8}); // cmp eax,ecx
+				if (which == h_lcmp) bytes({0x0f, 0x9c, 0xc0, 0x0f, 0x9f, 0xc2}); // setl al / setg dl
+				else bytes({0x0f, 0x92, 0xc0, 0x0f, 0x97, 0xc2}); // setb al / seta dl
+				bytes({0x28, 0xc2}); // sub dl,al
+				bytes({0x0f, 0xbe, 0xc2}); // movsx eax,dl
+				emit_ret(&e_);
+			}
+			return;
+		}
 
 		// The helpers were hand-assembled, but their branches go through the
 		// layout record like everything else, so they shorten with the rest.

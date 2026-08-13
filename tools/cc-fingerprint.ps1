@@ -54,7 +54,8 @@ foreach ($entry in $corpus)
 	$lines += "{0,-16} {1,6} bytes  {2}" -f $entry.Name, $bytes, $hash
 }
 
-# What it costs to run, which is the half a hash cannot see.
+# What it costs to run, which is the half a hash cannot see, and what the same
+# program does when it is compiled for this machine instead of for the emulator.
 $bench = Join-Path $root 'cc\bench\bench.c'
 if (Test-Path $bench)
 {
@@ -62,6 +63,12 @@ if (Test-Path $bench)
 	foreach ($line in $report)
 	{
 		if ($line -match '^exit code') { $lines += "{0,-16} {1}" -f 'bench-run', $line }
+	}
+
+	$native = & $cli --ccnative $bench 2>&1
+	foreach ($line in $native)
+	{
+		if ($line -match '^checksum|^returned') { $lines += "{0,-16} {1}" -f 'bench-native', $line }
 	}
 }
 
