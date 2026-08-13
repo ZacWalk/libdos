@@ -27,7 +27,7 @@ namespace
 	{
 		std::string message;
 		int line;
-		int file;
+		const char* file;
 	};
 
 	enum type_kind
@@ -132,7 +132,7 @@ namespace
 
 	// What a token looks like in a diagnostic. Punctuation and keywords carry
 	// no text of their own, and those are exactly the ones a parser stops on.
-	const char* spelling_of(tok k)
+	const char* spelling_of(cc_tok k)
 	{
 		switch (k)
 		{
@@ -207,7 +207,7 @@ namespace
 		}
 	}
 
-	int precedence_of(tok k)
+	int precedence_of(cc_tok k)
 	{
 		switch (k)
 		{
@@ -225,9 +225,9 @@ namespace
 		}
 	}
 
-	bool is_comparison(tok k) { return precedence_of(k) == 6 || precedence_of(k) == 7; }
+	bool is_comparison(cc_tok k) { return precedence_of(k) == 6 || precedence_of(k) == 7; }
 
-	condition condition_of(tok op, bool unsigned_operation)
+	condition condition_of(cc_tok op, bool unsigned_operation)
 	{
 		switch (op)
 		{
@@ -316,12 +316,14 @@ namespace
 
 		[[noreturn]] void fail(const char* message) const
 		{
-			const cc_token& token = tokens_.tokens[at_ < tokens_.tokens.size() ? at_ : tokens_.tokens.size() - 1];
+			const cc_token& token = CC_TOKEN(tokens_, at_ < size_t(tokens_.tokens.count)
+			                                 ? int(at_) : tokens_.tokens.count - 1);
 			// Naming the token the parser stopped at is most of a diagnostic,
 			// and survives a line number that a macro expansion has moved.
 			std::string text = message;
-			text += token.text.empty() ? std::string(", at ") + spelling_of(token.kind)
-			                           : ", at '" + token.text + "'";
+			const bool spelt = token.text != nullptr && token.text[0] != 0;
+			text += !spelt ? std::string(", at ") + spelling_of(token.kind)
+			               : ", at '" + std::string(token.text, size_t(token.length)) + "'";
 			throw compile_error{text, token.line, token.file};
 		}
 
@@ -329,20 +331,21 @@ namespace
 		const cc_token& peek(int ahead = 0) const
 		{
 			const size_t index = at_ + size_t(ahead);
-			return tokens_.tokens[index < tokens_.tokens.size() ? index : tokens_.tokens.size() - 1];
+			return CC_TOKEN(tokens_, index < size_t(tokens_.tokens.count)
+			                ? int(index) : tokens_.tokens.count - 1);
 		}
 
-		tok kind() const { return peek().kind; }
-		void advance() { if (at_ + 1 < tokens_.tokens.size()) ++at_; }
+		cc_tok kind() const { return peek().kind; }
+		void advance() { if (at_ + 1 < size_t(tokens_.tokens.count)) ++at_; }
 
-		bool accept(tok k)
+		bool accept(cc_tok k)
 		{
 			if (kind() != k) return false;
 			advance();
 			return true;
 		}
 
-		void expect(tok k, const char* message)
+		void expect(cc_tok k, const char* message)
 		{
 			if (!accept(k)) fail(message);
 		}
@@ -549,12 +552,12 @@ namespace
 			v.bias = 0;
 		}
 		condition test_value(value& v);
-		void apply_operator(tok op, bool unsigned_operation, bool reversed = false);
-		void apply_operator_wide(tok op, bool unsigned_operation);
-		bool apply_operator_constant(tok op, long constant, bool unsigned_operation);
-		bool apply_operator_wide_constant(tok op, long constant, bool unsigned_operation);
-		void shift_ax_constant(tok op, int count, bool unsigned_operation);
-		void shift_wide_constant(tok op, int count, bool unsigned_operation);
+		void apply_operator(cc_tok op, bool unsigned_operation, bool reversed = false);
+		void apply_operator_wide(cc_tok op, bool unsigned_operation);
+		bool apply_operator_constant(cc_tok op, long constant, bool unsigned_operation);
+		bool apply_operator_wide_constant(cc_tok op, long constant, bool unsigned_operation);
+		void shift_ax_constant(cc_tok op, int count, bool unsigned_operation);
+		void shift_wide_constant(cc_tok op, int count, bool unsigned_operation);
 		void scale_ax(int size);
 		void widen(int from_type);
 		void load_byte_widened(const operand& from, bool is_signed, int data_offset = -1);
@@ -610,7 +613,7 @@ namespace
 		// no code, so the operator can parse it before deciding anything.
 		bool single_operand_ahead(int level) const
 		{
-			const tok k = peek().kind;
+			const cc_tok k = peek().kind;
 			if (k != tok::number && k != tok::character && k != tok::identifier) return false;
 			switch (peek(1).kind)
 			{
@@ -651,11 +654,11 @@ namespace
 		void for_statement();
 		void switch_statement();
 		void emit_return();
-		bool in_place_statement(tok terminator);
+		bool in_place_statement(cc_tok terminator);
 		operand place_of(const value& target, int extra = 0);
 		void memory_operation(op kind, int width, const value& target, const operand& source,
 		                      int extra = 0);
-		bool operate_from_memory(tok what, const value& right);
+		bool operate_from_memory(cc_tok what, const value& right);
 		void promote_locals();
 		void fold_address_copies(int first, int last);
 		std::vector<bool> live_registers(int first, int last, int which) const;
@@ -995,7 +998,7 @@ namespace
 
 	// A shift by a count known now. Up to three single-bit shifts beat loading
 	// CL, and every one of them beats the multiply or divide it may stand for.
-	void generator::shift_ax_constant(tok op, int count, bool unsigned_operation)
+	void generator::shift_ax_constant(cc_tok op, int count, bool unsigned_operation)
 	{
 		if (count <= 0) return;
 		if (count <= 3)
@@ -1016,7 +1019,7 @@ namespace
 
 	// The same for the 32-bit pair. A shift of 16 or more is just a move
 	// between the halves, which is what makes the fixed-point idiom cheap.
-	void generator::shift_wide_constant(tok op, int count, bool unsigned_operation)
+	void generator::shift_wide_constant(cc_tok op, int count, bool unsigned_operation)
 	{
 		if (count <= 0) return;
 		if (count >= 16)
@@ -1076,7 +1079,7 @@ namespace
 
 	// DX:AX holds the left operand and the right one is a constant. Returns
 	// false when the operator has no immediate form, having generated nothing.
-	bool generator::apply_operator_wide_constant(tok op, long constant, bool unsigned_operation)
+	bool generator::apply_operator_wide_constant(cc_tok op, long constant, bool unsigned_operation)
 	{
 		const int low = int(constant & 0xffff);
 		const int high = int((constant >> 16) & 0xffff);
@@ -1144,7 +1147,7 @@ namespace
 
 	// AX holds the left operand and the right one is a constant. Returns false
 	// when the operator has no immediate form, and nothing has been generated.
-	bool generator::apply_operator_constant(tok op, long constant, bool unsigned_operation)
+	bool generator::apply_operator_constant(cc_tok op, long constant, bool unsigned_operation)
 	{
 		const int value16 = int(constant & 0xffff);
 		const auto power_of_two = [](int v)
@@ -1226,7 +1229,7 @@ namespace
 
 	// AX holds the left operand and CX the right. When reversed they are the
 	// other way round, which costs an exchange for the operators that care.
-	void generator::apply_operator(tok op, bool unsigned_operation, bool reversed)
+	void generator::apply_operator(cc_tok op, bool unsigned_operation, bool reversed)
 	{
 		const bool commutative = op == tok::plus || op == tok::star || op == tok::amp ||
 			op == tok::pipe || op == tok::caret;
@@ -1270,7 +1273,7 @@ namespace
 	// DX:AX holds the left operand and CX:BX the right. Only the operations an
 	// 8086 can do in a couple of instructions are inline; the rest go to a
 	// helper, which is also where the register convention comes from.
-	void generator::apply_operator_wide(tok op, bool unsigned_operation)
+	void generator::apply_operator_wide(cc_tok op, bool unsigned_operation)
 	{
 		switch (op)
 		{
@@ -1315,7 +1318,7 @@ namespace
 			int depth = 0;
 			for (size_t scan = at_;; ++scan)
 			{
-				const tok k = tokens_.tokens[scan].kind;
+				const cc_tok k = CC_TOKEN(tokens_, int(scan)).kind;
 				if (k == tok::end) fail("unterminated argument list");
 				if (k == tok::l_paren || k == tok::l_bracket) ++depth;
 				else if (k == tok::r_bracket) --depth;
@@ -1353,7 +1356,7 @@ namespace
 		int depth = 0;
 		for (;;)
 		{
-			const tok k = kind();
+			const cc_tok k = kind();
 			if (k == tok::end) fail("unterminated argument list");
 			if (k == tok::r_paren && depth == 0) break;
 			if (k == tok::l_paren || k == tok::l_bracket) ++depth;
@@ -1404,10 +1407,11 @@ namespace
 		{
 			size_t scan = at_ + 1; // past the (
 			int depth = 0;
-			if (scan < tokens_.tokens.size() && tokens_.tokens[scan].kind != tok::r_paren) arguments = 1;
-			for (; scan < tokens_.tokens.size(); ++scan)
+			if (scan < size_t(tokens_.tokens.count) && CC_TOKEN(tokens_, int(scan)).kind != tok::r_paren)
+				arguments = 1;
+			for (; scan < size_t(tokens_.tokens.count); ++scan)
 			{
-				const tok k = tokens_.tokens[scan].kind;
+				const cc_tok k = CC_TOKEN(tokens_, int(scan)).kind;
 				if (k == tok::end) return false;
 				if (k == tok::l_paren || k == tok::l_bracket) ++depth;
 				else if (k == tok::r_bracket) --depth;
@@ -1426,9 +1430,9 @@ namespace
 		// call, and no reaching past the named parameters.
 		int depth = 0;
 		int length = 0;
-		for (size_t scan = size_t(entry.body); scan < tokens_.tokens.size(); ++scan)
+		for (size_t scan = size_t(entry.body); scan < size_t(tokens_.tokens.count); ++scan)
 		{
-			const cc_token& token = tokens_.tokens[scan];
+			const cc_token& token = CC_TOKEN(tokens_, int(scan));
 			if (token.kind == tok::end) return false;
 			if (token.kind == tok::l_brace) ++depth;
 			else if (token.kind == tok::r_brace)
@@ -1436,7 +1440,7 @@ namespace
 				if (--depth == 0) return true;
 			}
 			else if (token.kind == tok::kw_goto || token.kind == tok::kw_static) return false;
-			else if (token.kind == tok::identifier && token.text == "__args") return false;
+			else if (token.kind == tok::identifier && strcmp(token.text, "__args") == 0) return false;
 			if (++length > options_.inline_limit) return false;
 		}
 		return false;
@@ -1447,16 +1451,16 @@ namespace
 	bool generator::assigned_in_body(int body, const std::string& name) const
 	{
 		int depth = 0;
-		for (size_t scan = size_t(body); scan + 1 < tokens_.tokens.size(); ++scan)
+		for (size_t scan = size_t(body); scan + 1 < size_t(tokens_.tokens.count); ++scan)
 		{
-			const cc_token& token = tokens_.tokens[scan];
+			const cc_token& token = CC_TOKEN(tokens_, int(scan));
 			if (token.kind == tok::l_brace) ++depth;
 			else if (token.kind == tok::r_brace && --depth == 0) return false;
-			if (token.kind != tok::identifier || token.text != name) continue;
+			if (token.kind != tok::identifier || name != token.text) continue;
 
-			const tok before = scan > 0 ? tokens_.tokens[scan - 1].kind : tok::end;
+			const cc_tok before = scan > 0 ? CC_TOKEN(tokens_, int(scan) - 1).kind : tok::end;
 			if (before == tok::amp || before == tok::inc || before == tok::dec) return true;
-			switch (tokens_.tokens[scan + 1].kind)
+			switch (CC_TOKEN(tokens_, int(scan) + 1).kind)
 			{
 			case tok::assign: case tok::plus_assign: case tok::minus_assign:
 			case tok::star_assign: case tok::slash_assign: case tok::percent_assign:
@@ -1490,7 +1494,7 @@ namespace
 			int depth = 0;
 			for (size_t scan = at_;; ++scan)
 			{
-				const tok k = tokens_.tokens[scan].kind;
+				const cc_tok k = CC_TOKEN(tokens_, int(scan)).kind;
 				if (k == tok::end) fail("unterminated argument list");
 				if (k == tok::l_paren || k == tok::l_bracket) ++depth;
 				else if (k == tok::r_bracket) --depth;
@@ -1538,7 +1542,7 @@ namespace
 		int depth = 0;
 		for (;;)
 		{
-			const tok k = kind();
+			const cc_tok k = kind();
 			if (k == tok::end) fail("unterminated argument list");
 			if (k == tok::r_paren && depth == 0) break;
 			if (k == tok::l_paren || k == tok::l_bracket) ++depth;
@@ -1658,8 +1662,8 @@ namespace
 		{
 			advance();
 			v.kind = val_global;
-			v.type = array_of(t_char_, int(token.text.size()) + 1);
-			v.offset = add_string(token.text);
+			v.type = array_of(t_char_, token.length + 1);
+			v.offset = add_string(std::string(token.text, size_t(token.length)));
 			return v;
 		}
 
@@ -1674,7 +1678,7 @@ namespace
 		if (token.kind == tok::identifier)
 		{
 			// __args(last) is where the arguments after the last named one begin.
-			if (token.text == "__args")
+			if (strcmp(token.text, "__args") == 0)
 			{
 				advance();
 				expect(tok::l_paren, "expected ( after __args");
@@ -1698,7 +1702,7 @@ namespace
 			{
 				// An undeclared name is only allowed as a call, which is
 				// assumed to return int as pre-standard C did.
-				if (kind() != tok::l_paren) fail(("undeclared identifier: " + token.text).c_str());
+				if (kind() != tok::l_paren) fail(("undeclared identifier: " + std::string(token.text)).c_str());
 				index = define(token.text, sym_function, t_int_);
 				symbols_[size_t(index)].scope = 0;
 				if (scope_ != 0) hoisted_ = true;
@@ -1999,7 +2003,7 @@ namespace
 
 	value generator::unary_expression()
 	{
-		const tok k = kind();
+		const cc_tok k = kind();
 
 		if (k == tok::amp)
 		{
@@ -2211,7 +2215,7 @@ namespace
 
 		for (;;)
 		{
-			const tok op = kind();
+			const cc_tok op = kind();
 			const int level = precedence_of(op);
 			if (level == 0 || level <= precedence) return left;
 			advance();
@@ -2591,7 +2595,7 @@ namespace
 	value generator::assignment_expression()
 	{
 		value target = conditional_expression();
-		const tok op = kind();
+		const cc_tok op = kind();
 
 		const bool simple = op == tok::assign;
 		const bool compound = op == tok::plus_assign || op == tok::minus_assign || op == tok::star_assign ||
@@ -2618,8 +2622,8 @@ namespace
 
 		static const struct
 		{
-			tok assign;
-			tok binary;
+			cc_tok assign;
+			cc_tok binary;
 		} mapping[] = {
 			{tok::plus_assign, tok::plus}, {tok::minus_assign, tok::minus},
 			{tok::star_assign, tok::star}, {tok::slash_assign, tok::slash},
@@ -2627,7 +2631,7 @@ namespace
 			{tok::pipe_assign, tok::pipe}, {tok::caret_assign, tok::caret},
 			{tok::shl_assign, tok::shl}, {tok::shr_assign, tok::shr},
 		};
-		tok binary = tok::plus;
+		cc_tok binary = tok::plus;
 		for (const auto& entry : mapping) if (entry.assign == op) binary = entry.binary;
 
 		const bool pointer_target = is_scalar_pointer(target.type);
@@ -3052,15 +3056,15 @@ namespace
 	// below the first level of braces is counted.
 	int generator::initialiser_length() const
 	{
-		if (peek(1).kind == tok::string) return int(peek(1).text.size()) + 1;
+		if (peek(1).kind == tok::string) return peek(1).length + 1;
 		if (peek(1).kind != tok::l_brace) return 1;
 
 		int depth = 0;
 		int count = 0;
 		bool pending = false;
-		for (size_t scan = at_ + 1; scan < tokens_.tokens.size(); ++scan)
+		for (size_t scan = at_ + 1; scan < size_t(tokens_.tokens.count); ++scan)
 		{
-			const tok k = tokens_.tokens[scan].kind;
+			const cc_tok k = CC_TOKEN(tokens_, int(scan)).kind;
 			if (k == tok::end) break;
 			if (k == tok::l_brace || k == tok::l_paren || k == tok::l_bracket)
 			{
@@ -3181,7 +3185,7 @@ namespace
 		long offset = 0;
 		if (address_operand(symbol, pointee, offset) && address_offset(pointee, offset))
 		{
-			const tok after = kind();
+			const cc_tok after = kind();
 			if (after == tok::comma || after == tok::r_brace || after == tok::semicolon)
 			{
 				data_pointer(at, int(symbols_[size_t(symbol)].offset + offset));
@@ -3220,7 +3224,7 @@ namespace
 
 		if (kind() == tok::string && is_array(type_index) && type_size(target_of(type_index)) == 1)
 		{
-			const std::string text = peek().text;
+			const std::string text(peek().text, size_t(peek().length));
 			advance();
 			if (offset < 0 || size_t(offset) + text.size() > data_.size()) fail("the initialiser does not fit");
 			for (size_t i = 0; i < text.size() && int(i) < type_size(type_index); ++i)
@@ -3272,7 +3276,7 @@ namespace
 		// it needs a fixup once the data section is placed.
 		if (kind() == tok::string && is_pointer(type_index))
 		{
-			const int text_offset = add_string(peek().text);
+			const int text_offset = add_string(std::string(peek().text, size_t(peek().length)));
 			advance();
 			data_pointer(offset, text_offset);
 			return;
@@ -3316,7 +3320,7 @@ namespace
 	// lies rather than loaded into CX first. Only the operators with a
 	// register/memory form qualify - a multiply, a divide and a shift all want
 	// a particular register.
-	bool generator::operate_from_memory(tok what, const value& right)
+	bool generator::operate_from_memory(cc_tok what, const value& right)
 	{
 		if (right.kind != val_local && right.kind != val_global) return false;
 		if (is_array(right.type) || is_record(right.type)) return false;
@@ -3575,18 +3579,18 @@ namespace
 	// instruction against memory rather than a load, an operation and a store.
 	// Recognised from the tokens, because that is the only place the fact that
 	// the value is being thrown away is visible.
-	bool generator::in_place_statement(tok terminator)
+	bool generator::in_place_statement(cc_tok terminator)
 	{
 		const size_t start = at_;
 		const auto token = [&](size_t ahead)
 		{
 			const size_t index = start + ahead;
-			return index < tokens_.tokens.size() ? tokens_.tokens[index].kind : tok::end;
+			return index < size_t(tokens_.tokens.count) ? CC_TOKEN(tokens_, int(index)).kind : tok::end;
 		};
 
 		size_t name = start;
 		size_t rest = 0; // where the source operand begins
-		tok op = tok::plus;
+		cc_tok op = tok::plus;
 		bool step_only = false;
 		bool increment = true;
 
@@ -3609,8 +3613,8 @@ namespace
 			// NAME op= <one token> and NAME = NAME op <one token>
 			static const struct
 			{
-				tok assign;
-				tok binary;
+				cc_tok assign;
+				cc_tok binary;
 			} compound[] = {
 				{tok::plus_assign, tok::plus}, {tok::minus_assign, tok::minus},
 				{tok::amp_assign, tok::amp}, {tok::pipe_assign, tok::pipe},
@@ -3629,8 +3633,8 @@ namespace
 			if (!found)
 			{
 				if (token(1) != tok::assign || token(2) != tok::identifier) return false;
-				if (tokens_.tokens[start].text != tokens_.tokens[start + 2].text) return false;
-				const tok binary = token(3);
+				if (CC_TOKEN(tokens_, int(start)).name != CC_TOKEN(tokens_, int(start) + 2).name) return false;
+				const cc_tok binary = token(3);
 				if (binary != tok::plus && binary != tok::minus && binary != tok::amp &&
 					binary != tok::pipe && binary != tok::caret)
 					return false;
@@ -3638,13 +3642,13 @@ namespace
 				rest = 4;
 			}
 			if (token(rest + 1) != terminator) return false;
-			const tok source_kind = token(rest);
+			const cc_tok source_kind = token(rest);
 			if (source_kind != tok::number && source_kind != tok::character &&
 				source_kind != tok::identifier)
 				return false;
 		}
 
-		const int index = find(tokens_.tokens[name].text);
+		const int index = find(CC_TOKEN(tokens_, int(name)).text);
 		if (index < 0) return false;
 		const symbol& entry = symbols_[size_t(index)];
 		if (entry.kind != sym_local && entry.kind != sym_global) return false;
@@ -4733,16 +4737,36 @@ namespace
 	}
 }
 
-cc_result cc_compile(const char* text, const char* name, cc_sources& sources,
+cc_result cc_compile(const char* text, const char* name, cc_sources* sources,
                      const std::vector<std::string>& defines, const cc_options& options)
 {
 	cc_result result;
+	cc_arena arena;
+	cc_names names;
 	cc_token_stream stream;
-	if (!cc_tokenise(text, name, sources, stream, defines))
+	std::vector<const char*> define_text;
+
+	cc_arena_init(&arena, 0);
+	cc_names_init(&names, &arena);
+	cc_token_stream_init(&stream, &arena, &names);
+	for (const std::string& entry : defines) define_text.push_back(entry.c_str());
+
+	// Everything the tokens point at lives in the arena, so it has to outlive
+	// the generator, not just the lexer.
+	const auto release = [&]
+	{
+		cc_token_stream_free(&stream);
+		cc_names_free(&names);
+		cc_arena_free(&arena);
+	};
+
+	if (!cc_tokenise(&stream, text, name, sources,
+	                 define_text.empty() ? nullptr : define_text.data(), int(define_text.size())))
 	{
 		result.message = stream.error;
-		result.file = stream.error_file;
+		result.file = stream.error_file != nullptr ? stream.error_file : name;
 		result.line = stream.error_line;
+		release();
 		return result;
 	}
 
@@ -4761,9 +4785,8 @@ cc_result cc_compile(const char* text, const char* name, cc_sources& sources,
 		pass.report(result.functions);
 		result.message = error.message;
 		result.line = error.line;
-		result.file = error.file >= 0 && error.file < int(stream.files.size())
-			              ? stream.files[size_t(error.file)]
-			              : std::string(name);
+		result.file = error.file != nullptr ? error.file : name;
 	}
+	release();
 	return result;
 }

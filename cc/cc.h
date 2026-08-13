@@ -17,18 +17,8 @@
 #include <utility>
 #include <vector>
 
+#include "sources.h"
 #include "target.h"
-
-// The compiler never opens a file. A caller supplies source text the same way
-// a host supplies the emulated drive.
-class cc_sources
-{
-public:
-	virtual ~cc_sources() = default;
-
-	// Returns the text of an included file, or false if it cannot be found.
-	virtual bool load(const char* name, std::string& text) = 0;
-};
 
 struct cc_result
 {
@@ -67,6 +57,6 @@ struct cc_options
 };
 
 // Each define is either NAME or NAME=VALUE, as a command line spells it.
-cc_result cc_compile(const char* text, const char* name, cc_sources& sources,
+cc_result cc_compile(const char* text, const char* name, cc_sources* sources,
                      const std::vector<std::string>& defines = {},
                      const cc_options& options = {});

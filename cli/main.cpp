@@ -732,11 +732,19 @@ namespace
 	};
 
 	// Sources held in memory, for compiler tests that include nothing.
-	class no_sources final : public cc_sources
+	struct no_sources
 	{
-	public:
-		bool load(const char*, std::string&) override { return false; }
+		cc_sources base;
 	};
+
+	int load_nothing(cc_sources*, const char*, const void**, size_t*) { return 0; }
+
+	no_sources make_no_sources()
+	{
+		no_sources sources = {};
+		sources.base.load = load_nothing;
+		return sources;
+	}
 
 	// Every compiler test runs at each CPU level, so the 386 encodings are
 	// covered by the same answers rather than by a separate set of checks.
@@ -746,8 +754,8 @@ namespace
 	                  cc_options options = {})
 	{
 		options.cpu = compiling_for;
-		no_sources sources;
-		const cc_result result = cc_compile(source, name, sources, {}, options);
+		no_sources sources = make_no_sources();
+		const cc_result result = cc_compile(source, name, &sources.base, {}, options);
 		if (!result.ok) printf("      %s(%d): %s\n", name, result.line, result.message.c_str());
 		image = result.image;
 		return result.ok;
@@ -1308,8 +1316,8 @@ namespace
 		cc_options as_dos;
 		as_dos.cpu = cc_cpu_i8086;
 		{
-			no_sources sources;
-			const cc_result result = cc_compile(source, "native.c", sources, {}, as_dos);
+			no_sources sources = make_no_sources();
+			const cc_result result = cc_compile(source, "native.c", &sources.base, {}, as_dos);
 			check(result.ok, "the differential program compiles for the 8086");
 			guest = result.image;
 		}
@@ -1326,8 +1334,8 @@ namespace
 
 		cc_options as_host;
 		as_host.machine = cc_machine_x64;
-		no_sources sources;
-		const cc_result native = cc_compile(source, "native.c", sources, {}, as_host);
+		no_sources sources = make_no_sources();
+		const cc_result native = cc_compile(source, "native.c", &sources.base, {}, as_host);
 		check(native.ok, "the same program compiles for the host");
 		if (!native.ok) return;
 
@@ -1459,32 +1467,31 @@ namespace
 
 	// Supplies #include files to the compiler from the directory the source
 	// being compiled lives in, then from any directory given with -I.
-	class directory_sources final : public cc_sources
+	struct directory_sources
 	{
-	public:
-		explicit directory_sources(const char* directory) { directories_.emplace_back(directory); }
-
-		void add(const char* directory) { directories_.emplace_back(directory); }
-
-		bool load(const char* name, std::string& text) override
-		{
-			for (const std::string& directory : directories_)
-			{
-				char path[MAX_PATH] = {};
-				snprintf(path, sizeof(path), "%s\\%s", directory.c_str(), name);
-				uint8_t* data = nullptr;
-				uint32_t size = 0;
-				if (!read_file(path, data, size)) continue;
-				text.assign(reinterpret_cast<const char*>(data), size);
-				delete[] data;
-				return true;
-			}
-			return false;
-		}
-
-	private:
-		std::vector<std::string> directories_;
+		cc_sources base; // first, so the callback can cast its way back here
+		std::vector<std::string> directories;
+		std::vector<uint8_t> contents; // the file being handed over, alive until the next one
 	};
+
+	int load_from_directory(cc_sources* self, const char* name, const void** bytes, size_t* size)
+	{
+		directory_sources* sources = reinterpret_cast<directory_sources*>(self);
+		for (const std::string& directory : sources->directories)
+		{
+			char path[MAX_PATH] = {};
+			snprintf(path, sizeof(path), "%s\\%s", directory.c_str(), name);
+			uint8_t* data = nullptr;
+			uint32_t length = 0;
+			if (!read_file(path, data, length)) continue;
+			sources->contents.assign(data, data + length);
+			delete[] data;
+			*bytes = sources->contents.data();
+			*size = sources->contents.size();
+			return 1;
+		}
+		return 0;
+	}
 
 	// Compiles a C file and returns the .COM image, reporting any error.
 	bool compile_file(const char* path, const std::vector<std::string>& includes,
@@ -1505,9 +1512,11 @@ namespace
 		char name[MAX_PATH] = {};
 		split_path(path, directory, MAX_PATH, name, MAX_PATH);
 
-		directory_sources sources(directory);
-		for (const std::string& entry : includes) sources.add(entry.c_str());
-		const cc_result result = cc_compile(text.c_str(), name, sources, defines, options);
+		directory_sources sources;
+		sources.base.load = load_from_directory;
+		sources.directories.emplace_back(directory);
+		for (const std::string& entry : includes) sources.directories.push_back(entry);
+		const cc_result result = cc_compile(text.c_str(), name, &sources.base, defines, options);
 		if (map && !result.functions.empty())
 		{
 			std::vector<std::pair<std::string, int>> sizes = result.functions;
