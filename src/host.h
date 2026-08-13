@@ -56,6 +56,30 @@ public:
 	virtual void clock(int& year, int& month, int& day, int& weekday, int& hour, int& minute, int& second,
 	                   int& hundredths) = 0;
 
+	// Memory that may be written and then executed. Emitting machine code for
+	// the host is byte manipulation and needs no platform header; getting a
+	// page it can run from is the one part that does. Returning null means the
+	// host cannot do it, and the caller falls back to interpreting.
+	virtual void* code_alloc(uint32_t size)
+	{
+		(void)size;
+		return nullptr;
+	}
+
+	virtual void code_free(void* code, uint32_t size)
+	{
+		(void)code;
+		(void)size;
+	}
+
+	// Called once the bytes are written. A host that keeps code pages
+	// write-protected flips them here; one with a plain RWX page need not.
+	virtual void code_commit(void* code, uint32_t size)
+	{
+		(void)code;
+		(void)size;
+	}
+
 	// Diagnostics. The CLI prints these; the GUI drops them.
 	virtual void trace(const char* text) { (void)text; }
 };
