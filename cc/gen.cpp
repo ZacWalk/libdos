@@ -246,8 +246,21 @@ namespace
 		explicit generator(cc_token_stream& tokens, const cc_options& options)
 			: tokens_(tokens), options_(options)
 		{
-			target_.cpu = options.cpu;
-			e_.cpu = options.cpu;
+			// Only the image shape changes with the machine. The widths stay 16
+			// bits until the front end is parameterised over them, so an x64 build
+			// is 16-bit arithmetic encoded for the host, not a 64-bit program.
+			if (options.machine == cc_machine::x64)
+			{
+				target_.machine = cc_machine::x64;
+				target_.frame_base = 16;
+				target_.hosted = true;
+				target_.code_origin = 0;
+				target_.address_limit = 0x7fffffff;
+				target_.cpu = cc_cpu::i80386;
+			}
+			else target_.cpu = options.cpu;
+			e_.cpu = target_.cpu;
+			e_.machine = target_.machine;
 		}
 
 		void run();
@@ -3746,7 +3759,7 @@ namespace
 		body_start_ = e_.at();
 
 		++scope_;
-		int offset = 4; // return address and the saved BP
+		int offset = target_.frame_base;
 		for (size_t i = 0; i < parameters.size(); ++i)
 		{
 			const int width = is_wide(parameters[i]) ? 4 : 2;
@@ -4222,6 +4235,21 @@ namespace
 
 	void generator::emit_startup()
 	{
+		const int main_index = define("main", sym_function, t_int_);
+
+		// Code a host calls arrives with a stack already, and returns rather
+		// than exits. RBX, RSI and RDI belong to the caller, and the generator
+		// treats all three as scratch.
+		if (target_.hosted)
+		{
+			e_.bytes({0x53, 0x56, 0x57}); // push rbx / push rsi / push rdi
+			e_.call(label_of(main_index));
+			symbols_[size_t(main_index)].called = true;
+			e_.bytes({0x5f, 0x5e, 0x5b}); // pop rdi / pop rsi / pop rbx
+			e_.ret();
+			return;
+		}
+
 		// mov sp, <top of our block>; shrink the block DOS gave us so that a
 		// child process has somewhere to load, then call main and exit.
 		e_.mov_sp_imm(0);
@@ -4231,7 +4259,6 @@ namespace
 		e_.emit(op::mov, 1, operand::in(reg_ah), operand::constant(0x4a));
 		e_.interrupt(0x21);
 
-		const int main_index = define("main", sym_function, t_int_);
 		e_.call(label_of(main_index));
 		symbols_[size_t(main_index)].called = true;
 
@@ -4661,8 +4688,8 @@ namespace
 			         code_size, data_size);
 			throw compile_error{message, 0, 0};
 		}
-		e_.set_deferred(stack_patch_, stack_top);
-		e_.set_deferred(paragraph_patch_, (stack_top + 15) / 16);
+		if (stack_patch_ >= 0) e_.set_deferred(stack_patch_, stack_top);
+		if (paragraph_patch_ >= 0) e_.set_deferred(paragraph_patch_, (stack_top + 15) / 16);
 		if (!e_.resolve(target_.code_origin, data_base))
 			throw compile_error{"a jump was never given somewhere to go", 0, 0};
 

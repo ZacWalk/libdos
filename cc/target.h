@@ -44,11 +44,19 @@ struct cc_target
 	// General registers the code generator may use.
 	int registers = 8;
 
+	// Where a parameter starts, above the saved frame pointer and the return
+	// address. Both are pointer sized, so this is not the same on every machine.
+	int frame_base = 4;
+
 	// Where the image loads, and how much room to leave above it. A .COM is
 	// one segment with the stack on top of the data.
 	int code_origin = 0x100;
 	int stack_size = 2048;
 	int address_limit = 0xfff0;
+
+	// Whether the program starts by talking to DOS. Code called by a host has
+	// no stack to set up and nothing to exit to.
+	bool hosted = false;
 
 	static cc_target for_machine(cc_machine m)
 	{
@@ -70,6 +78,8 @@ struct cc_target
 			t.pointer_size = 8;
 			t.native_width = 8;
 			t.registers = 16;
+			t.frame_base = 16;
+			t.hosted = true;
 			t.code_origin = 0;
 			t.address_limit = 0x7fffffff;
 			break;
