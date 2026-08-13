@@ -51,6 +51,7 @@ Blaster digital audio, `EXEC` for child processes, and the 386 instruction set
 ```powershell
 .\dd.ps1 test   # build + run the test suite
 .\dd.ps1 run    # build + launch the app
+.\dd.ps1 bench  # compile the benchmark for this machine and run it here
 .\dd.ps1 cli --info .\GAME\GAME.EXE
 ```
 
