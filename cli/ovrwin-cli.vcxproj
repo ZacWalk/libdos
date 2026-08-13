@@ -100,9 +100,13 @@
   <ItemGroup>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="..\host\host-win32.cpp" />
-    <ClCompile Include="..\cc\emit.cpp" />
-    <ClCompile Include="..\cc\emit-x64.cpp" />
     <ClCompile Include="..\cc\gen.cpp" />
+    <ClCompile Include="..\cc\emit.c">
+      <CompileAs>CompileAsC</CompileAs>
+    </ClCompile>
+    <ClCompile Include="..\cc\emit-x64.c">
+      <CompileAs>CompileAsC</CompileAs>
+    </ClCompile>
     <ClCompile Include="..\cc\lex.c">
       <CompileAs>CompileAsC</CompileAs>
     </ClCompile>
