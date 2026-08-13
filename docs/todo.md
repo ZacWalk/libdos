@@ -14,9 +14,17 @@ when a review turns one up, add it here rather than in AGENTS.md.
 
 ## CPU
 
-- No 386 instructions and no protected mode, so a DOS extender (DOS/4GW,
-  CWSDPMI) will not run. That rules out the Ultima IV upgrade and anything
-  else built with DJGPP.
+- No 32-bit operands or addresses and no protected mode, so a DOS extender
+  (DOS/4GW, CWSDPMI) will not run. That rules out the Ultima IV upgrade and
+  anything else built with DJGPP. This, not emulator speed, is what stops a
+  more advanced game running: `--bench` puts the interpreter at ~35 M guest
+  instructions a second, six times what a 386 at 33 MHz managed. The x64 JIT
+  design and those measurements are in [jit.md](jit.md).
+
+  The 386's two-byte opcodes are in, in their 16-bit forms, so a 16-bit program
+  built for a 386 runs. What is missing is the `66`/`67` prefixes, the 32-bit
+  register file with SIB addressing, `PUSHAD`/`POPAD`, `CDQ`/`CWDE`, `BSWAP`
+  and the 32-bit string instructions.
 - No x87. The escape opcodes consume their operands and do nothing, which is
   right for a program that checks for a coprocessor first and wrong for one
   that assumes it.
@@ -45,10 +53,39 @@ when a review turns one up, add it here rather than in AGENTS.md.
 - `static` gives a local static storage, but a file-scope `static` is not
   private: there is one namespace, so two files defining the same helper name
   collide when they are included into one translation unit.
-- The generated code is naive - every operand goes through AX and the stack -
-  and roughly three times the size of what a real 8086 compiler emits. A 32-bit
-  operand pair lives in DX:AX, with CX:BX for the second operand, and anything
-  harder than an add calls one of the helpers emitted after the program.
+- The generated code is no longer naive, but it is still a long way from a real
+  8086 compiler's. `cc/bench/bench.c` is the yardstick - the shapes a game's
+  inner loops are made of, with a checksum in the exit code - and
+  `ovrwincli --ccbench cc\bench\bench.c` reports its size and what it costs to
+  run. What is there now, statement by statement: an operand that generates no
+  code of its own is placed rather than pushed, so a constant folds into the
+  instruction; a comparison stays in the flags instead of becoming a 0 or a 1
+  that is then tested; a dereference remembers that its address is still in a
+  pointer variable and uses `[bx+displacement]`; a constant index or a member
+  offset folds into the address; a statement whose result nobody wants is
+  applied straight to memory; and a loop puts its condition at the bottom.
+
+  And across the whole program, from the layout record described below: a
+  branch that reaches gets the two-byte form, a branch to the next instruction
+  goes altogether, a function nothing can reach is left out, and a body short
+  enough is copied to its call site instead of called - with any argument that
+  is a constant standing in for the parameter, which is what makes the copy
+  smaller as well as faster. `--inline <n>`, `--no-inline` and `--keep-unused`
+  control it; `--map` says where the code went.
+
+  What is not:
+
+  - Nothing is kept in a register between statements. SI and DI are never used
+    at all, so a loop reloads its induction variable from the frame every time.
+    This is the largest remaining gap, and the one that needs real machinery: a
+    notion of which values are live, which the generator does not have.
+  - A 32-bit operand pair lives in DX:AX, with CX:BX for the second operand,
+    and anything harder than an add or a constant shift calls one of the
+    helpers emitted after the program.
+  - `switch` is a chain of compares, not a table.
+  - Only a constant argument stands in for a parameter when a body is copied.
+    A local would too, but only if nothing the body calls could change it, and
+    the generator cannot yet say that.
 - `sizeof` of an expression containing a call to a not-yet-defined function
   will leave a stale fixup behind.
 - A `switch` truncates its controlling expression to 16 bits.
@@ -57,23 +94,57 @@ when a review turns one up, add it here rather than in AGENTS.md.
 - The preprocessor has no `#` or `##` operator, and `#pragma` is ignored.
 - The C library in `cc/lib/libc.c` is a starting point, not a complete one:
   `malloc` is a bump allocator that never reuses, `getenv` always fails, and
-  `printf` accepts width and precision but ignores them.
+  `printf` accepts width and precision but ignores them. The list of what a
+  real program still asks for is under the memory model below.
 
 ## Running a large program: the memory model
 
 The compiler emits a `.COM`: one segment, code and data and stack together,
 64 KiB in total. That is the single largest limit in the project and the reason
-a real game cannot be built here yet. Doom8088, the worked example in
-`inspiration/Doom8088`, compiles 50 of the 51 files its mode 13h build needs
-but cannot be linked or run.
+a real game cannot be built here yet.
+
+Doom8088, the worked example in `inspiration/Doom8088`, now **compiles all the
+way through** as a single translation unit. Every one of the 51 files its mode
+13h build needs parses and generates code; the only thing it stops on is the
+segment limit. Reproducing it:
+
+```powershell
+# one file that includes the other 51, then the library it expects
+ovrwincli --cc doomall.c -I cc\include -DC_ONLY -DFLAT_SPAN -DVIEWWINDOWWIDTH=120
+```
+
+What that says today:
+
+- **152 KiB of code and 74 KiB of data.** The earlier guess here was 500-600 KiB
+  of code; the measurement is a third of that. Three code segments, not nine.
+- The data does **not** fit in one 64 KiB segment either, so the medium model
+  Doom8088's own build uses is not quite enough: either the large tables have
+  to move to the code segment (they are `const`) or data needs far pointers too.
+- Twenty-eight library and runtime functions are still missing: `inp`, `outp`,
+  `int86`, `_dos_getvect`, `_dos_setvect`, `_dos_allocmem`, `_disable`,
+  `_enable`, `_chain_intr`, `exit`, `abs`, `labs`, `fopen`, `fread`, `fseek`,
+  `ftell`, `printf`, `vprintf`, `sprintf`, `memcpy`, `memset`, `memcmp`,
+  `memchr`, `strcpy`, `strncpy`, `strlen`, `stricmp`, `toupper`. Most are
+  already in `cc/lib/libc.c`; the DOS ones are thin wrappers over `__int21`.
+- It is the `C_ONLY` configuration, so the three hand-written assembly files
+  (`i_vv13ma.asm`, `m_fixed.asm`, `z_xms.asm`) are not needed.
 
 **There is no linker to write.** `cc/` already does whole-program compilation:
 one token vector, one symbol table, every fixup resolved in `finish()`. Symbol
 resolution across objects is a linker's actual job and it is already done. Nor
-would working in offsets help, because the code already works in offsets and
-patches them at the end. The limit is narrower than that: a near `CALL`
-displacement is 16 bits and `CS` never changes. What is missing is a memory
-model, not a linker.
+would working in offsets help, because the code already works in offsets. The
+limit is narrower than that: a near `CALL` displacement is 16 bits and `CS`
+never changes. What is missing is a memory model, not a linker.
+
+The bookkeeping a memory model needs is now there. `emitter` keeps a **layout
+record** beside the bytes: a table of labels, and a fixup for every branch,
+call and address field. Nothing refers to a byte offset that has been decided,
+so `lay_out()` can choose an encoding for each branch, drop what the program
+cannot reach, move everything that is left, and recompute every label. That is
+the smallest thing that deserves to be called an intermediate representation,
+and it is what the three pieces below all rest on. `--map` prints what came out
+of it: for Doom8088, 583 functions, the largest 3444 bytes, so dividing them
+into three segments is arithmetic.
 
 Three pieces, smallest first, each independently useful and testable:
 
@@ -90,11 +161,10 @@ Three pieces, smallest first, each independently useful and testable:
 - **Far calls and multi-segment code.** Emit every user call as a far call
   (`9A off:seg`) with `RETF`, uniformly, so single-pass emission never has to
   guess an instruction width - two bytes more per call, and correct by
-  construction. `finish()` already knows every function's start offset and
-  every call site, so laying functions into 64 KiB segments is arithmetic plus
-  padding, and each segment word becomes an MZ relocation entry. Data stays in
-  one segment, which is the medium model and what Doom8088's own build uses.
-  Function pointers widen to four bytes with it.
+  construction. The layout record already knows every function's span and every
+  call site, so laying functions into 64 KiB segments is arithmetic plus
+  padding, and each segment word becomes an MZ relocation entry. Function
+  pointers widen to four bytes with it.
 
 Overlays, or loading pieces on demand, are the obvious alternative and are
 worse here. Overlays pay off when a program has phases - load the menu, discard
@@ -103,21 +173,14 @@ the tables and the zone allocator call each other constantly, so it would
 thrash. It also needs an overlay manager and a thunk on every cross-overlay
 call. More machinery than far calls, for a worse result.
 
-Two things to weigh before starting:
-
-- The generated code is roughly three times the size of a real 8086 compiler's.
-  Doom8088 is about 200 KiB built with gcc-ia16 `-Os`, so here it would be
-  500-600 KiB across nine or so code segments. It would very likely run. Whether
-  it is playable is a different question, and if that is the goal then codegen
-  quality, not the memory model, is the real project.
-- One translation unit is viable. Compiling all 51 files together needs their
-  file-scope names not to collide, and a check across the mode 13h set found
-  only a handful that do. File-scope `static` being private would settle it.
+One translation unit is viable, and now demonstrated. The file-scope name
+collisions the whole-program build was expected to hit did not materialise in
+the mode 13h set.
 
 The emulator side is in better shape than the compiler side: mode 13h, the
 timer, the keyboard and the PC speaker are all there. The gaps that would bite
 are unchained mode Y (listed under Video) and XMS, which `z_xms.asm` uses for
-the WAD cache.
+the WAD cache - though `C_ONLY` avoids it.
 
 
 ## Shell

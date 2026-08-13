@@ -207,14 +207,20 @@ void machine_reset(machine_state& s)
 	const uint32_t cpu_hz = s.cpu_hz;
 	const bool trace = s.trace;
 
+	// Audio is the host's setting, not the machine's. Losing it here silences
+	// every program started from the shell prompt.
+	const bool audio_enabled = s.sound.enabled;
+	const int volume = s.sound.volume;
+
 	std::memset(s.memory, 0, sizeof(s.memory));
 	cpu_reset(s.cpu);
 	pit_reset(s.pit);
 	pic_reset(s.pic);
 	sound_reset(s.sound);
+	s.sound.enabled = audio_enabled;
+	s.sound.volume = volume;
 	s.kbd = keyboard_controller();
 	s.cycles = 0;
-	s.next_render = 0;
 	s.exited = false;
 	s.exit_code = 0;
 	s.error[0] = 0;
@@ -289,6 +295,16 @@ uint64_t machine::exec(uint64_t budget)
 	uint64_t spent = 0;
 	bool rendered = false;
 
+	// Sample the picture at the *last* emulated retrace inside this budget. A
+	// program that waits for retrace before drawing has finished by then, and
+	// taking the last one rather than the first stops the frame the host shows
+	// ageing by a variable amount when the budget spans two retraces.
+	const uint64_t frame_cycles = s.cpu_hz / 70;
+	const uint64_t retrace = frame_cycles - frame_cycles / 20;
+	const uint64_t end = s.cycles + budget;
+	uint64_t render_at = (end / frame_cycles) * frame_cycles + retrace;
+	while (render_at > end) render_at -= frame_cycles;
+
 	while (spent < budget && !s.exited)
 	{
 		const int cost = cpu_step(s);
@@ -296,10 +312,7 @@ uint64_t machine::exec(uint64_t budget)
 		spent += uint64_t(cost);
 		pit_step(s, uint64_t(cost));
 
-		// Sample the picture at the emulated vertical retrace: a program that
-		// waits for retrace before drawing has finished by then, so the frame
-		// the host sees is a whole one rather than a half-drawn one.
-		if (!rendered && s.cycles >= s.next_render)
+		if (!rendered && s.cycles >= render_at)
 		{
 			vga_render(s);
 			rendered = true;
@@ -313,11 +326,6 @@ uint64_t machine::exec(uint64_t budget)
 	}
 
 	if (!rendered) vga_render(s);
-
-	const uint64_t frame_cycles = s.cpu_hz / 70;
-	const uint64_t retrace = frame_cycles - frame_cycles / 20;
-	s.next_render = (s.cycles / frame_cycles) * frame_cycles + retrace;
-	if (s.next_render <= s.cycles) s.next_render += frame_cycles;
 
 	draw_mouse_pointer(s);
 	return spent;

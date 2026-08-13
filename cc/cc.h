@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 // The compiler never opens a file. A caller supplies source text the same way
@@ -36,8 +37,26 @@ struct cc_result
 	int line = 0;
 	int code_size = 0;
 	int data_size = 0;
+
+	// Where the code went, once the layout pass has settled it. This is what a
+	// multi-segment build has to divide up.
+	std::vector<std::pair<std::string, int>> functions;
+};
+
+// What the compiler is allowed to do to the program as a whole. Every one of
+// these needs the whole program in memory at once, which is what compiling a
+// project as a single translation unit gives.
+struct cc_options
+{
+	// How big a body may be, in tokens, and still be copied to its call site
+	// rather than called. Zero turns it off.
+	int inline_limit = 24;
+
+	// Leave out the functions nothing can reach.
+	bool drop_unreachable = true;
 };
 
 // Each define is either NAME or NAME=VALUE, as a command line spells it.
 cc_result cc_compile(const char* text, const char* name, cc_sources& sources,
-                     const std::vector<std::string>& defines = {});
+                     const std::vector<std::string>& defines = {},
+                     const cc_options& options = {});

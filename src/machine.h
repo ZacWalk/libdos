@@ -47,7 +47,6 @@ struct machine_state
 
 	uint64_t cycles = 0;
 	uint32_t cpu_hz = 8000000;
-	uint64_t next_render = 0; // cycle the next frame is sampled at
 	bool exited = false;
 	uint8_t exit_code = 0;
 	bool trace = false;
