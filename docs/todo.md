@@ -158,11 +158,34 @@ and operands that may be a register, an immediate, or a memory form, and an
 operand that means an address carries a reference instead of a number. Only
 `emit.cpp` knows an opcode, so `lay_out()` can choose an encoding for each
 branch, drop what the program cannot reach, move everything that is left, and
-recompute every label - and a second back end is another file of the same
-shape. That is the smallest thing that deserves to be called an intermediate
-representation, and it is what the three pieces below all rest on. `--map`
-prints what came out of it: for Doom8088, 583 functions, so dividing them into
-three segments is arithmetic.
+recompute every label. That is the smallest thing that deserves to be called an
+intermediate representation, and it is what the three pieces below all rest on.
+`--map` prints what came out of it: for Doom8088, 583 functions, so dividing
+them into three segments is arithmetic.
+
+There are three back ends over that one list, which is the claim it was built to
+make:
+
+- **8086**, in `emit.cpp`. The default, and what a `.COM` needs.
+- **386**, the same file with more to say: `SETcc` instead of a branch over a
+  clear, `MOVZX`/`MOVSX` instead of a load and a fix-up, and a conditional
+  branch that reaches in one instruction. Still a 16-bit `.COM` - `--cpu 386`
+  is the switch, and every compiler test runs at both levels. Worth 5% of the
+  instructions on the benchmark.
+- **x64**, in `emit-x64.cpp`, a second file of the same shape: a different
+  mod/rm table, different prefixes, a branch that reaches further, and agreeing
+  with the first on nothing but the opcode bytes. `--ccnative` compiles a
+  program for the machine the compiler is running on, puts it in memory the
+  host made executable, and calls it. The test suite compiles one program both
+  ways and checks the host and the emulator agree.
+
+What the x64 back end cannot do yet is a **pointer**: the front end still makes
+an `int` and a pointer two bytes wide, so an address does not survive in a
+register. Locals reach through RBP and globals RIP-relative, which is enough
+for arithmetic, control flow and calls, and not enough for arrays, pointers or
+`long`. Making the front end parametric over width is the work that unblocks
+it, and it is the same work that would let the 386 back end compile 32-bit
+code.
 
 Three pieces, smallest first, each independently useful and testable:
 
