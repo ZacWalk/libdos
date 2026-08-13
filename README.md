@@ -49,11 +49,11 @@ Blaster digital audio, `EXEC` for child processes, and the 386 instruction set
 ## Build and run
 
 ```powershell
-.\dd.ps1 test   # build + run the test suite
-.\dd.ps1 run    # build + launch the app
-.\dd.ps1 bench  # compile the benchmark for this machine and run it here
+.\dd.ps1 test       # build + run the test suite
+.\dd.ps1 run        # build + launch the app
+.\dd.ps1 bench      # compile the benchmark for this machine and run it here
+.\dd.ps1 bench -Exe # the same, but as a standalone bin\bench.exe
 .\dd.ps1 cli --info .\GAME\GAME.EXE
-.\dd.ps1 cli --ccexe cc\bench\bench.c -o bench.exe   # a Windows program
 ```
 
 Or with MSBuild directly:
