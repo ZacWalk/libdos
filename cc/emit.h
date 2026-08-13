@@ -24,6 +24,8 @@
 #include <utility>
 #include <vector>
 
+#include "target.h"
+
 enum class condition
 {
 	equal, not_equal,
@@ -47,6 +49,7 @@ enum class op : uint8_t
 	nop,
 	mov,
 	lea,
+	movsx, movzx, // 386: a narrow source widened into the destination
 	add, adc, sub, sbb, and_, or_, xor_, cmp, test,
 	inc, dec, neg, not_,
 	mul, imul, div, idiv, // against the accumulator, as the machine has them
@@ -143,6 +146,9 @@ struct emitter
 	std::vector<int> labels; // the instruction a label is bound to, or -1
 	std::vector<int32_t> deferred;
 	std::vector<uint8_t> image; // the encoding, once lay_out() has run
+
+	// What the back end may emit. Set once, before anything is generated.
+	cc_cpu cpu = cc_cpu::i8086;
 
 	// A run of raw bytes coalesces into one instruction, but never across a
 	// label: a label names an instruction, so the run has to start again.
