@@ -542,6 +542,7 @@ namespace
 		void shift_wide_constant(tok op, int count, bool unsigned_operation);
 		void scale_ax(int size);
 		void widen(int from_type);
+		void load_byte_widened(const operand& from, bool is_signed, int data_offset = -1);
 		void load_converted(value& v, int to_type);
 		void call_helper(helper which);
 		void emit_helpers();
@@ -707,6 +708,23 @@ namespace
 		else e_.cwd();
 	}
 
+	// A byte fetched into AX. A 386 does it in one instruction; an 8086 loads AL
+	// and then fixes AH. The width says the byte, not the destination, so that
+	// the register allocator can see the slot is not a whole word.
+	void generator::load_byte_widened(const operand& from, bool is_signed, int data_offset)
+	{
+		if (target_.cpu >= cc_cpu::i80386)
+		{
+			e_.emit(is_signed ? ::op::movsx : ::op::movzx, 1, operand::in(reg_a), from);
+			if (data_offset >= 0) data_reference(data_offset);
+			return;
+		}
+		e_.emit(::op::mov, 1, operand::in(reg_a), from);
+		if (data_offset >= 0) data_reference(data_offset);
+		if (is_signed) e_.cbw();
+		else e_.zero_ah();
+	}
+
 	void generator::load(value& v)
 	{
 		// There is no floating point at run time: a real has to have been cast
@@ -732,11 +750,7 @@ namespace
 		case val_local:
 			if (is_array(v.type) || is_record(v.type)) e_.lea_ax_frame(v.offset);
 			else if (type_size(v.type) == 1)
-			{
-				e_.load_al_frame(v.offset);
-				if (is_unsigned(v.type)) e_.zero_ah();
-				else e_.cbw();
-			}
+				load_byte_widened(emitter::frame(v.offset), !is_unsigned(v.type));
 			else
 			{
 				e_.load_ax_frame(v.offset);
@@ -751,12 +765,7 @@ namespace
 				data_reference(v.offset);
 			}
 			else if (type_size(v.type) == 1)
-			{
-				e_.load_al_absolute(0);
-				data_reference(v.offset);
-				if (is_unsigned(v.type)) e_.zero_ah();
-				else e_.cbw();
-			}
+				load_byte_widened(operand::absolute(0), !is_unsigned(v.type), v.offset);
 			else
 			{
 				e_.load_ax_absolute(0);
@@ -784,11 +793,7 @@ namespace
 			}
 			address_to_bx(v);
 			if (type_size(v.type) == 1)
-			{
-				e_.load_al_indirect(v.bias);
-				if (is_unsigned(v.type)) e_.zero_ah();
-				else e_.cbw();
-			}
+				load_byte_widened(emitter::pointee(v.bias), !is_unsigned(v.type));
 			else
 			{
 				e_.load_ax_indirect(v.bias);
