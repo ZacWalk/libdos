@@ -232,12 +232,20 @@ script, one build, no diff in the output.
    `EMIT_CODE`/`EMIT_LABEL`/`EMIT_IMAGE`. The 490 call sites in the parser were
    rewritten by a one-shot Python script rather than by hand. *(done)*
 6. **`gen.cpp`** (4,400 lines), the bulk. `class generator` becomes
-   `struct generator` and every method a function taking `generator* g`. Write
-   `gen.c` alongside the C++ file and leave it out of the build until it is
-   finished, so the suite stays green the whole way through; swap the two in
-   one commit at the end.
-7. **`cc.h`** - the public header, `extern "C"`, no `std::` in the signature.
-   `cli/main.cpp` changes with it.
+   `struct generator` and every method a function taking `generator* g`. The
+   translation is machine-made - `tools/port-gen.py` turns `generator::foo` into
+   `gen_foo(generator* g, ...)`, gives every member and call the `g` it needs,
+   and converts C++ references into pointers in the signature, in the body and
+   at every call site. `cc/gen.c` is not in the build until it compiles, so the
+   suite stays green the whole way through; the two are swapped in one commit
+   at the end. *(in progress)*
+
+   What a script cannot do is decide, so the constructs that need decisions -
+   range-for loops, lambdas, local `const T&` bindings, std::vector, std::string,
+   std::map and throw - are removed from `gen.cpp` **first**, where each change
+   is still valid C++ and the fingerprint says whether it changed anything.
+7. **`cc.h`** - the public header. `cc_result` owns an arena now, and the image,
+   the message and the function map all point into it. *(done)*
 8. **`build-cc.ps1`** (below), building the same sources outside MSBuild.
 
 At the end of step 8 nothing self-hosts yet, the compiler is C, the tests still
