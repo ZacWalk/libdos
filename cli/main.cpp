@@ -14,6 +14,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace
 {
@@ -750,15 +752,24 @@ namespace
 	// covered by the same answers rather than by a separate set of checks.
 	cc_cpu compiling_for = cc_cpu_i8086;
 
+	cc_options default_options()
+	{
+		cc_options options;
+		cc_options_init(&options);
+		return options;
+	}
+
 	bool compile_text(const char* source, std::vector<uint8_t>& image, const char* name,
-	                  cc_options options = {})
+	                  cc_options options = default_options())
 	{
 		options.cpu = compiling_for;
 		no_sources sources = make_no_sources();
-		const cc_result result = cc_compile(source, name, &sources.base, {}, options);
-		if (!result.ok) printf("      %s(%d): %s\n", name, result.line, result.message.c_str());
-		image = result.image;
-		return result.ok;
+		cc_result result = cc_compile(source, name, &sources.base, nullptr, 0, &options);
+		if (!result.ok) printf("      %s(%d): %s\n", name, result.line, result.message);
+		image.assign(result.image, result.image + result.image_size);
+		const bool ok = result.ok != 0;
+		cc_result_free(&result);
+		return ok;
 	}
 
 	std::string run_image(const std::vector<uint8_t>& image, host_services* host)
@@ -1102,7 +1113,7 @@ namespace
 
 		for (const int limit : {0, 24, 200})
 		{
-			cc_options options;
+			cc_options options = default_options();
 			options.inline_limit = limit;
 			check(compile_text(whole_program, image, "inline.c", options),
 			      "the compiler accepts the whole-program test");
@@ -1116,7 +1127,7 @@ namespace
 
 		// A function nothing can reach costs nothing, and one that was copied
 		// everywhere stops being reached.
-		cc_options keep;
+		cc_options keep = default_options();
 		keep.drop_unreachable = false;
 		std::vector<uint8_t> lean, fat;
 		check(compile_text(whole_program, lean, "inline.c"), "the lean build compiles");
@@ -1313,13 +1324,14 @@ namespace
 
 		// What the interpreter says it means, through the 8086 back end.
 		std::vector<uint8_t> guest;
-		cc_options as_dos;
+		cc_options as_dos = default_options();
 		as_dos.cpu = cc_cpu_i8086;
 		{
 			no_sources sources = make_no_sources();
-			const cc_result result = cc_compile(source, "native.c", &sources.base, {}, as_dos);
-			check(result.ok, "the differential program compiles for the 8086");
-			guest = result.image;
+			cc_result result = cc_compile(source, "native.c", &sources.base, nullptr, 0, &as_dos);
+			check(result.ok != 0, "the differential program compiles for the 8086");
+			guest.assign(result.image, result.image + result.image_size);
+			cc_result_free(&result);
 		}
 		if (guest.empty()) return;
 
@@ -1332,16 +1344,23 @@ namespace
 		}
 		check(expected == 214, "the emulator agrees on what the program means");
 
-		cc_options as_host;
+		cc_options as_host = default_options();
 		as_host.machine = cc_machine_x64;
 		no_sources sources = make_no_sources();
-		const cc_result native = cc_compile(source, "native.c", &sources.base, {}, as_host);
-		check(native.ok, "the same program compiles for the host");
-		if (!native.ok) return;
+		cc_result native = cc_compile(source, "native.c", &sources.base, nullptr, 0, &as_host);
+		check(native.ok != 0, "the same program compiles for the host");
+		if (!native.ok)
+		{
+			cc_result_free(&native);
+			return;
+		}
+
+		const std::vector<uint8_t> image(native.image, native.image + native.image_size);
+		cc_result_free(&native);
 
 		win32_host host;
 		int answer = -1;
-		if (!run_native(native.image, host, answer)) return; // not a host that can run it
+		if (!run_native(image, host, answer)) return; // not a host that can run it
 		check_equal(uint32_t(answer), uint32_t(expected),
 		            "the host back end computes what the emulator computed");
 	}
@@ -1496,7 +1515,7 @@ namespace
 	// Compiles a C file and returns the .COM image, reporting any error.
 	bool compile_file(const char* path, const std::vector<std::string>& includes,
 	                  const std::vector<std::string>& defines, std::vector<uint8_t>& image, bool quiet,
-	                  const cc_options& options = {}, bool map = false)
+	                  const cc_options& options = default_options(), bool map = false)
 	{
 		uint8_t* data = nullptr;
 		uint32_t size = 0;
@@ -1516,10 +1535,18 @@ namespace
 		sources.base.load = load_from_directory;
 		sources.directories.emplace_back(directory);
 		for (const std::string& entry : includes) sources.directories.push_back(entry);
-		const cc_result result = cc_compile(text.c_str(), name, &sources.base, defines, options);
-		if (map && !result.functions.empty())
+
+		std::vector<const char*> define_text;
+		for (const std::string& entry : defines) define_text.push_back(entry.c_str());
+
+		cc_result result = cc_compile(text.c_str(), name, &sources.base,
+		                              define_text.empty() ? nullptr : define_text.data(),
+		                              int(define_text.size()), &options);
+		if (map && result.function_count > 0)
 		{
-			std::vector<std::pair<std::string, int>> sizes = result.functions;
+			std::vector<std::pair<std::string, int>> sizes;
+			for (int i = 0; i < result.function_count; ++i)
+				sizes.emplace_back(result.functions[i].name, result.functions[i].size);
 			std::sort(sizes.begin(), sizes.end(),
 			          [](const std::pair<std::string, int>& a, const std::pair<std::string, int>& b)
 			          {
@@ -1532,14 +1559,16 @@ namespace
 		}
 		if (!result.ok)
 		{
-			printf("%s(%d): %s\n", result.file.empty() ? name : result.file.c_str(), result.line,
-			       result.message.c_str());
+			printf("%s(%d): %s\n", result.file != nullptr ? result.file : name, result.line,
+			       result.message != nullptr ? result.message : "");
+			cc_result_free(&result);
 			return false;
 		}
 		if (!quiet)
-			printf("%s: %d bytes (%d code, %d data)\n", name, int(result.image.size()),
+			printf("%s: %d bytes (%d code, %d data)\n", name, result.image_size,
 			       result.code_size, result.data_size);
-		image = result.image;
+		image.assign(result.image, result.image + result.image_size);
+		cc_result_free(&result);
 		return true;
 	}
 
@@ -1729,7 +1758,7 @@ namespace
 	int cc_native_command(const char* path, const std::vector<std::string>& includes,
 	                      const std::vector<std::string>& defines, bool dump)
 	{
-		cc_options options;
+		cc_options options = default_options();
 		options.machine = cc_machine_x64;
 		std::vector<uint8_t> image;
 		if (!compile_file(path, includes, defines, image, false, options)) return 1;
@@ -2059,7 +2088,7 @@ int main(int argc, char** argv)
 		const char* output = nullptr;
 		std::vector<std::string> includes;
 		std::vector<std::string> defines;
-		cc_options options;
+		cc_options options = default_options();
 		bool map = false;
 		for (int i = 3; i < argc; ++i)
 		{
@@ -2081,7 +2110,7 @@ int main(int argc, char** argv)
 	{
 		std::vector<std::string> includes;
 		std::vector<std::string> defines;
-		cc_options options;
+		cc_options options = default_options();
 		for (int i = 3; i < argc; ++i)
 		{
 			if (strcmp(argv[i], "-I") == 0 && i + 1 < argc) includes.emplace_back(argv[++i]);
