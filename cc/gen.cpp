@@ -272,8 +272,8 @@ namespace
 		generator& operator=(const generator&) = delete;
 
 		void run();
-		std::vector<uint8_t> finish(int& code_size, int& data_size);
-		void report(std::vector<std::pair<std::string, int>>& functions) const;
+		void finish(cc_result& result);
+		void report(cc_result& result) const;
 
 	private:
 		cc_token_stream& tokens_;
@@ -4680,7 +4680,7 @@ namespace
 				emit_drop(&e_, symbols_[size_t(s.symbol)].start, symbols_[size_t(s.symbol)].finish);
 	}
 
-	std::vector<uint8_t> generator::finish(int& code_size, int& data_size)
+	void generator::finish(cc_result& result)
 	{
 		for (const symbol& entry : symbols_)
 		{
@@ -4695,10 +4695,12 @@ namespace
 		emit_lay_out(&e_, target_.code_origin);
 
 		// Data follows the code, so its address is only known after that.
-		code_size = int(e_.image.count);
+		int code_size = int(e_.image.count);
 		if (code_size % 2 != 0) ++code_size;
 		const int data_base = target_.code_origin + code_size;
-		data_size = int(data_.size());
+		const int data_size = int(data_.size());
+		result.code_size = code_size;
+		result.data_size = data_size;
 
 		const int image_end = data_base + data_size;
 		const int stack_top = (image_end + target_.stack_size + 1) & ~1;
@@ -4732,75 +4734,100 @@ namespace
 		for (const data_fixup& fixup : data_fixups_)
 			put_word(fixup.position, data_base + fixup.offset);
 
-		std::vector<uint8_t> image((const uint8_t*)e_.image.items,
-		                           (const uint8_t*)e_.image.items + e_.image.count);
-		while (image.size() % 2 != 0) image.push_back(0x90);
-		image.insert(image.end(), data_.begin(), data_.end());
-		return image;
+		// Code first, padded to an even boundary, then the data section.
+		uint8_t* image = (uint8_t*)cc_arena_alloc(&result.arena, size_t(code_size + data_size) + 1);
+		memcpy(image, e_.image.items, size_t(e_.image.count));
+		for (int i = e_.image.count; i < code_size; ++i) image[i] = 0x90;
+		if (data_size > 0) memcpy(image + code_size, data_.data(), size_t(data_size));
+		result.image = image;
+		result.image_size = code_size + data_size;
 	}
 
 	// What survived, and how much room it takes. The spans come from the
 	// layout record, so this is what actually ended up in the image, and it is
 	// what a multi-segment build would have to divide up.
-	void generator::report(std::vector<std::pair<std::string, int>>& functions) const
+	void generator::report(cc_result& result) const
 	{
+		int count = 0;
+		for (const symbol& entry : symbols_)
+		{
+			if (entry.kind != sym_function || !entry.defined) continue;
+			if (entry.start < 0 || entry.finish < 0 || entry.name.empty()) continue;
+			if (emit_offset_of(&e_, entry.finish) - emit_offset_of(&e_, entry.start) > 0) ++count;
+		}
+
+		cc_function* functions = (cc_function*)cc_arena_alloc(&result.arena,
+		                                                      sizeof(cc_function) * size_t(count + 1));
+		result.functions = functions;
+		result.function_count = 0;
+
 		for (const symbol& entry : symbols_)
 		{
 			if (entry.kind != sym_function || !entry.defined) continue;
 			if (entry.start < 0 || entry.finish < 0 || entry.name.empty()) continue;
 			const int size = emit_offset_of(&e_, entry.finish) - emit_offset_of(&e_, entry.start);
-			if (size > 0) functions.emplace_back(entry.name, size);
+			if (size <= 0) continue;
+			functions[result.function_count].name =
+				cc_arena_copy(&result.arena, entry.name.c_str(), entry.name.size());
+			functions[result.function_count].size = size;
+			++result.function_count;
 		}
 	}
 }
 
+void cc_result_free(cc_result* result)
+{
+	cc_arena_free(&result->arena);
+	memset(result, 0, sizeof(*result));
+}
+
 cc_result cc_compile(const char* text, const char* name, cc_sources* sources,
-                     const std::vector<std::string>& defines, const cc_options& options)
+                     const char* const* defines, int define_count, const cc_options* options)
 {
 	cc_result result;
-	cc_arena arena;
 	cc_names names;
 	cc_token_stream stream;
-	std::vector<const char*> define_text;
+	cc_options settings;
 
-	cc_arena_init(&arena, 0);
-	cc_names_init(&names, &arena);
-	cc_token_stream_init(&stream, &arena, &names);
-	for (const std::string& entry : defines) define_text.push_back(entry.c_str());
+	memset(&result, 0, sizeof(result));
+	cc_arena_init(&result.arena, 0);
+	cc_names_init(&names, &result.arena);
+	cc_token_stream_init(&stream, &result.arena, &names);
 
-	// Everything the tokens point at lives in the arena, so it has to outlive
-	// the generator, not just the lexer.
+	cc_options_init(&settings);
+	if (options != nullptr) settings = *options;
+
+	// Everything the result points at lives in the result's own arena, so only
+	// the tables that helped build it are given back here.
 	const auto release = [&]
 	{
 		cc_token_stream_free(&stream);
 		cc_names_free(&names);
-		cc_arena_free(&arena);
 	};
 
-	if (!cc_tokenise(&stream, text, name, sources,
-	                 define_text.empty() ? nullptr : define_text.data(), int(define_text.size())))
+	if (!cc_tokenise(&stream, text, name, sources, defines, define_count))
 	{
-		result.message = stream.error;
+		result.message = cc_arena_copy(&result.arena, stream.error, strlen(stream.error));
 		result.file = stream.error_file != nullptr ? stream.error_file : name;
 		result.line = stream.error_line;
 		release();
 		return result;
 	}
 
-	generator pass(stream, options);
+	generator pass(stream, settings);
 	try
 	{
 		pass.run();
-		result.image = pass.finish(result.code_size, result.data_size);
-		pass.report(result.functions);
-		result.ok = true;
+		pass.finish(result);
+		pass.report(result);
+		result.ok = 1;
 	}
 	catch (const compile_error& error)
 	{
 		// The sizes are worth having even when the program turned out not to
 		// fit, which is the moment somebody wants to know where it all went.
-		pass.report(result.functions);
-		result.message = error.message;
+		pass.report(result);
+		result.message = cc_arena_copy(&result.arena, error.message.c_str(), error.message.size());
 		result.line = error.line;
 		result.file = error.file != nullptr ? error.file : name;
 	}
