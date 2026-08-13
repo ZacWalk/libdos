@@ -1278,6 +1278,33 @@ namespace
 		}
 	}
 
+	// What a hosted image gets instead of DOS. Only what a compiled program
+	// actually asks for is here: a character out, and a string.
+	struct native_registers
+	{
+		uint16_t ax, bx, cx, dx, si;
+	};
+
+	void native_service(void* block, int number)
+	{
+		uint8_t* memory = static_cast<uint8_t*>(block);
+		native_registers* r = reinterpret_cast<native_registers*>(memory + CC_NATIVE_REGISTERS);
+		if (number != 0x21) return;
+
+		switch ((r->ax >> 8) & 0xff)
+		{
+		case 0x02:
+			putchar(r->dx & 0xff);
+			r->ax = uint16_t((r->ax & 0xff00) | (r->dx & 0xff));
+			break;
+		case 0x09:
+			for (int at = r->dx; at < 0x10000 && memory[at] != '$'; ++at) putchar(memory[at]);
+			break;
+		default:
+			break;
+		}
+	}
+
 	// Compiles for the machine this is running on, puts the result somewhere it
 	// can be executed, and calls it. The same source through the same front end
 	// and a different back end has to give the same answer as the emulator did,
@@ -1301,10 +1328,15 @@ namespace
 		if (block == nullptr) return false;
 		memset(block, 0, block_size);
 		memcpy(block, image.data(), image.size());
+
+		using service_entry = void (*)(void*, int);
+		const service_entry service = native_service;
+		memcpy(static_cast<uint8_t*>(block) + CC_NATIVE_SERVICE, &service, sizeof(service));
 		host.code_commit(block, block_size);
 
 		using entry_point = int (*)(void*);
 		const entry_point run = reinterpret_cast<entry_point>(block);
+		fflush(stdout); // the generated code writes straight to the console
 		answer = run(block) & 0xffff;
 		host.code_free(block, block_size);
 		return true;

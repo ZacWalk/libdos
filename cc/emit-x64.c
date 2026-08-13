@@ -24,6 +24,7 @@
  * the block.
  */
 
+#include "cc.h"
 #include "emit.h"
 
 /* The register R15 holds the block, and the two guest registers that hold
@@ -553,10 +554,64 @@ int emit_encode_x64(const emitter* e, instruction* in, int position, cc_list* in
 		break;
 
 	case op_interrupt:
-		/* There is no DOS here. Reaching one is a bug, and this says so. */
-		x64_put(&out, 0x0f);
-		x64_put(&out, 0x0b);
+	{
+		/* The host's own service call. The guest's registers go where the host
+		 * agreed to look for them, and RBP - which the guest never uses, since
+		 * its frame pointer is R13 - carries the stack pointer across the
+		 * alignment the host's calling convention insists on. */
+		static const int saved[5] = {0x87, 0x9f, 0x8f, 0x97, 0xb7}; /* ax bx cx dx si */
+		int i;
+
+		for (i = 0; i < 5; ++i)
+		{
+			x64_put(&out, 0x66);
+			x64_put(&out, 0x41);
+			x64_put(&out, 0x89);
+			x64_put(&out, saved[i]);
+			x64_dword(&out, CC_NATIVE_REGISTERS + i * 2);
+		}
+
+		x64_put(&out, 0x55); /* push rbp */
+		x64_put(&out, 0x48);
+		x64_put(&out, 0x89);
+		x64_put(&out, 0xe5); /* mov rbp, rsp */
+		x64_put(&out, 0x48);
+		x64_put(&out, 0x83);
+		x64_put(&out, 0xe4);
+		x64_put(&out, 0xf0); /* and rsp, -16 */
+		x64_put(&out, 0x48);
+		x64_put(&out, 0x83);
+		x64_put(&out, 0xec);
+		x64_put(&out, 0x20); /* sub rsp, 32 - the shadow space */
+
+		x64_put(&out, 0x4c);
+		x64_put(&out, 0x89);
+		x64_put(&out, 0xf9); /* mov rcx, r15 */
+		x64_put(&out, 0xba); /* mov edx, <interrupt> */
+		x64_dword(&out, in->dest.value & 0xff);
+		x64_put(&out, 0x41);
+		x64_put(&out, 0xff);
+		x64_put(&out, 0x97); /* call [r15 + service] */
+		x64_dword(&out, CC_NATIVE_SERVICE);
+
+		x64_put(&out, 0x48);
+		x64_put(&out, 0x89);
+		x64_put(&out, 0xec); /* mov rsp, rbp */
+		x64_put(&out, 0x5d); /* pop rbp */
+
+		/* RBX, RSI, RDI and R13 to R15 came back on their own. */
+		for (i = 0; i < 4; ++i)
+		{
+			static const int reloaded[4] = {0x87, 0x8f, 0x97, 0xb7}; /* ax cx dx si */
+			static const int at[4] = {0, 2, 3, 4};
+			x64_put(&out, 0x66);
+			x64_put(&out, 0x41);
+			x64_put(&out, 0x8b);
+			x64_put(&out, reloaded[i]);
+			x64_dword(&out, CC_NATIVE_REGISTERS + at[i] * 2);
+		}
 		break;
+	}
 
 	case op_jmp:
 		if (in->length == 2)

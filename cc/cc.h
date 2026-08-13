@@ -84,6 +84,13 @@ static void cc_options_init(cc_options* options)
 	options->machine = cc_machine_i8088;
 }
 
+/* A hosted image asks the host for a service the way a DOS program asks the
+ * operating system: it puts the registers somewhere agreed and calls. Both
+ * places are at the top of the block, above the highest address the compiled
+ * program itself can reach. */
+#define CC_NATIVE_REGISTERS 0xffe0 /* ax, bx, cx, dx, si, as five words */
+#define CC_NATIVE_SERVICE 0xfff8 /* void (*)(void* block, int interrupt) */
+
 /* Each define is either NAME or NAME=VALUE, as a command line spells it. */
 cc_result cc_compile(const char* text, const char* name, cc_sources* sources,
                      const char* const* defines, int define_count, const cc_options* options);
