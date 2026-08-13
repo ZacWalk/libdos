@@ -1,6 +1,9 @@
 // ovrwin by Zac Walker
 //
-// 8086 instruction emitter.
+// The 8086 back end: it turns the instruction list into bytes, and it is the
+// only part of the compiler that knows an opcode from a hole in the ground.
+// A second back end is another file of the same shape - the list it consumes
+// says nothing about which encoding an operation has.
 
 #include "emit.h"
 
@@ -31,6 +34,94 @@ namespace
 		default: return {0x73, 0x72};
 		}
 	}
+
+	// The eight arithmetic operations share one encoding, picked out by three
+	// bits that are both the opcode's middle field and the /r extension.
+	int arithmetic_index(op code)
+	{
+		switch (code)
+		{
+		case op::add: return 0;
+		case op::or_: return 1;
+		case op::adc: return 2;
+		case op::sbb: return 3;
+		case op::and_: return 4;
+		case op::sub: return 5;
+		case op::xor_: return 6;
+		case op::cmp: return 7;
+		default: return -1;
+		}
+	}
+
+	int shift_index(op code)
+	{
+		switch (code)
+		{
+		case op::rcl: return 2;
+		case op::rcr: return 3;
+		case op::shl: return 4;
+		case op::shr: return 5;
+		case op::sar: return 7;
+		default: return -1;
+		}
+	}
+
+	bool is_byte(int32_t v) { return v >= -128 && v <= 127; }
+
+	// A place to put bytes that can also just count them, so that measuring an
+	// instruction and encoding it cannot disagree.
+	struct sink
+	{
+		std::vector<uint8_t>* into;
+		int count = 0;
+
+		void put(int value)
+		{
+			if (into != nullptr) into->push_back(uint8_t(value));
+			++count;
+		}
+
+		void word(int32_t value)
+		{
+			put(value & 0xff);
+			put((value >> 8) & 0xff);
+		}
+	};
+
+	// The 16-bit mod/rm forms. An 8086 addresses memory through four registers
+	// and only in these combinations.
+	bool memory_form(const operand& o, int& rm, int& mod)
+	{
+		const int base = o.reg;
+		const int index = o.index;
+		if (base == reg_none && index == reg_none)
+		{
+			rm = 6;
+			mod = 0;
+			return true;
+		}
+		if (index == reg_none)
+		{
+			switch (base)
+			{
+			case reg_si: rm = 4; break;
+			case reg_di: rm = 5; break;
+			case reg_bp: rm = 6; break;
+			case reg_b: rm = 7; break;
+			default: return false;
+			}
+		}
+		else if (base == reg_b && index == reg_si) rm = 0;
+		else if (base == reg_b && index == reg_di) rm = 1;
+		else if (base == reg_bp && index == reg_si) rm = 2;
+		else if (base == reg_bp && index == reg_di) rm = 3;
+		else return false;
+
+		if (o.value == 0 && rm != 6) mod = 0;
+		else if (is_byte(o.value)) mod = 1;
+		else mod = 2;
+		return true;
+	}
 }
 
 condition opposite(condition c)
@@ -50,193 +141,87 @@ condition opposite(condition c)
 	}
 }
 
-void emitter::word(int value)
-{
-	byte(value & 0xff);
-	byte((value >> 8) & 0xff);
-}
-
-void emitter::patch_word(int position, int value)
-{
-	code[size_t(position)] = uint8_t(value & 0xff);
-	code[size_t(position) + 1] = uint8_t((value >> 8) & 0xff);
-}
-
-void emitter::mov_ax_imm(int value) { byte(0xb8); word(value); }
-void emitter::mov_cx_imm(int value) { byte(0xb9); word(value); }
-void emitter::mov_bx_imm(int value) { byte(0xbb); word(value); }
-void emitter::mov_dx_imm(int value) { byte(0xba); word(value); }
-void emitter::mov_sp_imm(int value) { byte(0xbc); word(value); }
-
-void emitter::load_ax_absolute(int address) { byte(0xa1); word(address); }
-void emitter::store_ax_absolute(int address) { byte(0xa3); word(address); }
-void emitter::load_al_absolute(int address) { byte(0xa0); word(address); }
-void emitter::store_al_absolute(int address) { byte(0xa2); word(address); }
-void emitter::load_dx_absolute(int address) { byte(0x8b); byte(0x16); word(address); }
-void emitter::store_dx_absolute(int address) { byte(0x89); byte(0x16); word(address); }
-
-void emitter::mov_cl_imm(int value) { byte(0xb1); byte(value & 0xff); }
-void emitter::load_cx_absolute(int address) { byte(0x8b); byte(0x0e); word(address); }
-void emitter::load_bx_absolute(int address) { byte(0x8b); byte(0x1e); word(address); }
-void emitter::load_cx_frame(int displacement) { byte(0x8b); byte(0x8e); word(displacement); }
-void emitter::load_bx_frame(int displacement) { byte(0x8b); byte(0x9e); word(displacement); }
-void emitter::lea_cx_frame(int displacement) { byte(0x8d); byte(0x8e); word(displacement); }
-void emitter::xor_cx_cx() { byte(0x31); byte(0xc9); }
-void emitter::xchg_ax_cx() { byte(0x91); }
-void emitter::cmp_cx_ax() { byte(0x39); byte(0xc1); }
-
-void emitter::load_ax_frame(int displacement) { byte(0x8b); byte(0x86); word(displacement); }
-void emitter::store_ax_frame(int displacement) { byte(0x89); byte(0x86); word(displacement); }
-void emitter::load_al_frame(int displacement) { byte(0x8a); byte(0x86); word(displacement); }
-void emitter::store_al_frame(int displacement) { byte(0x88); byte(0x86); word(displacement); }
-void emitter::load_dx_frame(int displacement) { byte(0x8b); byte(0x96); word(displacement); }
-void emitter::store_dx_frame(int displacement) { byte(0x89); byte(0x96); word(displacement); }
-void emitter::lea_ax_frame(int displacement) { byte(0x8d); byte(0x86); word(displacement); }
-
-void emitter::memory(int opcode, int field, bool frame, int displacement)
-{
-	byte(opcode);
-	byte((frame ? 0x86 : 0x06) | (field << 3));
-	word(displacement);
-}
-
-// An instruction with a [bx+displacement] operand, in the shortest of the
-// three encodings the displacement allows.
-void emitter::indirect(int opcode, int field, int displacement)
-{
-	byte(opcode);
-	if (displacement == 0)
-	{
-		byte(0x07 | (field << 3));
-	}
-	else if (displacement >= -128 && displacement <= 127)
-	{
-		byte(0x47 | (field << 3));
-		byte(displacement & 0xff);
-	}
-	else
-	{
-		byte(0x87 | (field << 3));
-		word(displacement);
-	}
-}
-
-void emitter::load_ax_indirect(int displacement) { indirect(0x8b, 0, displacement); }
-void emitter::store_ax_indirect(int displacement) { indirect(0x89, 0, displacement); }
-void emitter::load_al_indirect(int displacement) { indirect(0x8a, 0, displacement); }
-void emitter::store_al_indirect(int displacement) { indirect(0x88, 0, displacement); }
-void emitter::load_dx_indirect_high(int displacement) { indirect(0x8b, 2, displacement + 2); }
-void emitter::store_dx_indirect_high(int displacement) { indirect(0x89, 2, displacement + 2); }
-void emitter::lea_ax_indirect(int displacement) { indirect(0x8d, 0, displacement); }
-void emitter::mov_bx_frame(int displacement) { byte(0x8b); byte(0x9e); word(displacement); }
-void emitter::mov_bx_absolute(int address) { byte(0x8b); byte(0x1e); word(address); }
-
-void emitter::push_ax() { byte(0x50); }
-void emitter::pop_ax() { byte(0x58); }
-void emitter::pop_bx() { byte(0x5b); }
-void emitter::pop_cx() { byte(0x59); }
-void emitter::push_dx() { byte(0x52); }
-void emitter::pop_dx() { byte(0x5a); }
-void emitter::push_bp() { byte(0x55); }
-void emitter::pop_bp() { byte(0x5d); }
-
-void emitter::mov_cx_ax() { byte(0x89); byte(0xc1); }
-void emitter::mov_bx_ax() { byte(0x89); byte(0xc3); }
-void emitter::mov_ax_cx() { byte(0x89); byte(0xc8); }
-void emitter::mov_ax_bx() { byte(0x89); byte(0xd8); }
-void emitter::mov_dx_ax() { byte(0x89); byte(0xc2); }
-void emitter::mov_ax_dx() { byte(0x89); byte(0xd0); }
-void emitter::mov_cx_dx() { byte(0x89); byte(0xd1); }
-void emitter::mov_bp_sp() { byte(0x89); byte(0xe5); }
-void emitter::mov_sp_bp() { byte(0x89); byte(0xec); }
-void emitter::mov_ax_cs() { byte(0x8c); byte(0xc8); }
-
-void emitter::add_ax_cx() { byte(0x01); byte(0xc8); }
-void emitter::sub_ax_cx() { byte(0x29); byte(0xc8); }
-void emitter::and_ax_cx() { byte(0x21); byte(0xc8); }
-void emitter::or_ax_cx() { byte(0x09); byte(0xc8); }
-void emitter::xor_ax_cx() { byte(0x31); byte(0xc8); }
-void emitter::cmp_ax_cx() { byte(0x39); byte(0xc8); }
-void emitter::add_ax_imm(int value) { byte(0x05); word(value); }
-void emitter::sub_ax_imm(int value) { byte(0x2d); word(value); }
-void emitter::and_ax_imm(int value) { byte(0x25); word(value); }
-void emitter::or_ax_imm(int value) { byte(0x0d); word(value); }
-void emitter::xor_ax_imm(int value) { byte(0x35); word(value); }
-void emitter::cmp_ax_imm(int value) { byte(0x3d); word(value); }
-void emitter::inc_ax() { byte(0x40); }
-void emitter::dec_ax() { byte(0x48); }
-void emitter::add_sp_imm(int value) { byte(0x81); byte(0xc4); word(value); }
-void emitter::sub_sp_imm(int value) { byte(0x81); byte(0xec); word(value); }
-
-void emitter::imul_cx() { byte(0xf7); byte(0xe9); }
-void emitter::mul_cx() { byte(0xf7); byte(0xe1); }
-void emitter::idiv_cx() { byte(0x99); byte(0xf7); byte(0xf9); }
-void emitter::div_cx() { byte(0x31); byte(0xd2); byte(0xf7); byte(0xf1); }
-void emitter::shl_ax_cl() { byte(0xd3); byte(0xe0); }
-void emitter::sar_ax_cl() { byte(0xd3); byte(0xf8); }
-void emitter::shr_ax_cl() { byte(0xd3); byte(0xe8); }
-void emitter::shl_ax_one() { byte(0xd1); byte(0xe0); }
-void emitter::shr_ax_one() { byte(0xd1); byte(0xe8); }
-void emitter::sar_ax_one() { byte(0xd1); byte(0xf8); }
-
-void emitter::neg_ax() { byte(0xf7); byte(0xd8); }
-void emitter::not_ax() { byte(0xf7); byte(0xd0); }
-void emitter::cbw() { byte(0x98); }
-void emitter::zero_ah() { byte(0x30); byte(0xe4); }
-void emitter::test_ax_ax() { byte(0x85); byte(0xc0); }
-void emitter::xor_ax_ax() { byte(0x31); byte(0xc0); }
-
-void emitter::add_ax_bx() { byte(0x01); byte(0xd8); }
-void emitter::adc_dx_cx() { byte(0x11); byte(0xca); }
-void emitter::sub_ax_bx() { byte(0x29); byte(0xd8); }
-void emitter::sbb_dx_cx() { byte(0x19); byte(0xca); }
-void emitter::and_ax_bx() { byte(0x21); byte(0xd8); }
-void emitter::and_dx_cx() { byte(0x21); byte(0xca); }
-void emitter::or_ax_bx() { byte(0x09); byte(0xd8); }
-void emitter::or_dx_cx() { byte(0x09); byte(0xca); }
-void emitter::xor_ax_bx() { byte(0x31); byte(0xd8); }
-void emitter::xor_dx_cx() { byte(0x31); byte(0xca); }
-void emitter::or_ax_dx() { byte(0x09); byte(0xd0); }
-void emitter::xor_dx_dx() { byte(0x31); byte(0xd2); }
-void emitter::not_dx() { byte(0xf7); byte(0xd2); }
-void emitter::cwd() { byte(0x99); }
-void emitter::adc_dx_imm(int value) { byte(0x81); byte(0xd2); word(value); }
-void emitter::sbb_dx_zero() { byte(0x83); byte(0xda); byte(0x00); }
-
-void emitter::add_dx_imm(int value) { byte(0x81); byte(0xc2); word(value); }
-void emitter::sub_dx_imm(int value) { byte(0x81); byte(0xea); word(value); }
-void emitter::sbb_dx_imm(int value) { byte(0x81); byte(0xda); word(value); }
-void emitter::adc_dx_zero() { byte(0x83); byte(0xd2); byte(0x00); }
-void emitter::and_dx_imm(int value) { byte(0x81); byte(0xe2); word(value); }
-void emitter::or_dx_imm(int value) { byte(0x81); byte(0xca); word(value); }
-void emitter::xor_dx_imm(int value) { byte(0x81); byte(0xf2); word(value); }
-void emitter::shl_dx_one() { byte(0xd1); byte(0xe2); }
-void emitter::shl_dx_cl() { byte(0xd3); byte(0xe2); }
-void emitter::shl_pair_one() { byte(0xd1); byte(0xe0); byte(0xd1); byte(0xd2); }
-void emitter::shr_pair_one() { byte(0xd1); byte(0xea); byte(0xd1); byte(0xd8); }
-void emitter::sar_pair_one() { byte(0xd1); byte(0xfa); byte(0xd1); byte(0xd8); }
-
-// Negating a pair is not two negates: the low word borrows into the high one.
-void emitter::negate_dx_ax()
-{
-	byte(0xf7);
-	byte(0xda); // neg dx
-	neg_ax();
-	sbb_dx_zero();
-}
-
-void emitter::set_from_condition(condition c)
-{
-	const condition_codes codes = codes_for(c);
-	mov_ax_imm(1);
-	byte(codes.taken);
-	byte(0x02); // skip the two bytes that clear AX
-	xor_ax_ax();
-}
-
 // ---------------------------------------------------------------------------
-// The layout record
+// Building the list
 // ---------------------------------------------------------------------------
+
+instruction& emitter::emit(op code, int width, const operand& dest, const operand& source)
+{
+	instruction in;
+	in.code = code;
+	in.width = uint8_t(width);
+	in.dest = dest;
+	in.source = source;
+	this->code.push_back(in);
+	break_run = false;
+	return this->code.back();
+}
+
+void emitter::byte(int value)
+{
+	if (!break_run && !code.empty() && code.back().code == op::literal &&
+		code.back().literal_at + code.back().literal_length == int32_t(literals.size()))
+	{
+		literals.push_back(uint8_t(value));
+		++code.back().literal_length;
+		return;
+	}
+	instruction in;
+	in.code = op::literal;
+	in.literal_at = int32_t(literals.size());
+	in.literal_length = 1;
+	literals.push_back(uint8_t(value));
+	code.push_back(in);
+	break_run = false;
+}
+
+void emitter::bytes(std::initializer_list<int> run)
+{
+	for (const int value : run) byte(value);
+}
+
+namespace
+{
+	// The one operand of the instruction just emitted that can carry a
+	// reference: an absolute address, or an immediate that stands for one.
+	// An absolute address wins, because an instruction that has both is
+	// storing a plain number at a named place.
+	operand* referring_operand(instruction& in)
+	{
+		const auto absolute = [](const operand& o)
+		{
+			return o.kind == operand_kind::memory && o.reg == reg_none && o.index == reg_none;
+		};
+		if (absolute(in.source)) return &in.source;
+		if (absolute(in.dest)) return &in.dest;
+		if (in.source.kind == operand_kind::immediate) return &in.source;
+		if (in.dest.kind == operand_kind::immediate) return &in.dest;
+		return nullptr;
+	}
+}
+
+void emitter::refers_to_data(int32_t offset)
+{
+	operand* o = referring_operand(code.back());
+	o->reference = reference_kind::data;
+	o->target = offset;
+}
+
+void emitter::refers_to_code(int label)
+{
+	operand* o = referring_operand(code.back());
+	o->reference = reference_kind::code;
+	o->target = label;
+}
+
+int emitter::refers_to_deferred()
+{
+	const int slot = defer(0);
+	operand* o = referring_operand(code.back());
+	o->reference = reference_kind::deferred;
+	o->target = slot;
+	return slot;
+}
 
 int emitter::label()
 {
@@ -244,345 +229,498 @@ int emitter::label()
 	return int(labels.size()) - 1;
 }
 
-void emitter::bind(int label)
-{
-	labels[size_t(label)] = at();
-}
+void emitter::bind(int label) { labels[size_t(label)] = at(); break_run = true; }
 
 int emitter::here()
 {
 	labels.push_back(at());
+	break_run = true;
 	return int(labels.size()) - 1;
 }
 
-namespace
+int emitter::offset_of(int label) const
 {
-	// Every fixup is emitted at its longest, so that the layout pass can only
-	// ever make the program shorter.
-	int longest_of(emitter::fixup_kind kind)
-	{
-		switch (kind)
-		{
-		case emitter::fixup_kind::jump: return 3; // E9 rel16
-		case emitter::fixup_kind::branch: return 5; // jcc rel8 over E9 rel16
-		case emitter::fixup_kind::call: return 3; // E8 rel16
-		default: return 2;
-		}
-	}
+	const int index = labels[size_t(label)];
+	if (index < 0) return -1;
+	if (index >= int(code.size())) return int(image.size());
+	return code[size_t(index)].offset;
 }
 
-void emitter::jump(int label)
+int emitter::defer(int32_t value)
 {
-	fixup f;
-	f.position = at();
-	f.kind = fixup_kind::jump;
-	f.length = f.longest = longest_of(f.kind);
-	f.label = label;
-	fixups.push_back(f);
-	for (int i = 0; i < f.length; ++i) byte(0x90);
+	deferred.push_back(value);
+	return int(deferred.size()) - 1;
 }
 
-void emitter::jump_if(condition c, int label)
-{
-	fixup f;
-	f.position = at();
-	f.kind = fixup_kind::branch;
-	f.length = f.longest = longest_of(f.kind);
-	f.label = label;
-	f.test = c;
-	fixups.push_back(f);
-	for (int i = 0; i < f.length; ++i) byte(0x90);
-}
-
-void emitter::jump_unless(condition c, int label)
-{
-	jump_if(opposite(c), label);
-}
-
-void emitter::call(int label)
-{
-	fixup f;
-	f.position = at();
-	f.kind = fixup_kind::call;
-	f.length = f.longest = longest_of(f.kind);
-	f.label = label;
-	fixups.push_back(f);
-	for (int i = 0; i < f.length; ++i) byte(0x90);
-}
-
-void emitter::code_at(int position, int label)
-{
-	fixup f;
-	f.position = position;
-	f.kind = fixup_kind::code_word;
-	f.length = f.longest = 2;
-	f.label = label;
-	fixups.push_back(f);
-}
-
-void emitter::data_at(int position, int offset)
-{
-	fixup f;
-	f.position = position;
-	f.kind = fixup_kind::data_word;
-	f.length = f.longest = 2;
-	f.value = offset;
-	fixups.push_back(f);
-}
-
-int emitter::value_at(int position, int value)
-{
-	fixup f;
-	f.position = position;
-	f.kind = fixup_kind::value_word;
-	f.length = f.longest = 2;
-	f.value = value;
-	fixups.push_back(f);
-	return int(fixups.size()) - 1;
-}
-
-void emitter::set_value(int index, int value)
-{
-	fixups[size_t(index)].value = value;
-}
+void emitter::set_deferred(int slot, int32_t value) { deferred[size_t(slot)] = value; }
 
 emitter::position emitter::tell() const
 {
 	position p;
 	p.code = code.size();
-	p.fixups = fixups.size();
+	p.literals = literals.size();
 	p.labels = labels.size();
+	p.deferred = deferred.size();
 	return p;
 }
 
 void emitter::rewind(const position& p)
 {
 	code.resize(p.code);
-	fixups.resize(p.fixups);
+	literals.resize(p.literals);
 	labels.resize(p.labels);
+	deferred.resize(p.deferred);
 }
 
-void emitter::drop(int first, int last)
+void emitter::drop(int first, int last) { dropped_.emplace_back(first, last); }
+
+// ---------------------------------------------------------------------------
+// Encoding
+// ---------------------------------------------------------------------------
+
+// Writes one instruction, or counts its bytes when `into` is null. `position`
+// is where it starts, which only a relative branch needs.
+int emitter::encode(const instruction& in, int position, std::vector<uint8_t>* into) const
 {
-	dropped_.emplace_back(first, last);
+	sink out{into};
+	const int w = in.width == 1 ? 0 : 1;
+
+	// A reference resolves to a number here; the ones that depend on the data
+	// section are written again by resolve().
+	const auto value_of = [&](const operand& o) -> int32_t
+	{
+		if (o.reference == reference_kind::deferred) return deferred[size_t(o.target)];
+		if (o.reference == reference_kind::code && o.target >= 0)
+		{
+			const int index = labels[size_t(o.target)];
+			if (index >= 0 && index < int(code.size())) return code[size_t(index)].offset;
+		}
+		return o.value;
+	};
+
+	// mod/rm, with the register or extension in the middle field.
+	const auto modrm = [&](const operand& o, int field)
+	{
+		if (o.kind == operand_kind::reg)
+		{
+			out.put(0xc0 | (field << 3) | o.reg);
+			return;
+		}
+		int rm = 0, mod = 0;
+		memory_form(o, rm, mod);
+		out.put((mod << 6) | (field << 3) | rm);
+		if (mod == 0 && rm == 6) out.word(value_of(o));
+		else if (mod == 1) out.put(o.value & 0xff);
+		else if (mod == 2) out.word(o.value);
+	};
+
+	switch (in.code)
+	{
+	case op::nop:
+		break;
+
+	case op::literal:
+		for (int i = 0; i < in.literal_length; ++i)
+			out.put(literals[size_t(in.literal_at) + size_t(i)]);
+		break;
+
+	case op::mov:
+		if (in.dest.kind == operand_kind::reg && in.source.kind == operand_kind::immediate)
+		{
+			out.put((w != 0 ? 0xb8 : 0xb0) + in.dest.reg);
+			if (w != 0) out.word(value_of(in.source));
+			else out.put(value_of(in.source) & 0xff);
+			break;
+		}
+		// The accumulator reaches an absolute address in one byte less.
+		if (in.dest.kind == operand_kind::reg && in.dest.reg == reg_a &&
+			in.source.kind == operand_kind::memory && in.source.reg == reg_none &&
+			in.source.index == reg_none)
+		{
+			out.put(0xa0 + w);
+			out.word(value_of(in.source));
+			break;
+		}
+		if (in.source.kind == operand_kind::reg && in.source.reg == reg_a &&
+			in.dest.kind == operand_kind::memory && in.dest.reg == reg_none &&
+			in.dest.index == reg_none)
+		{
+			out.put(0xa2 + w);
+			out.word(value_of(in.dest));
+			break;
+		}
+		if (in.source.kind == operand_kind::immediate)
+		{
+			out.put(0xc6 + w);
+			modrm(in.dest, 0);
+			if (w != 0) out.word(value_of(in.source));
+			else out.put(value_of(in.source) & 0xff);
+			break;
+		}
+		if (in.source.kind == operand_kind::reg)
+		{
+			out.put(0x88 + w);
+			modrm(in.dest, in.source.reg);
+			break;
+		}
+		out.put(0x8a + w);
+		modrm(in.source, in.dest.reg);
+		break;
+
+	case op::lea:
+		out.put(0x8d);
+		modrm(in.source, in.dest.reg);
+		break;
+
+	case op::add: case op::adc: case op::sub: case op::sbb:
+	case op::and_: case op::or_: case op::xor_: case op::cmp:
+	{
+		const int index = arithmetic_index(in.code);
+		if (in.source.kind == operand_kind::immediate)
+		{
+			const int32_t value = value_of(in.source);
+			const bool plain = in.source.reference == reference_kind::none;
+			// The accumulator has a short form, and so does an operand that
+			// fits in a sign-extended byte.
+			if (in.dest.kind == operand_kind::reg && in.dest.reg == reg_a && (w == 0 || !plain ||
+				!is_byte(value)))
+			{
+				out.put((index << 3) | 0x04 | w);
+				if (w != 0) out.word(value);
+				else out.put(value & 0xff);
+				break;
+			}
+			if (w != 0 && plain && is_byte(value))
+			{
+				out.put(0x83);
+				modrm(in.dest, index);
+				out.put(value & 0xff);
+				break;
+			}
+			out.put(0x80 + w);
+			modrm(in.dest, index);
+			if (w != 0) out.word(value);
+			else out.put(value & 0xff);
+			break;
+		}
+		if (in.source.kind == operand_kind::reg)
+		{
+			out.put((index << 3) | w);
+			modrm(in.dest, in.source.reg);
+			break;
+		}
+		out.put((index << 3) | 0x02 | w);
+		modrm(in.source, in.dest.reg);
+		break;
+	}
+
+	case op::test:
+		if (in.source.kind == operand_kind::immediate)
+		{
+			if (in.dest.kind == operand_kind::reg && in.dest.reg == reg_a)
+			{
+				out.put(0xa8 + w);
+				if (w != 0) out.word(value_of(in.source));
+				else out.put(value_of(in.source) & 0xff);
+				break;
+			}
+			out.put(0xf6 + w);
+			modrm(in.dest, 0);
+			if (w != 0) out.word(value_of(in.source));
+			else out.put(value_of(in.source) & 0xff);
+			break;
+		}
+		out.put(0x84 + w);
+		modrm(in.dest, in.source.reg);
+		break;
+
+	case op::inc:
+	case op::dec:
+	{
+		const int field = in.code == op::inc ? 0 : 1;
+		if (w != 0 && in.dest.kind == operand_kind::reg)
+		{
+			out.put((in.code == op::inc ? 0x40 : 0x48) + in.dest.reg);
+			break;
+		}
+		out.put(0xfe + w);
+		modrm(in.dest, field);
+		break;
+	}
+
+	case op::neg:
+	case op::not_:
+	case op::mul:
+	case op::imul:
+	case op::div:
+	case op::idiv:
+	{
+		int field = 0;
+		switch (in.code)
+		{
+		case op::not_: field = 2; break;
+		case op::neg: field = 3; break;
+		case op::mul: field = 4; break;
+		case op::imul: field = 5; break;
+		case op::div: field = 6; break;
+		default: field = 7; break;
+		}
+		out.put(0xf6 + w);
+		modrm(in.dest, field);
+		break;
+	}
+
+	case op::shl: case op::shr: case op::sar: case op::rcl: case op::rcr:
+	{
+		const int field = shift_index(in.code);
+		const int32_t by = in.source.value;
+		if (by < 0) out.put(0xd2 + w); // by CL
+		else out.put(0xd0 + w); // by one
+		modrm(in.dest, field);
+		break;
+	}
+
+	case op::push:
+	case op::pop:
+		if (in.dest.kind == operand_kind::reg)
+		{
+			out.put((in.code == op::push ? 0x50 : 0x58) + in.dest.reg);
+			break;
+		}
+		if (in.code == op::push)
+		{
+			out.put(0xff);
+			modrm(in.dest, 6);
+		}
+		else
+		{
+			out.put(0x8f);
+			modrm(in.dest, 0);
+		}
+		break;
+
+	case op::xchg:
+		if (in.dest.kind == operand_kind::reg && in.source.kind == operand_kind::reg &&
+			(in.dest.reg == reg_a || in.source.reg == reg_a) && w != 0)
+		{
+			out.put(0x90 + (in.dest.reg == reg_a ? in.source.reg : in.dest.reg));
+			break;
+		}
+		out.put(0x86 + w);
+		modrm(in.dest, in.source.reg);
+		break;
+
+	case op::cbw: out.put(0x98); break;
+	case op::cwd: out.put(0x99); break;
+	case op::ret: out.put(0xc3); break;
+
+	case op::interrupt:
+		out.put(0xcd);
+		out.put(in.dest.value & 0xff);
+		break;
+
+	case op::setcc:
+		// An 8086 has no SETcc, so the value comes from a branch over a clear.
+		out.put((w != 0 ? 0xb8 : 0xb0) + in.dest.reg);
+		if (w != 0) out.word(1);
+		else out.put(1);
+		out.put(codes_for(in.test).taken);
+		out.put(0x02);
+		out.put(0x30 | w);
+		out.put(0xc0 | (in.dest.reg << 3) | in.dest.reg);
+		break;
+
+	case op::call:
+		out.put(0xe8);
+		out.word(0);
+		break;
+
+	case op::call_at:
+		out.put(0xff);
+		modrm(in.dest, 2);
+		break;
+
+	case op::jmp:
+		if (in.length == 2)
+		{
+			out.put(0xeb);
+			out.put(0);
+			break;
+		}
+		out.put(0xe9);
+		out.word(0);
+		break;
+
+	case op::jcc:
+		if (in.length == 2)
+		{
+			out.put(codes_for(in.test).taken);
+			out.put(0);
+			break;
+		}
+		out.put(codes_for(in.test).inverse);
+		out.put(0x03);
+		out.put(0xe9);
+		out.word(0);
+		break;
+	}
+
+	(void)position;
+	return out.count;
 }
 
-void emitter::lay_out()
+// ---------------------------------------------------------------------------
+// Laying it out
+// ---------------------------------------------------------------------------
+
+void emitter::lay_out(int code_base)
 {
-	// What is being removed, as byte ranges rather than labels, because the
-	// labels inside are about to stop meaning anything.
-	std::vector<std::pair<int, int>> gone;
+	(void)code_base;
+
+	// What is being dropped, as instruction ranges.
+	std::vector<bool> alive(code.size(), true);
 	for (const auto& range : dropped_)
 	{
 		const int from = labels[size_t(range.first)];
 		const int to = labels[size_t(range.second)];
-		if (from >= 0 && to > from) gone.emplace_back(from, to);
+		if (from < 0 || to <= from) continue;
+		for (int i = from; i < to && i < int(code.size()); ++i) alive[size_t(i)] = false;
 	}
-	std::sort(gone.begin(), gone.end());
 
-	const auto inside_gone = [&](int position)
+	// Every branch starts at its longest, so the pass can only shorten.
+	for (instruction& in : code)
 	{
-		for (const auto& range : gone)
-			if (position >= range.first && position < range.second) return true;
-		return false;
-	};
-
-	// A dropped range swallows the fixups in it and becomes one edit of its
-	// own, so that every edit is a disjoint span with a length to choose.
-	struct edit
-	{
-		int position = 0;
-		int longest = 0;
-		int length = 0;
-		int fixup = -1;
-	};
-
-	std::vector<edit> edits;
-	for (size_t i = 0; i < fixups.size(); ++i)
-	{
-		if (inside_gone(fixups[i].position)) continue;
-		edit e;
-		e.position = fixups[i].position;
-		e.longest = fixups[i].longest;
-		e.length = fixups[i].longest;
-		e.fixup = int(i);
-		edits.push_back(e);
+		if (in.code == op::jmp) in.length = 3;
+		else if (in.code == op::jcc) in.length = 5;
+		else in.length = 0;
 	}
-	for (const auto& range : gone)
-	{
-		edit e;
-		e.position = range.first;
-		e.longest = range.second - range.first;
-		e.length = 0;
-		edits.push_back(e);
-	}
-	std::sort(edits.begin(), edits.end(),
-	          [](const edit& a, const edit& b) { return a.position < b.position; });
 
-	// Where an offset lands, given the lengths chosen so far. Everything an
-	// edit ends at or before has moved down by what the edits before it saved.
-	std::vector<int> saved_before(edits.size() + 1, 0);
-	const auto recompute_savings = [&]
+	const auto place = [&]
 	{
-		int total = 0;
-		for (size_t i = 0; i < edits.size(); ++i)
+		int offset = 0;
+		for (size_t i = 0; i < code.size(); ++i)
 		{
-			saved_before[i] = total;
-			total += edits[i].longest - edits[i].length;
+			code[i].offset = offset;
+			if (!alive[i]) continue;
+			if (code[i].code == op::jmp || code[i].code == op::jcc) offset += code[i].length;
+			else offset += encode(code[i], offset, nullptr);
 		}
-		saved_before[edits.size()] = total;
+		return offset;
 	};
 
-	const auto moved = [&](int offset)
-	{
-		size_t low = 0, high = edits.size();
-		while (low < high)
-		{
-			const size_t middle = (low + high) / 2;
-			if (edits[middle].position + edits[middle].longest <= offset) low = middle + 1;
-			else high = middle;
-		}
-		return offset - saved_before[low];
-	};
-
-	// Shrinking a branch only ever brings its target closer, so repeating
-	// until nothing changes settles. A branch to the instruction after it goes
-	// altogether, which is what the last return of an expanded body becomes.
+	// Shortening a branch only brings its target closer, so this settles.
+	place();
 	for (;;)
 	{
-		recompute_savings();
 		bool changed = false;
-		for (size_t i = 0; i < edits.size(); ++i)
+		for (size_t i = 0; i < code.size(); ++i)
 		{
-			edit& e = edits[i];
-			if (e.fixup < 0) continue;
-			const fixup& f = fixups[size_t(e.fixup)];
-			if (f.kind != fixup_kind::jump && f.kind != fixup_kind::branch) continue;
-			if (e.length == 0) continue;
-			if (f.label < 0 || labels[size_t(f.label)] < 0) continue;
+			instruction& in = code[i];
+			if (!alive[i]) continue;
+			if (in.code != op::jmp && in.code != op::jcc) continue;
+			if (in.length == 0) continue;
+			if (in.label < 0 || labels[size_t(in.label)] < 0) continue;
 
-			const int start = e.position - saved_before[i];
-			const int to = moved(labels[size_t(f.label)]);
-			if (to == start)
+			const int index = labels[size_t(in.label)];
+			const int target = index < int(code.size()) ? code[size_t(index)].offset : place();
+			if (target == in.offset)
 			{
-				e.length = 0;
+				// A branch to the instruction after it does nothing at all,
+				// which is what the last return of an expanded body becomes.
+				in.length = 0;
 				changed = true;
 				continue;
 			}
-			if (e.length == 2) continue;
-			const int displacement = to - (start + 2);
-			if (displacement < -128 || displacement > 127) continue;
-			e.length = 2;
+			if (in.length == 2) continue;
+			const int displacement = target - (in.offset + 2);
+			if (!is_byte(displacement)) continue;
+			in.length = 2;
 			changed = true;
 		}
+		place();
 		if (!changed) break;
 	}
-	recompute_savings();
 
-	// Rewrite the code, moving what is left and writing the opcodes. The
-	// operands wait for resolve(), which is when the data section is known.
-	std::vector<uint8_t> output;
-	output.reserve(code.size());
-	int read = 0;
-	for (size_t i = 0; i < edits.size(); ++i)
+	image.clear();
+	for (size_t i = 0; i < code.size(); ++i)
 	{
-		edit& e = edits[i];
-		output.insert(output.end(), code.begin() + read, code.begin() + e.position);
-		read = e.position + e.longest;
-		const int start = int(output.size());
-		if (e.fixup >= 0)
-		{
-			fixup& f = fixups[size_t(e.fixup)];
-			switch (f.kind)
-			{
-			case fixup_kind::jump:
-				output.push_back(uint8_t(e.length == 2 ? 0xeb : 0xe9));
-				break;
-			case fixup_kind::branch:
-				if (e.length == 2)
-				{
-					output.push_back(uint8_t(codes_for(f.test).taken));
-				}
-				else
-				{
-					output.push_back(uint8_t(codes_for(f.test).inverse));
-					output.push_back(0x03);
-					output.push_back(0xe9);
-				}
-				break;
-			case fixup_kind::call:
-				output.push_back(0xe8);
-				break;
-			default:
-				break;
-			}
-			while (int(output.size()) - start < e.length) output.push_back(0);
-			f.position = start;
-			f.length = e.length;
-		}
+		if (!alive[i]) continue;
+		code[i].offset = int32_t(image.size());
+		const int length = encode(code[i], code[i].offset, &image);
+		code[i].length = int32_t(length);
 	}
-	output.insert(output.end(), code.begin() + read, code.end());
 
-	for (int& offset : labels)
-		if (offset >= 0) offset = moved(offset);
+	// A label bound to a dropped instruction lands on whatever took its place,
+	// which is harmless because nothing that survived refers to it. Its length
+	// goes to zero so that resolve() knows there is nothing there to write to.
+	for (size_t i = code.size(); i > 0; --i)
+	{
+		if (alive[i - 1]) continue;
+		code[i - 1].offset = i < code.size() ? code[i].offset : int32_t(image.size());
+		code[i - 1].length = 0;
+	}
 
-	// A fixup inside a dropped range no longer has anywhere to be. Everything
-	// else already had its new position written above.
-	std::vector<bool> laid(fixups.size(), false);
-	for (const edit& e : edits)
-		if (e.fixup >= 0) laid[size_t(e.fixup)] = true;
-	std::vector<fixup> kept;
-	kept.reserve(fixups.size());
-	for (size_t i = 0; i < fixups.size(); ++i)
-		if (laid[i]) kept.push_back(fixups[i]);
-	fixups.swap(kept);
-
-	code.swap(output);
 	dropped_.clear();
 }
 
 bool emitter::resolve(int code_base, int data_base)
 {
-	for (const fixup& f : fixups)
+	const auto put_word = [&](int at, int value)
 	{
-		switch (f.kind)
+		image[size_t(at)] = uint8_t(value & 0xff);
+		image[size_t(at) + 1] = uint8_t((value >> 8) & 0xff);
+	};
+
+	for (const instruction& in : code)
+	{
+		// Nothing was written for it: either it was dropped, or it is a branch
+		// that turned out to go to the instruction after it.
+		if (in.length == 0) continue;
+
+		if (in.code == op::jmp || in.code == op::jcc || in.code == op::call)
 		{
-		case fixup_kind::jump:
-		case fixup_kind::branch:
-		case fixup_kind::call:
-		{
-			if (f.label < 0 || labels[size_t(f.label)] < 0) return false;
-			if (f.length == 0) break;
-			const int target = labels[size_t(f.label)];
-			if (f.kind == fixup_kind::branch && f.length == 5)
+			if (in.label < 0 || labels[size_t(in.label)] < 0) return false;
+			const int index = labels[size_t(in.label)];
+			const int target = index < int(code.size()) ? code[size_t(index)].offset : int(image.size());
+			if (in.length == 2)
 			{
-				patch_word(f.position + 3, target - (f.position + f.length));
-				break;
+				image[size_t(in.offset) + 1] = uint8_t(target - (in.offset + 2));
+				continue;
 			}
-			if (f.length == 2)
-			{
-				code[size_t(f.position) + 1] = uint8_t(target - (f.position + 2));
-				break;
-			}
-			patch_word(f.position + 1, target - (f.position + f.length));
-			break;
+			if (in.code == op::jcc) put_word(in.offset + 3, target - (in.offset + in.length));
+			else put_word(in.offset + 1, target - (in.offset + in.length));
+			continue;
 		}
-		case fixup_kind::code_word:
-			if (f.label < 0 || labels[size_t(f.label)] < 0) return false;
-			patch_word(f.position, code_base + labels[size_t(f.label)]);
-			break;
-		case fixup_kind::data_word:
-			patch_word(f.position, data_base + f.value);
-			break;
-		default:
-			patch_word(f.position, f.value);
-			break;
+
+		// An operand that names an address only became a number once the data
+		// section was placed, so it is written again here.
+		for (const operand* o : {&in.dest, &in.source})
+		{
+			if (o->reference == reference_kind::none) continue;
+			int value = 0;
+			if (o->reference == reference_kind::deferred) value = deferred[size_t(o->target)];
+			else if (o->reference == reference_kind::data) value = data_base + o->target;
+			else
+			{
+				if (o->target < 0 || labels[size_t(o->target)] < 0) return false;
+				const int index = labels[size_t(o->target)];
+				value = code_base +
+					(index < int(code.size()) ? code[size_t(index)].offset : int(image.size()));
+			}
+			// An address in a memory operand is the displacement, which follows
+			// the opcode and the mod/rm byte - or the opcode alone in the
+			// accumulator short form. An address used as an immediate is the
+			// last word the instruction wrote.
+			int at = in.offset + in.length - 2;
+			if (o->kind == operand_kind::memory)
+			{
+				const bool accumulator = in.code == op::mov &&
+					((in.dest.kind == operand_kind::reg && in.dest.reg == reg_a && o == &in.source) ||
+						(in.source.kind == operand_kind::reg && in.source.reg == reg_a && o == &in.dest));
+				at = in.offset + (accumulator ? 1 : 2);
+			}
+			put_word(at, value);
 		}
 	}
 	return true;
 }
-
-void emitter::call_frame(int displacement) { byte(0xff); byte(0x96); word(displacement); }
-
-void emitter::ret() { byte(0xc3); }
-void emitter::interrupt(int number) { byte(0xcd); byte(number); }

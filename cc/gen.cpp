@@ -473,9 +473,9 @@ namespace
 			return offset;
 		}
 
-		// The word just emitted holds the address of an object in the data
-		// section, which the layout pass will move.
-		void data_reference(int position, int offset) { e_.data_at(position, offset); }
+		// The address in the instruction just emitted is an object in the data
+		// section, which the layout pass has not placed yet.
+		void data_reference(int offset) { e_.refers_to_data(offset); }
 
 		// A pointer to a data object, held in the data section itself. Data does
 		// not move, so this one is still an offset.
@@ -509,7 +509,7 @@ namespace
 
 		bool emitted_since(const emission_mark& m) const
 		{
-			if (e_.code.size() != m.code.code || e_.fixups.size() != m.code.fixups) return true;
+			if (e_.code.size() != m.code.code || e_.literals.size() != m.code.literals) return true;
 			return data_fixups_.size() != m.data_fixups || function_fixups_.size() != m.function_fixups;
 		}
 
@@ -581,7 +581,7 @@ namespace
 		{
 			if (v.kind != val_global || !(is_array(v.type) || is_record(v.type))) return false;
 			e_.add_ax_imm(0);
-			data_reference(e_.at() - 2, v.offset);
+			data_reference(v.offset);
 			return true;
 		}
 
@@ -631,7 +631,9 @@ namespace
 		void switch_statement();
 		void emit_return();
 		bool in_place_statement(tok terminator);
-		void memory_operation(int opcode, int field, const value& target, int extra = 0);
+		operand place_of(const value& target, int extra = 0);
+		void memory_operation(op kind, int width, const value& target, const operand& source,
+		                      int extra = 0);
 
 		value expression();
 		value assignment_expression();
@@ -669,7 +671,7 @@ namespace
 			break;
 		case addr_global:
 			e_.mov_bx_absolute(0);
-			data_reference(e_.at() - 2, v.offset);
+			data_reference(v.offset);
 			break;
 		default:
 			e_.mov_bx_ax();
@@ -737,23 +739,23 @@ namespace
 			if (is_array(v.type) || is_record(v.type))
 			{
 				e_.mov_ax_imm(0);
-				data_reference(e_.at() - 2, v.offset);
+				data_reference(v.offset);
 			}
 			else if (type_size(v.type) == 1)
 			{
 				e_.load_al_absolute(0);
-				data_reference(e_.at() - 2, v.offset);
+				data_reference(v.offset);
 				if (is_unsigned(v.type)) e_.zero_ah();
 				else e_.cbw();
 			}
 			else
 			{
 				e_.load_ax_absolute(0);
-				data_reference(e_.at() - 2, v.offset);
+				data_reference(v.offset);
 				if (wide)
 				{
 					e_.load_dx_absolute(0);
-					data_reference(e_.at() - 2, v.offset + 2);
+					data_reference(v.offset + 2);
 				}
 			}
 			break;
@@ -766,7 +768,7 @@ namespace
 				else if (v.address == addr_global)
 				{
 					e_.load_ax_absolute(0);
-					data_reference(e_.at() - 2, v.offset);
+					data_reference(v.offset);
 				}
 				if (v.bias != 0) e_.add_ax_imm(v.bias);
 				break;
@@ -820,14 +822,14 @@ namespace
 			break;
 		case val_global:
 			e_.mov_ax_imm(0);
-			data_reference(e_.at() - 2, v.offset);
+			data_reference(v.offset);
 			break;
 		case val_deref:
 			if (v.address == addr_local) e_.load_ax_frame(v.offset);
 			else if (v.address == addr_global)
 			{
 				e_.load_ax_absolute(0);
-				data_reference(e_.at() - 2, v.offset);
+				data_reference(v.offset);
 			}
 			if (v.bias != 0) e_.add_ax_imm(v.bias);
 			break;
@@ -857,16 +859,16 @@ namespace
 			if (type_size(target.type) == 1)
 			{
 				e_.store_al_absolute(0);
-				data_reference(e_.at() - 2, target.offset);
+				data_reference(target.offset);
 			}
 			else
 			{
 				e_.store_ax_absolute(0);
-				data_reference(e_.at() - 2, target.offset);
+				data_reference(target.offset);
 				if (wide)
 				{
 					e_.store_dx_absolute(0);
-					data_reference(e_.at() - 2, target.offset + 2);
+					data_reference(target.offset + 2);
 				}
 			}
 			break;
@@ -919,7 +921,7 @@ namespace
 		default:
 			if (is_array(v.type) || is_record(v.type)) e_.mov_cx_imm(0);
 			else e_.load_cx_absolute(0);
-			data_reference(e_.at() - 2, v.offset);
+			data_reference(v.offset);
 			break;
 		}
 		if (is_array(v.type)) v.type = pointer_to(target_of(v.type));
@@ -948,11 +950,11 @@ namespace
 		else
 		{
 			e_.load_bx_absolute(0);
-			data_reference(e_.at() - 2, v.offset);
+			data_reference(v.offset);
 			if (is_wide(v.type))
 			{
 				e_.load_cx_absolute(0);
-				data_reference(e_.at() - 2, v.offset + 2);
+				data_reference(v.offset + 2);
 			}
 			else
 			{
@@ -1695,7 +1697,7 @@ namespace
 				// Used without a call, a function name is its address.
 				v.kind = val_reg;
 				e_.mov_ax_imm(0);
-				e_.code_at(e_.at() - 2, label_of(index));
+				e_.refers_to_code(label_of(index));
 				symbols_[size_t(index)].called = true;
 				v.type = pointer_to(function_type(symbols_[size_t(index)].type,
 				                                  symbols_[size_t(index)].parameters));
@@ -2379,7 +2381,7 @@ namespace
 						else
 						{
 							e_.load_ax_absolute(0);
-							data_reference(e_.at() - 2, left.offset + 2);
+							data_reference(left.offset + 2);
 						}
 						if (unsigned_operation) e_.xor_dx_dx();
 						else e_.cwd();
@@ -3255,12 +3257,19 @@ namespace
 		e_.ret();
 	}
 
-	// An instruction applied straight to a variable in memory.
-	void generator::memory_operation(int opcode, int field, const value& target, int extra)
+	// Where a variable lives, as an operand the back end can work on directly.
+	operand generator::place_of(const value& target, int extra)
 	{
-		const bool frame = target.kind == val_local;
-		e_.memory(opcode, field, frame, frame ? target.offset + extra : 0);
-		if (!frame) data_reference(e_.at() - 2, target.offset + extra);
+		if (target.kind == val_local) return emitter::frame(target.offset + extra);
+		return operand::absolute(0);
+	}
+
+	// An operation applied straight to a variable in memory.
+	void generator::memory_operation(op kind, int width, const value& target, const operand& source,
+	                                 int extra)
+	{
+		e_.emit(kind, width, place_of(target, extra), source);
+		if (target.kind != val_local) data_reference(target.offset + extra);
 	}
 
 	// A statement whose result nobody wants - i++, x += 8, p = p + 1 - is one
@@ -3389,19 +3398,21 @@ namespace
 			}
 		}
 
-		// The opcode extension for an immediate: /0 add, /1 or, /2 adc, /3 sbb,
-		// /4 and, /5 sub, /6 xor.
-		int field = 0;
-		int reg_opcode = 0x01; // add [mem],reg
+		::op kind = ::op::add;
 		switch (op)
 		{
-		case tok::plus: field = 0; reg_opcode = 0x01; break;
-		case tok::minus: field = 5; reg_opcode = 0x29; break;
-		case tok::amp: field = 4; reg_opcode = 0x21; break;
-		case tok::pipe: field = 1; reg_opcode = 0x09; break;
-		default: field = 6; reg_opcode = 0x31; break;
+		case tok::plus: kind = ::op::add; break;
+		case tok::minus: kind = ::op::sub; break;
+		case tok::amp: kind = ::op::and_; break;
+		case tok::pipe: kind = ::op::or_; break;
+		default: kind = ::op::xor_; break;
 		}
 		const bool wide = width == 4;
+
+		// The carry between the halves only matters for + and -.
+		::op high_kind = kind;
+		if (op == tok::plus) high_kind = ::op::adc;
+		else if (op == tok::minus) high_kind = ::op::sbb;
 
 		if (constant_source)
 		{
@@ -3410,37 +3421,19 @@ namespace
 			if (!wide && (op == tok::plus || op == tok::minus) && (low == 1 || low == 0xffff))
 			{
 				const bool up = (op == tok::plus) == (low == 1);
-				memory_operation(width == 1 ? 0xfe : 0xff, up ? 0 : 1, target);
-			}
-			else if (width == 1)
-			{
-				memory_operation(0x80, field, target);
-				e_.byte(low & 0xff);
+				memory_operation(up ? ::op::inc : ::op::dec, width, target, {});
 			}
 			else
 			{
-				memory_operation(0x81, field, target);
-				e_.word(low);
-				if (wide)
-				{
-					// The carry between the halves only matters for + and -.
-					if (op == tok::plus) memory_operation(0x81, 2, target, 2);
-					else if (op == tok::minus) memory_operation(0x81, 3, target, 2);
-					else memory_operation(0x81, field, target, 2);
-					e_.word(high);
-				}
+				memory_operation(kind, width, target, operand::constant(low));
+				if (wide) memory_operation(high_kind, 2, target, operand::constant(high), 2);
 			}
 		}
 		else
 		{
 			load(source);
-			memory_operation(reg_opcode, 0, target); // against AX
-			if (wide)
-			{
-				if (op == tok::plus) memory_operation(0x11, 2, target, 2); // adc [mem],dx
-				else if (op == tok::minus) memory_operation(0x19, 2, target, 2); // sbb [mem],dx
-				else memory_operation(reg_opcode, 2, target, 2);
-			}
+			memory_operation(kind, wide ? 2 : width, target, operand::in(reg_a));
+			if (wide) memory_operation(high_kind, 2, target, operand::in(reg_d), 2);
 		}
 
 		at_ = start + (step_only ? 2 : rest + 1);
@@ -3461,7 +3454,7 @@ namespace
 		e_.push_bp();
 		e_.mov_bp_sp();
 		e_.sub_sp_imm(0);
-		frame_patch_ = e_.value_at(e_.at() - 2, 0);
+		frame_patch_ = e_.refers_to_deferred();
 		frame_ = 0;
 
 		++scope_;
@@ -3494,7 +3487,7 @@ namespace
 		}
 		pending_gotos_.clear();
 
-		e_.set_value(frame_patch_, frame_);
+		e_.set_deferred(frame_patch_, frame_);
 		symbols_[size_t(function_index)].frame = frame_;
 		emit_return();
 		symbols_[size_t(function_index)].finish = e_.here();
@@ -3943,19 +3936,17 @@ namespace
 		// mov sp, <top of our block>; shrink the block DOS gave us so that a
 		// child process has somewhere to load, then call main and exit.
 		e_.mov_sp_imm(0);
-		stack_patch_ = e_.value_at(e_.at() - 2, 0);
+		stack_patch_ = e_.refers_to_deferred();
 		e_.mov_bx_imm(0);
-		paragraph_patch_ = e_.value_at(e_.at() - 2, 0);
-		e_.byte(0xb4);
-		e_.byte(0x4a); // mov ah,4Ah
+		paragraph_patch_ = e_.refers_to_deferred();
+		e_.emit(op::mov, 1, operand::in(reg_ah), operand::constant(0x4a));
 		e_.interrupt(0x21);
 
 		const int main_index = define("main", sym_function, t_int_);
 		e_.call(label_of(main_index));
 		symbols_[size_t(main_index)].called = true;
 
-		e_.byte(0xb4);
-		e_.byte(0x4c); // mov ah,4Ch
+		e_.emit(op::mov, 1, operand::in(reg_ah), operand::constant(0x4c));
 		e_.interrupt(0x21);
 	}
 
@@ -3963,52 +3954,40 @@ namespace
 	// AX out, and whatever DOS left in the other registers readable afterwards.
 	void generator::emit_interrupt_call(int number, int cf, int bx, int cx, int dx, bool with_si)
 	{
+		const auto from_frame = [&](int r, int displacement)
+		{
+			e_.emit(op::mov, 2, operand::in(r), emitter::frame(displacement));
+		};
+		const auto to_global = [&](int symbol, int r)
+		{
+			e_.emit(op::mov, 2, operand::absolute(0), operand::in(r));
+			data_reference(symbols_[size_t(symbol)].offset);
+		};
+		const auto set_global = [&](int symbol, int value)
+		{
+			e_.emit(op::mov, 2, operand::absolute(0), operand::constant(value));
+			data_reference(symbols_[size_t(symbol)].offset);
+		};
+
 		e_.push_bp();
 		e_.mov_bp_sp();
-		if (with_si) e_.byte(0x56); // push si
-		e_.load_ax_frame(4);
-		e_.byte(0x8b);
-		e_.byte(0x9e);
-		e_.word(6); // mov bx,[bp+6]
-		e_.byte(0x8b);
-		e_.byte(0x8e);
-		e_.word(8); // mov cx,[bp+8]
-		e_.byte(0x8b);
-		e_.byte(0x96);
-		e_.word(10); // mov dx,[bp+10]
-		if (with_si)
-		{
-			e_.byte(0x8b);
-			e_.byte(0xb6);
-			e_.word(12); // mov si,[bp+12]
-		}
+		if (with_si) e_.emit(op::push, 2, operand::in(reg_si));
+		from_frame(reg_a, 4);
+		from_frame(reg_b, 6);
+		from_frame(reg_c, 8);
+		from_frame(reg_d, 10);
+		if (with_si) from_frame(reg_si, 12);
 		e_.interrupt(number);
 
-		e_.byte(0x89);
-		e_.byte(0x1e);
-		data_reference(e_.at(), symbols_[size_t(bx)].offset);
-		e_.word(0); // mov [__bx],bx
-		e_.byte(0x89);
-		e_.byte(0x0e);
-		data_reference(e_.at(), symbols_[size_t(cx)].offset);
-		e_.word(0); // mov [__cx],cx
-		e_.byte(0x89);
-		e_.byte(0x16);
-		data_reference(e_.at(), symbols_[size_t(dx)].offset);
-		e_.word(0); // mov [__dx],dx
-		e_.byte(0xc7);
-		e_.byte(0x06);
-		data_reference(e_.at(), symbols_[size_t(cf)].offset);
-		e_.word(0);
-		e_.word(0); // mov word [__cf],0
-		e_.byte(0x73);
-		e_.byte(0x06); // jnc over the next instruction
-		e_.byte(0xc7);
-		e_.byte(0x06);
-		data_reference(e_.at(), symbols_[size_t(cf)].offset);
-		e_.word(0);
-		e_.word(1); // mov word [__cf],1
-		if (with_si) e_.byte(0x5e); // pop si
+		to_global(bx, reg_b);
+		to_global(cx, reg_c);
+		to_global(dx, reg_d);
+		set_global(cf, 0);
+		const int carry_clear = e_.label();
+		e_.jump_if(condition::above_equal, carry_clear);
+		set_global(cf, 1);
+		e_.bind(carry_clear);
+		if (with_si) e_.emit(op::pop, 2, operand::in(reg_si));
 		e_.pop_bp();
 		e_.ret();
 	}
@@ -4023,8 +4002,8 @@ namespace
 		const auto referenced = [&](int which)
 		{
 			if (helper_label_[which] < 0) return false;
-			for (const emitter::fixup& f : e_.fixups)
-				if (f.kind == emitter::fixup_kind::call && f.label == helper_label_[which]) return true;
+			for (const instruction& in : e_.code)
+				if (in.code == op::call && in.label == helper_label_[which]) return true;
 			return false;
 		};
 
@@ -4033,14 +4012,17 @@ namespace
 		if (used[h_ldiv] || used[h_uldiv] || used[h_lmod] || used[h_ulmod]) used[h_uldivmod] = true;
 
 		const auto bytes = [&](std::initializer_list<int> list) { for (const int b : list) e_.byte(b); };
-		const auto branch = [&](int opcode)
+
+		// The helpers were hand-assembled, but their branches go through the
+		// layout record like everything else, so they shorten with the rest.
+		const auto branch = [&](condition c)
 		{
-			e_.byte(opcode);
-			e_.byte(0);
-			return e_.at() - 1;
+			const int target = e_.label();
+			e_.jump_if(c, target);
+			return target;
 		};
-		const auto here = [&](int position) { e_.code[size_t(position)] = uint8_t(e_.at() - (position + 1)); };
-		const auto again = [&](int opcode, int target) { e_.byte(opcode); e_.byte(uint8_t(target - (e_.at() + 1))); };
+		const auto here = [&](int target) { e_.bind(target); };
+		const auto again = [&](condition c, int target) { e_.jump_if(c, target); };
 		const auto negate = [&] { e_.negate_dx_ax(); };
 
 		if (used[h_uldivmod] || used[h_uldiv])
@@ -4052,20 +4034,20 @@ namespace
 			bytes({0x56, 0x57, 0x55}); // push si / push di / push bp
 			bytes({0x31, 0xf6, 0x31, 0xff}); // xor si,si / xor di,di
 			bytes({0xbd, 0x20, 0x00}); // mov bp,32
-			const int loop = e_.at();
+			const int loop = e_.here();
 			bytes({0xd1, 0xe0, 0xd1, 0xd2, 0xd1, 0xd7, 0xd1, 0xd6}); // shl ax,1 / rcl dx,1 / rcl di,1 / rcl si,1
 			bytes({0x39, 0xce}); // cmp si,cx
-			const int skip_low = branch(0x72); // jb
-			const int to_subtract = branch(0x77); // ja
+			const int skip_low = branch(condition::below);
+			const int to_subtract = branch(condition::above);
 			bytes({0x39, 0xdf}); // cmp di,bx
-			const int skip = branch(0x72); // jb
+			const int skip = branch(condition::below);
 			here(to_subtract);
 			bytes({0x29, 0xdf, 0x19, 0xce}); // sub di,bx / sbb si,cx
 			bytes({0x0c, 0x01}); // or al,1
 			here(skip_low);
 			here(skip);
 			e_.byte(0x4d); // dec bp
-			again(0x75, loop);
+			again(condition::not_equal, loop);
 			bytes({0x89, 0xf1, 0x89, 0xfb}); // mov cx,si / mov bx,di
 			bytes({0x5d, 0x5f, 0x5e}); // pop bp / pop di / pop si
 			e_.ret();
@@ -4106,18 +4088,18 @@ namespace
 			e_.byte(0x56); // push si
 			bytes({0x31, 0xf6}); // xor si,si
 			bytes({0x85, 0xd2}); // test dx,dx
-			int positive = branch(0x79);
+			int positive = branch(condition::greater_equal);
 			bytes({0x83, 0xf6, 0x01}); // xor si,1
 			negate();
 			here(positive);
 			bytes({0x85, 0xc9}); // test cx,cx
-			positive = branch(0x79);
+			positive = branch(condition::greater_equal);
 			bytes({0x83, 0xf6, 0x01}); // xor si,1
 			bytes({0xf7, 0xd9, 0xf7, 0xdb, 0x83, 0xd9, 0x00}); // neg cx / neg bx / sbb cx,0
 			here(positive);
 			call_divide();
 			bytes({0x85, 0xf6}); // test si,si
-			const int done = branch(0x74);
+			const int done = branch(condition::equal);
 			negate();
 			here(done);
 			e_.byte(0x5e); // pop si
@@ -4131,18 +4113,18 @@ namespace
 			e_.byte(0x56); // push si
 			bytes({0x31, 0xf6}); // xor si,si
 			bytes({0x85, 0xd2}); // test dx,dx
-			int positive = branch(0x79);
+			int positive = branch(condition::greater_equal);
 			bytes({0xbe, 0x01, 0x00}); // mov si,1
 			negate();
 			here(positive);
 			bytes({0x85, 0xc9}); // test cx,cx
-			positive = branch(0x79);
+			positive = branch(condition::greater_equal);
 			bytes({0xf7, 0xd9, 0xf7, 0xdb, 0x83, 0xd9, 0x00}); // neg cx / neg bx / sbb cx,0
 			here(positive);
 			call_divide();
 			bytes({0x89, 0xd8, 0x89, 0xca}); // mov ax,bx / mov dx,cx
 			bytes({0x85, 0xf6}); // test si,si
-			const int done = branch(0x74);
+			const int done = branch(condition::equal);
 			negate();
 			here(done);
 			e_.byte(0x5e); // pop si
@@ -4156,13 +4138,13 @@ namespace
 			e_.bind(helper_label(which));
 			bytes({0x88, 0xd9}); // mov cl,bl
 			bytes({0x80, 0xe1, 0x1f}); // and cl,31
-			const int done = branch(0x74);
-			const int loop = e_.at();
+			const int done = branch(condition::equal);
+			const int loop = e_.here();
 			if (which == h_lshl) bytes({0xd1, 0xe0, 0xd1, 0xd2}); // shl ax,1 / rcl dx,1
 			else if (which == h_lshr) bytes({0xd1, 0xea, 0xd1, 0xd8}); // shr dx,1 / rcr ax,1
 			else bytes({0xd1, 0xfa, 0xd1, 0xd8}); // sar dx,1 / rcr ax,1
 			bytes({0xfe, 0xc9}); // dec cl
-			again(0x75, loop);
+			again(condition::not_equal, loop);
 			here(done);
 			e_.ret();
 		}
@@ -4174,13 +4156,13 @@ namespace
 			// signed conditions whatever the operand signedness was.
 			e_.bind(helper_label(which));
 			bytes({0x39, 0xca}); // cmp dx,cx
-			const int low = which == h_lcmp ? 0x7c : 0x72;
-			const int high = which == h_lcmp ? 0x7f : 0x77;
+			const condition low = which == h_lcmp ? condition::less : condition::below;
+			const condition high = which == h_lcmp ? condition::greater : condition::above;
 			const int less_high = branch(low);
 			const int greater_high = branch(high);
 			bytes({0x39, 0xd8}); // cmp ax,bx
-			const int less_low = branch(0x72);
-			const int greater_low = branch(0x77);
+			const int less_low = branch(condition::below);
+			const int greater_low = branch(condition::above);
 			e_.xor_ax_ax();
 			e_.ret();
 			here(less_high);
@@ -4292,17 +4274,17 @@ namespace
 		};
 
 		std::vector<span> spans;
-		std::map<int, int> starts; // the offset a function begins at, to its symbol
+		std::map<int, int> starts; // the instruction a function begins at, to its symbol
 		for (size_t i = 0; i < symbols_.size(); ++i)
 		{
 			const symbol& entry = symbols_[i];
 			if (entry.kind != sym_function || !entry.defined) continue;
 			if (entry.start < 0 || entry.finish < 0) continue;
 			span s;
-			s.from = e_.offset_of(entry.start);
-			s.to = e_.offset_of(entry.finish);
+			s.from = e_.labels[size_t(entry.start)];
+			s.to = e_.labels[size_t(entry.finish)];
 			s.symbol = int(i);
-			if (s.to <= s.from) continue;
+			if (s.from < 0 || s.to <= s.from) continue;
 			spans.push_back(s);
 			starts[s.from] = int(i);
 		}
@@ -4314,25 +4296,31 @@ namespace
 		// outside any of them: the startup code and the runtime helpers.
 		std::map<int, std::vector<int>> edges;
 		std::vector<int> roots;
-		for (const emitter::fixup& f : e_.fixups)
+		const auto reference = [&](int at, int label)
 		{
-			if (f.label < 0 || !e_.is_bound(f.label)) continue;
-			if (f.kind != emitter::fixup_kind::call && f.kind != emitter::fixup_kind::code_word)
-				continue;
-			const auto target = starts.find(e_.offset_of(f.label));
-			if (target == starts.end()) continue;
+			if (label < 0 || !e_.is_bound(label)) return;
+			const auto target = starts.find(e_.labels[size_t(label)]);
+			if (target == starts.end()) return;
 
 			size_t low = 0, high = spans.size();
 			while (low < high)
 			{
 				const size_t middle = (low + high) / 2;
-				if (spans[middle].to <= f.position) low = middle + 1;
+				if (spans[middle].to <= at) low = middle + 1;
 				else high = middle;
 			}
-			if (low < spans.size() && f.position >= spans[low].from)
+			if (low < spans.size() && at >= spans[low].from)
 				edges[spans[low].symbol].push_back(target->second);
 			else
 				roots.push_back(target->second);
+		};
+
+		for (size_t i = 0; i < e_.code.size(); ++i)
+		{
+			const instruction& in = e_.code[i];
+			if (in.code == op::call) reference(int(i), in.label);
+			for (const operand* o : {&in.dest, &in.source})
+				if (o->reference == reference_kind::code) reference(int(i), o->target);
 		}
 		for (const function_fixup& fixup : function_fixups_) roots.push_back(fixup.function);
 
@@ -4366,12 +4354,12 @@ namespace
 		// form for every branch, drops what the program never reaches, and
 		// moves what is left.
 		drop_unreachable();
-		e_.lay_out();
-		// Data follows the code, so its address is only known after that.
-		while (e_.code.size() % 2 != 0) e_.byte(0x90);
-		const int data_base = target_.code_origin + int(e_.code.size());
+		e_.lay_out(target_.code_origin);
 
-		code_size = int(e_.code.size());
+		// Data follows the code, so its address is only known after that.
+		code_size = int(e_.image.size());
+		if (code_size % 2 != 0) ++code_size;
+		const int data_base = target_.code_origin + code_size;
 		data_size = int(data_.size());
 
 		const int image_end = data_base + data_size;
@@ -4384,8 +4372,8 @@ namespace
 			         code_size, data_size);
 			throw compile_error{message, 0, 0};
 		}
-		e_.set_value(stack_patch_, stack_top);
-		e_.set_value(paragraph_patch_, (stack_top + 15) / 16);
+		e_.set_deferred(stack_patch_, stack_top);
+		e_.set_deferred(paragraph_patch_, (stack_top + 15) / 16);
 		if (!e_.resolve(target_.code_origin, data_base))
 			throw compile_error{"a jump was never given somewhere to go", 0, 0};
 
@@ -4406,7 +4394,8 @@ namespace
 		for (const data_fixup& fixup : data_fixups_)
 			put_word(fixup.position, data_base + fixup.offset);
 
-		std::vector<uint8_t> image = e_.code;
+		std::vector<uint8_t> image = e_.image;
+		while (image.size() % 2 != 0) image.push_back(0x90);
 		image.insert(image.end(), data_.begin(), data_.end());
 		return image;
 	}
