@@ -117,6 +117,13 @@ when a review turns one up, add it here rather than in AGENTS.md.
   stands in the way, in the compiler itself, is struct assignment, struct
   parameters and struct returns, and a front end that honours the target's int
   and pointer widths instead of assuming two bytes.
+- A program compiled for this machine runs in a 64 KiB block the host hands it,
+  so it is the tiny model natively as well: `ovrwincli --ccnative cc\bench\bench.c`
+  compiles the benchmark for x64, runs it in process and gets the same checksum
+  and exit code the emulated build gives - about 195x faster, 0.8 ms against
+  157 ms. `cc\bench\roundtrip.c` does the same for the file services. What is
+  missing there is the rest of DOS: no find-first, no keyboard, no EXEC, so the
+  shell does not run this way yet.
 
 ## Running a large program: the memory model
 
