@@ -231,12 +231,12 @@ namespace
 	{
 		switch (op)
 		{
-		case tok::eq: return condition::equal;
-		case tok::ne: return condition::not_equal;
-		case tok::less: return unsigned_operation ? condition::below : condition::less;
-		case tok::le: return unsigned_operation ? condition::below_equal : condition::less_equal;
-		case tok::greater: return unsigned_operation ? condition::above : condition::greater;
-		default: return unsigned_operation ? condition::above_equal : condition::greater_equal;
+		case tok::eq: return cond_equal;
+		case tok::ne: return cond_not_equal;
+		case tok::less: return unsigned_operation ? cond_below : cond_less;
+		case tok::le: return unsigned_operation ? cond_below_equal : cond_less_equal;
+		case tok::greater: return unsigned_operation ? cond_above : cond_greater;
+		default: return unsigned_operation ? cond_above_equal : cond_greater_equal;
 		}
 	}
 
@@ -247,6 +247,7 @@ namespace
 			: tokens_(tokens), options_(options)
 		{
 			cc_target_init(&target_);
+			emit_init(&e_);
 
 			// Only the image shape changes with the machine. The widths stay 16
 			// bits until the front end is parameterised over them, so an x64 build
@@ -264,6 +265,11 @@ namespace
 			e_.cpu = target_.cpu;
 			e_.machine = target_.machine;
 		}
+
+		~generator() { emit_free(&e_); }
+
+		generator(const generator&) = delete;
+		generator& operator=(const generator&) = delete;
 
 		void run();
 		std::vector<uint8_t> finish(int& code_size, int& data_size);
@@ -307,7 +313,7 @@ namespace
 
 		int helper_label(int which)
 		{
-			if (helper_label_[which] < 0) helper_label_[which] = e_.label();
+			if (helper_label_[which] < 0) helper_label_[which] = emit_label(&e_);
 			return helper_label_[which];
 		}
 
@@ -436,7 +442,7 @@ namespace
 		int label_of(int function)
 		{
 			symbol& entry = symbols_[size_t(function)];
-			if (entry.label < 0) entry.label = e_.label();
+			if (entry.label < 0) entry.label = emit_label(&e_);
 			return entry.label;
 		}
 
@@ -498,7 +504,7 @@ namespace
 
 		// The address in the instruction just emitted is an object in the data
 		// section, which the layout pass has not placed yet.
-		void data_reference(int offset) { e_.refers_to_data(offset); }
+		void data_reference(int offset) { emit_refers_to_data(&e_, offset); }
 
 		// A pointer to a data object, held in the data section itself. Data does
 		// not move, so this one is still an offset.
@@ -509,7 +515,7 @@ namespace
 		// fold or to want its operands somewhere else.
 		struct emission_mark
 		{
-			emitter::position code;
+			emitter_position code;
 			size_t data_fixups = 0;
 			size_t function_fixups = 0;
 		};
@@ -517,7 +523,7 @@ namespace
 		emission_mark mark() const
 		{
 			emission_mark m;
-			m.code = e_.tell();
+			m.code = emit_tell(&e_);
 			m.data_fixups = data_fixups_.size();
 			m.function_fixups = function_fixups_.size();
 			return m;
@@ -525,14 +531,14 @@ namespace
 
 		void discard(const emission_mark& m)
 		{
-			e_.rewind(m.code);
+			emit_rewind(&e_, m.code);
 			data_fixups_.resize(m.data_fixups);
 			function_fixups_.resize(m.function_fixups);
 		}
 
 		bool emitted_since(const emission_mark& m) const
 		{
-			if (e_.code.size() != m.code.code || e_.literals.size() != m.code.literals) return true;
+			if (e_.code.count != m.code.code || e_.literals.count != m.code.literals) return true;
 			return data_fixups_.size() != m.data_fixups || function_fixups_.size() != m.function_fixups;
 		}
 
@@ -604,7 +610,7 @@ namespace
 		bool add_address_to_ax(const value& v)
 		{
 			if (v.kind != val_global || !(is_array(v.type) || is_record(v.type))) return false;
-			e_.add_ax_imm(0);
+			emit_add_ax_imm(&e_, 0);
 			data_reference(v.offset);
 			return true;
 		}
@@ -695,14 +701,14 @@ namespace
 		switch (v.address)
 		{
 		case addr_local:
-			e_.mov_bx_frame(v.offset);
+			emit_mov_bx_frame(&e_, v.offset);
 			break;
 		case addr_global:
-			e_.mov_bx_absolute(0);
+			emit_mov_bx_absolute(&e_, 0);
 			data_reference(v.offset);
 			break;
 		default:
-			e_.mov_bx_ax();
+			emit_mov_bx_ax(&e_);
 			break;
 		}
 	}
@@ -711,19 +717,19 @@ namespace
 	{
 		if (type_size(type_index) == 1)
 		{
-			e_.store_al_indirect(bias);
+			emit_store_al_indirect(&e_, bias);
 			return;
 		}
-		e_.store_ax_indirect(bias);
-		if (is_wide(type_index)) e_.store_dx_indirect_high(bias);
+		emit_store_ax_indirect(&e_, bias);
+		if (is_wide(type_index)) emit_store_dx_indirect_high(&e_, bias);
 	}
 
 	// Sign or zero extends AX into DX:AX, so a 16-bit value can take part in a
 	// 32-bit operation.
 	void generator::widen(int from_type)
 	{
-		if (is_unsigned(from_type)) e_.xor_dx_dx();
-		else e_.cwd();
+		if (is_unsigned(from_type)) emit_xor_dx_dx(&e_);
+		else emit_cwd(&e_);
 	}
 
 	// A byte fetched into AX. A 386 does it in one instruction; an 8086 loads AL
@@ -733,14 +739,14 @@ namespace
 	{
 		if (target_.cpu >= cc_cpu_i80386)
 		{
-			e_.emit(is_signed ? ::op::movsx : ::op::movzx, 1, operand::in(reg_a), from);
+			emit_op(&e_, is_signed ? op_movsx : op_movzx, 1, operand_in(reg_a), from);
 			if (data_offset >= 0) data_reference(data_offset);
 			return;
 		}
-		e_.emit(::op::mov, 1, operand::in(reg_a), from);
+		emit_op(&e_, op_mov, 1, operand_in(reg_a), from);
 		if (data_offset >= 0) data_reference(data_offset);
-		if (is_signed) e_.cbw();
-		else e_.zero_ah();
+		if (is_signed) emit_cbw(&e_);
+		else emit_zero_ah(&e_);
 	}
 
 	void generator::load(value& v)
@@ -752,8 +758,8 @@ namespace
 		switch (v.kind)
 		{
 		case val_const:
-			e_.mov_ax_imm(int(v.constant & 0xffff));
-			if (wide) e_.mov_dx_imm(int((v.constant >> 16) & 0xffff));
+			emit_mov_ax_imm(&e_, int(v.constant & 0xffff));
+			if (wide) emit_mov_dx_imm(&e_, int((v.constant >> 16) & 0xffff));
 			break;
 
 		case val_reg:
@@ -762,35 +768,35 @@ namespace
 		case val_flags:
 			// The comparison is only in the flags, so it costs something to ask
 			// for it as a number.
-			e_.set_from_condition(condition(v.offset));
+			emit_set_from_condition(&e_, condition(v.offset));
 			break;
 
 		case val_local:
-			if (is_array(v.type) || is_record(v.type)) e_.lea_ax_frame(v.offset);
+			if (is_array(v.type) || is_record(v.type)) emit_lea_ax_frame(&e_, v.offset);
 			else if (type_size(v.type) == 1)
-				load_byte_widened(emitter::frame(v.offset), !is_unsigned(v.type));
+				load_byte_widened(emit_frame(v.offset), !is_unsigned(v.type));
 			else
 			{
-				e_.load_ax_frame(v.offset);
-				if (wide) e_.load_dx_frame(v.offset + 2);
+				emit_load_ax_frame(&e_, v.offset);
+				if (wide) emit_load_dx_frame(&e_, v.offset + 2);
 			}
 			break;
 
 		case val_global:
 			if (is_array(v.type) || is_record(v.type))
 			{
-				e_.mov_ax_imm(0);
+				emit_mov_ax_imm(&e_, 0);
 				data_reference(v.offset);
 			}
 			else if (type_size(v.type) == 1)
-				load_byte_widened(operand::absolute(0), !is_unsigned(v.type), v.offset);
+				load_byte_widened(operand_absolute(0), !is_unsigned(v.type), v.offset);
 			else
 			{
-				e_.load_ax_absolute(0);
+				emit_load_ax_absolute(&e_, 0);
 				data_reference(v.offset);
 				if (wide)
 				{
-					e_.load_dx_absolute(0);
+					emit_load_dx_absolute(&e_, 0);
 					data_reference(v.offset + 2);
 				}
 			}
@@ -800,22 +806,22 @@ namespace
 			if (is_array(v.type) || is_record(v.type))
 			{
 				// What is wanted is the address, not what is there.
-				if (v.address == addr_local) e_.load_ax_frame(v.offset);
+				if (v.address == addr_local) emit_load_ax_frame(&e_, v.offset);
 				else if (v.address == addr_global)
 				{
-					e_.load_ax_absolute(0);
+					emit_load_ax_absolute(&e_, 0);
 					data_reference(v.offset);
 				}
-				if (v.bias != 0) e_.add_ax_imm(v.bias);
+				if (v.bias != 0) emit_add_ax_imm(&e_, v.bias);
 				break;
 			}
 			address_to_bx(v);
 			if (type_size(v.type) == 1)
-				load_byte_widened(emitter::pointee(v.bias), !is_unsigned(v.type));
+				load_byte_widened(emit_pointee(v.bias), !is_unsigned(v.type));
 			else
 			{
-				e_.load_ax_indirect(v.bias);
-				if (wide) e_.load_dx_indirect_high(v.bias);
+				emit_load_ax_indirect(&e_, v.bias);
+				if (wide) emit_load_dx_indirect_high(&e_, v.bias);
 			}
 			break;
 		}
@@ -850,20 +856,20 @@ namespace
 		switch (v.kind)
 		{
 		case val_local:
-			e_.lea_ax_frame(v.offset);
+			emit_lea_ax_frame(&e_, v.offset);
 			break;
 		case val_global:
-			e_.mov_ax_imm(0);
+			emit_mov_ax_imm(&e_, 0);
 			data_reference(v.offset);
 			break;
 		case val_deref:
-			if (v.address == addr_local) e_.load_ax_frame(v.offset);
+			if (v.address == addr_local) emit_load_ax_frame(&e_, v.offset);
 			else if (v.address == addr_global)
 			{
-				e_.load_ax_absolute(0);
+				emit_load_ax_absolute(&e_, 0);
 				data_reference(v.offset);
 			}
-			if (v.bias != 0) e_.add_ax_imm(v.bias);
+			if (v.bias != 0) emit_add_ax_imm(&e_, v.bias);
 			break;
 		default:
 			fail("this expression has no address");
@@ -880,40 +886,40 @@ namespace
 		switch (target.kind)
 		{
 		case val_local:
-			if (type_size(target.type) == 1) e_.store_al_frame(target.offset);
+			if (type_size(target.type) == 1) emit_store_al_frame(&e_, target.offset);
 			else
 			{
-				e_.store_ax_frame(target.offset);
-				if (wide) e_.store_dx_frame(target.offset + 2);
+				emit_store_ax_frame(&e_, target.offset);
+				if (wide) emit_store_dx_frame(&e_, target.offset + 2);
 			}
 			break;
 		case val_global:
 			if (type_size(target.type) == 1)
 			{
-				e_.store_al_absolute(0);
+				emit_store_al_absolute(&e_, 0);
 				data_reference(target.offset);
 			}
 			else
 			{
-				e_.store_ax_absolute(0);
+				emit_store_ax_absolute(&e_, 0);
 				data_reference(target.offset);
 				if (wide)
 				{
-					e_.store_dx_absolute(0);
+					emit_store_dx_absolute(&e_, 0);
 					data_reference(target.offset + 2);
 				}
 			}
 			break;
 		case val_deref:
-			if (target.address == addr_reg) e_.pop_bx();
+			if (target.address == addr_reg) emit_pop_bx(&e_);
 			else address_to_bx(target);
 			if (type_size(target.type) == 1)
 			{
-				e_.store_al_indirect(target.bias);
+				emit_store_al_indirect(&e_, target.bias);
 				break;
 			}
-			e_.store_ax_indirect(target.bias);
-			if (wide) e_.store_dx_indirect_high(target.bias);
+			emit_store_ax_indirect(&e_, target.bias);
+			if (wide) emit_store_dx_indirect_high(&e_, target.bias);
 			break;
 		default:
 			fail("cannot assign to this expression");
@@ -927,14 +933,14 @@ namespace
 		if (v.kind == val_flags) return condition(v.offset);
 		const bool wide = is_wide(v.type);
 		load(v);
-		if (wide) e_.or_ax_dx(); // zero only when both halves are zero
-		else e_.test_ax_ax();
-		return condition::not_equal;
+		if (wide) emit_or_ax_dx(&e_); // zero only when both halves are zero
+		else emit_test_ax_ax(&e_);
+		return cond_not_equal;
 	}
 
 	void generator::call_helper(helper which)
 	{
-		e_.call(helper_label(which));
+		emit_call(&e_, helper_label(which));
 	}
 
 	// The second operand of a narrow operator, put straight in CX. Only called
@@ -944,15 +950,15 @@ namespace
 		switch (v.kind)
 		{
 		case val_const:
-			e_.mov_cx_imm(int(v.constant & 0xffff));
+			emit_mov_cx_imm(&e_, int(v.constant & 0xffff));
 			break;
 		case val_local:
-			if (is_array(v.type) || is_record(v.type)) e_.lea_cx_frame(v.offset);
-			else e_.load_cx_frame(v.offset);
+			if (is_array(v.type) || is_record(v.type)) emit_lea_cx_frame(&e_, v.offset);
+			else emit_load_cx_frame(&e_, v.offset);
 			break;
 		default:
-			if (is_array(v.type) || is_record(v.type)) e_.mov_cx_imm(0);
-			else e_.load_cx_absolute(0);
+			if (is_array(v.type) || is_record(v.type)) emit_mov_cx_imm(&e_, 0);
+			else emit_load_cx_absolute(&e_, 0);
 			data_reference(v.offset);
 			break;
 		}
@@ -967,30 +973,30 @@ namespace
 		{
 			long constant = v.constant;
 			if (!is_wide(v.type) && !is_unsigned(v.type)) constant = long(int16_t(constant));
-			e_.mov_bx_imm(int(constant & 0xffff));
-			e_.mov_cx_imm(int((constant >> 16) & 0xffff));
+			emit_mov_bx_imm(&e_, int(constant & 0xffff));
+			emit_mov_cx_imm(&e_, int((constant >> 16) & 0xffff));
 			v.kind = val_reg;
 			return;
 		}
 
 		if (v.kind == val_local)
 		{
-			e_.load_bx_frame(v.offset);
-			if (is_wide(v.type)) e_.load_cx_frame(v.offset + 2);
-			else e_.xor_cx_cx();
+			emit_load_bx_frame(&e_, v.offset);
+			if (is_wide(v.type)) emit_load_cx_frame(&e_, v.offset + 2);
+			else emit_xor_cx_cx(&e_);
 		}
 		else
 		{
-			e_.load_bx_absolute(0);
+			emit_load_bx_absolute(&e_, 0);
 			data_reference(v.offset);
 			if (is_wide(v.type))
 			{
-				e_.load_cx_absolute(0);
+				emit_load_cx_absolute(&e_, 0);
 				data_reference(v.offset + 2);
 			}
 			else
 			{
-				e_.xor_cx_cx();
+				emit_xor_cx_cx(&e_);
 			}
 		}
 		v.kind = val_reg;
@@ -1005,16 +1011,16 @@ namespace
 		{
 			for (int i = 0; i < count; ++i)
 			{
-				if (op == tok::shl) e_.shl_ax_one();
-				else if (unsigned_operation) e_.shr_ax_one();
-				else e_.sar_ax_one();
+				if (op == tok::shl) emit_shl_ax_one(&e_);
+				else if (unsigned_operation) emit_shr_ax_one(&e_);
+				else emit_sar_ax_one(&e_);
 			}
 			return;
 		}
-		e_.mov_cl_imm(count);
-		if (op == tok::shl) e_.shl_ax_cl();
-		else if (unsigned_operation) e_.shr_ax_cl();
-		else e_.sar_ax_cl();
+		emit_mov_cl_imm(&e_, count);
+		if (op == tok::shl) emit_shl_ax_cl(&e_);
+		else if (unsigned_operation) emit_shr_ax_cl(&e_);
+		else emit_sar_ax_cl(&e_);
 	}
 
 	// The same for the 32-bit pair. A shift of 16 or more is just a move
@@ -1026,21 +1032,21 @@ namespace
 		{
 			if (op == tok::shl)
 			{
-				e_.mov_dx_ax();
-				e_.xor_ax_ax();
+				emit_mov_dx_ax(&e_);
+				emit_xor_ax_ax(&e_);
 				const int rest = count - 16;
-				if (rest > 0 && rest <= 3) for (int i = 0; i < rest; ++i) e_.shl_dx_one();
+				if (rest > 0 && rest <= 3) for (int i = 0; i < rest; ++i) emit_shl_dx_one(&e_);
 				else if (rest > 3)
 				{
-					e_.mov_cl_imm(rest);
-					e_.shl_dx_cl();
+					emit_mov_cl_imm(&e_, rest);
+					emit_shl_dx_cl(&e_);
 				}
 			}
 			else
 			{
-				e_.mov_ax_dx();
-				if (unsigned_operation) e_.xor_dx_dx();
-				else e_.cwd();
+				emit_mov_ax_dx(&e_);
+				if (unsigned_operation) emit_xor_dx_dx(&e_);
+				else emit_cwd(&e_);
 				shift_ax_constant(op, count - 16, unsigned_operation);
 			}
 			return;
@@ -1050,15 +1056,15 @@ namespace
 		{
 			for (int i = 0; i < count; ++i)
 			{
-				if (op == tok::shl) e_.shl_pair_one();
-				else if (unsigned_operation) e_.shr_pair_one();
-				else e_.sar_pair_one();
+				if (op == tok::shl) emit_shl_pair_one(&e_);
+				else if (unsigned_operation) emit_shr_pair_one(&e_);
+				else emit_sar_pair_one(&e_);
 			}
 			return;
 		}
 
 		// Anything else is shorter as the loop in the runtime helper.
-		e_.mov_bx_imm(count);
+		emit_mov_bx_imm(&e_, count);
 		apply_operator_wide(op, unsigned_operation);
 	}
 
@@ -1073,8 +1079,8 @@ namespace
 			shift_ax_constant(tok::shl, bit, true);
 			return;
 		}
-		e_.mov_cx_imm(size);
-		e_.imul_cx();
+		emit_mov_cx_imm(&e_, size);
+		emit_imul_cx(&e_);
 	}
 
 	// DX:AX holds the left operand and the right one is a constant. Returns
@@ -1088,41 +1094,41 @@ namespace
 		{
 		case tok::plus:
 			if (low == 0 && high == 0) return true;
-			if (low == 0) e_.add_dx_imm(high);
+			if (low == 0) emit_add_dx_imm(&e_, high);
 			else
 			{
-				e_.add_ax_imm(low);
-				if (high == 0) e_.adc_dx_zero();
-				else e_.adc_dx_imm(high);
+				emit_add_ax_imm(&e_, low);
+				if (high == 0) emit_adc_dx_zero(&e_);
+				else emit_adc_dx_imm(&e_, high);
 			}
 			return true;
 
 		case tok::minus:
 			if (low == 0 && high == 0) return true;
-			if (low == 0) e_.sub_dx_imm(high);
+			if (low == 0) emit_sub_dx_imm(&e_, high);
 			else
 			{
-				e_.sub_ax_imm(low);
-				if (high == 0) e_.sbb_dx_zero();
-				else e_.sbb_dx_imm(high);
+				emit_sub_ax_imm(&e_, low);
+				if (high == 0) emit_sbb_dx_zero(&e_);
+				else emit_sbb_dx_imm(&e_, high);
 			}
 			return true;
 
 		case tok::amp:
-			if (low == 0) e_.xor_ax_ax();
-			else if (low != 0xffff) e_.and_ax_imm(low);
-			if (high == 0) e_.xor_dx_dx();
-			else if (high != 0xffff) e_.and_dx_imm(high);
+			if (low == 0) emit_xor_ax_ax(&e_);
+			else if (low != 0xffff) emit_and_ax_imm(&e_, low);
+			if (high == 0) emit_xor_dx_dx(&e_);
+			else if (high != 0xffff) emit_and_dx_imm(&e_, high);
 			return true;
 
 		case tok::pipe:
-			if (low != 0) e_.or_ax_imm(low);
-			if (high != 0) e_.or_dx_imm(high);
+			if (low != 0) emit_or_ax_imm(&e_, low);
+			if (high != 0) emit_or_dx_imm(&e_, high);
 			return true;
 
 		case tok::caret:
-			if (low != 0) e_.xor_ax_imm(low);
-			if (high != 0) e_.xor_dx_imm(high);
+			if (low != 0) emit_xor_ax_imm(&e_, low);
+			if (high != 0) emit_xor_dx_imm(&e_, high);
 			return true;
 
 		case tok::star:
@@ -1161,36 +1167,36 @@ namespace
 		{
 		case tok::plus:
 			if (value16 == 0) return true;
-			if (value16 == 1) e_.inc_ax();
-			else if (value16 == 0xffff) e_.dec_ax();
-			else e_.add_ax_imm(value16);
+			if (value16 == 1) emit_inc_ax(&e_);
+			else if (value16 == 0xffff) emit_dec_ax(&e_);
+			else emit_add_ax_imm(&e_, value16);
 			return true;
 
 		case tok::minus:
 			if (value16 == 0) return true;
-			if (value16 == 1) e_.dec_ax();
-			else if (value16 == 0xffff) e_.inc_ax();
-			else e_.sub_ax_imm(value16);
+			if (value16 == 1) emit_dec_ax(&e_);
+			else if (value16 == 0xffff) emit_inc_ax(&e_);
+			else emit_sub_ax_imm(&e_, value16);
 			return true;
 
 		case tok::amp:
 			if (value16 == 0xffff) return true;
-			if (value16 == 0) e_.xor_ax_ax();
-			else e_.and_ax_imm(value16);
+			if (value16 == 0) emit_xor_ax_ax(&e_);
+			else emit_and_ax_imm(&e_, value16);
 			return true;
 
 		case tok::pipe:
-			if (value16 != 0) e_.or_ax_imm(value16);
+			if (value16 != 0) emit_or_ax_imm(&e_, value16);
 			return true;
 
 		case tok::caret:
-			if (value16 != 0) e_.xor_ax_imm(value16);
+			if (value16 != 0) emit_xor_ax_imm(&e_, value16);
 			return true;
 
 		case tok::star:
-			if (value16 == 0) e_.xor_ax_ax();
+			if (value16 == 0) emit_xor_ax_ax(&e_);
 			else if (value16 == 1) return true;
-			else if (value16 == 0xffff) e_.neg_ax();
+			else if (value16 == 0xffff) emit_neg_ax(&e_);
 			else if (const int bit = power_of_two(value16)) shift_ax_constant(tok::shl, bit, true);
 			else return false;
 			return true;
@@ -1204,8 +1210,8 @@ namespace
 
 		case tok::percent:
 			if (!unsigned_operation) return false;
-			if (value16 == 1) e_.xor_ax_ax();
-			else if (power_of_two(value16)) e_.and_ax_imm(value16 - 1);
+			if (value16 == 1) emit_xor_ax_ax(&e_);
+			else if (power_of_two(value16)) emit_and_ax_imm(&e_, value16 - 1);
 			else return false;
 			return true;
 
@@ -1218,8 +1224,8 @@ namespace
 		case tok::greater: case tok::ge:
 			// A comparison against zero needs no operand at all. The result is
 			// left in the flags for the caller to branch on.
-			if (value16 == 0) e_.test_ax_ax();
-			else e_.cmp_ax_imm(value16);
+			if (value16 == 0) emit_test_ax_ax(&e_);
+			else emit_cmp_ax_imm(&e_, value16);
 			return true;
 
 		default:
@@ -1233,40 +1239,40 @@ namespace
 	{
 		const bool commutative = op == tok::plus || op == tok::star || op == tok::amp ||
 			op == tok::pipe || op == tok::caret;
-		if (reversed && !is_comparison(op) && !commutative) e_.xchg_ax_cx();
+		if (reversed && !is_comparison(op) && !commutative) emit_xchg_ax_cx(&e_);
 
 		switch (op)
 		{
-		case tok::plus: e_.add_ax_cx(); return;
-		case tok::minus: e_.sub_ax_cx(); return;
+		case tok::plus: emit_add_ax_cx(&e_); return;
+		case tok::minus: emit_sub_ax_cx(&e_); return;
 		case tok::star:
-			if (unsigned_operation) e_.mul_cx();
-			else e_.imul_cx();
+			if (unsigned_operation) emit_mul_cx(&e_);
+			else emit_imul_cx(&e_);
 			return;
 		case tok::slash:
-			if (unsigned_operation) e_.div_cx();
-			else e_.idiv_cx();
+			if (unsigned_operation) emit_div_cx(&e_);
+			else emit_idiv_cx(&e_);
 			return;
 		case tok::percent:
-			if (unsigned_operation) e_.div_cx();
-			else e_.idiv_cx();
-			e_.mov_ax_dx();
+			if (unsigned_operation) emit_div_cx(&e_);
+			else emit_idiv_cx(&e_);
+			emit_mov_ax_dx(&e_);
 			return;
-		case tok::amp: e_.and_ax_cx(); return;
-		case tok::pipe: e_.or_ax_cx(); return;
-		case tok::caret: e_.xor_ax_cx(); return;
-		case tok::shl: e_.shl_ax_cl(); return;
+		case tok::amp: emit_and_ax_cx(&e_); return;
+		case tok::pipe: emit_or_ax_cx(&e_); return;
+		case tok::caret: emit_xor_ax_cx(&e_); return;
+		case tok::shl: emit_shl_ax_cl(&e_); return;
 		case tok::shr:
-			if (unsigned_operation) e_.shr_ax_cl();
-			else e_.sar_ax_cl();
+			if (unsigned_operation) emit_shr_ax_cl(&e_);
+			else emit_sar_ax_cl(&e_);
 			return;
 		default:
 			break;
 		}
 
 		if (!is_comparison(op)) fail("unsupported operator");
-		if (reversed) e_.cmp_cx_ax();
-		else e_.cmp_ax_cx();
+		if (reversed) emit_cmp_cx_ax(&e_);
+		else emit_cmp_ax_cx(&e_);
 	}
 
 
@@ -1277,11 +1283,11 @@ namespace
 	{
 		switch (op)
 		{
-		case tok::plus: e_.add_ax_bx(); e_.adc_dx_cx(); return;
-		case tok::minus: e_.sub_ax_bx(); e_.sbb_dx_cx(); return;
-		case tok::amp: e_.and_ax_bx(); e_.and_dx_cx(); return;
-		case tok::pipe: e_.or_ax_bx(); e_.or_dx_cx(); return;
-		case tok::caret: e_.xor_ax_bx(); e_.xor_dx_cx(); return;
+		case tok::plus: emit_add_ax_bx(&e_); emit_adc_dx_cx(&e_); return;
+		case tok::minus: emit_sub_ax_bx(&e_); emit_sbb_dx_cx(&e_); return;
+		case tok::amp: emit_and_ax_bx(&e_); emit_and_dx_cx(&e_); return;
+		case tok::pipe: emit_or_ax_bx(&e_); emit_or_dx_cx(&e_); return;
+		case tok::caret: emit_xor_ax_bx(&e_); emit_xor_dx_cx(&e_); return;
 		case tok::star: call_helper(h_lmul); return;
 		case tok::slash: call_helper(unsigned_operation ? h_uldiv : h_ldiv); return;
 		case tok::percent: call_helper(unsigned_operation ? h_ulmod : h_lmod); return;
@@ -1296,7 +1302,7 @@ namespace
 		// operands were. The result is left in the flags.
 		if (!is_comparison(op)) fail("unsupported operator");
 		call_helper(unsigned_operation ? h_ulcmp : h_lcmp);
-		e_.test_ax_ax();
+		emit_test_ax_ax(&e_);
 	}
 
 	// -----------------------------------------------------------------------
@@ -1341,13 +1347,13 @@ namespace
 			else load(argument);
 			if (is_wide(argument.type))
 			{
-				e_.push_dx();
-				e_.push_ax();
+				emit_push_dx(&e_);
+				emit_push_ax(&e_);
 				pushed += 4;
 			}
 			else
 			{
-				e_.push_ax();
+				emit_push_ax(&e_);
 				pushed += 2;
 			}
 		}
@@ -1373,10 +1379,10 @@ namespace
 
 		const int pushed = push_arguments(symbols_[size_t(function_index)].parameters);
 
-		e_.call(label_of(function_index));
+		emit_call(&e_, label_of(function_index));
 		symbols_[size_t(function_index)].called = true;
 
-		if (pushed != 0) e_.add_sp_imm(pushed);
+		if (pushed != 0) emit_add_sp_imm(&e_, pushed);
 
 		value result;
 		result.kind = val_reg;
@@ -1587,7 +1593,7 @@ namespace
 		saved_continues.swap(continue_labels_);
 
 		return_type_ = result_type;
-		inline_returns_.push_back(e_.label());
+		inline_returns_.push_back(emit_label(&e_));
 		inline_stack_.push_back(function_index);
 
 		at_ = size_t(body);
@@ -1598,7 +1604,7 @@ namespace
 			statement();
 		}
 
-		e_.bind(inline_returns_.back());
+		emit_bind(&e_, inline_returns_.back());
 		inline_returns_.pop_back();
 		inline_stack_.pop_back();
 		return_type_ = saved_return;
@@ -1623,11 +1629,11 @@ namespace
 		load(target);
 		frame_ += 2;
 		const int slot = -frame_;
-		e_.store_ax_frame(slot);
+		emit_store_ax_frame(&e_, slot);
 
 		const int pushed = push_arguments(signature_of(function));
-		e_.call_frame(slot);
-		if (pushed != 0) e_.add_sp_imm(pushed);
+		emit_call_frame(&e_, slot);
+		if (pushed != 0) emit_add_sp_imm(&e_, pushed);
 
 		value result;
 		result.kind = val_reg;
@@ -1688,7 +1694,7 @@ namespace
 					symbols_[size_t(index)].offset < 0)
 					fail("__args needs the last named parameter");
 				const symbol& last = symbols_[size_t(index)];
-				e_.lea_ax_frame(last.offset + (is_wide(last.type) ? 4 : 2));
+				emit_lea_ax_frame(&e_, last.offset + (is_wide(last.type) ? 4 : 2));
 				advance();
 				expect(tok::r_paren, "expected ) after __args");
 				v.kind = val_reg;
@@ -1729,8 +1735,8 @@ namespace
 				if (kind() == tok::l_paren) return call(index);
 				// Used without a call, a function name is its address.
 				v.kind = val_reg;
-				e_.mov_ax_imm(0);
-				e_.refers_to_code(label_of(index));
+				emit_mov_ax_imm(&e_, 0);
+				emit_refers_to_code(&e_, label_of(index));
 				symbols_[size_t(index)].called = true;
 				v.type = pointer_to(function_type(symbols_[size_t(index)].type,
 				                                  symbols_[size_t(index)].parameters));
@@ -1813,7 +1819,7 @@ namespace
 							continue;
 						}
 						load(v);
-						if (step != 0) e_.add_ax_imm(step);
+						if (step != 0) emit_add_ax_imm(&e_, step);
 					}
 					else if (size == 1)
 					{
@@ -1821,7 +1827,7 @@ namespace
 						if (!operate_from_memory(tok::plus, index))
 						{
 							load_to_cx(index);
-							e_.add_ax_cx();
+							emit_add_ax_cx(&e_);
 						}
 					}
 					else
@@ -1839,14 +1845,14 @@ namespace
 						else if (fits_cx(base))
 						{
 							load_to_cx(base);
-							e_.add_ax_cx();
+							emit_add_ax_cx(&e_);
 						}
 						else
 						{
-							e_.mov_cx_ax();
+							emit_mov_cx_ax(&e_);
 							load(base);
-							e_.xchg_ax_cx();
-							e_.add_ax_cx();
+							emit_xchg_ax_cx(&e_);
+							emit_add_ax_cx(&e_);
 						}
 					}
 					make_deref(v, element);
@@ -1863,20 +1869,20 @@ namespace
 					if (!add_address_to_ax(base) && !operate_from_memory(tok::plus, base))
 					{
 						load_to_cx(base);
-						e_.add_ax_cx();
+						emit_add_ax_cx(&e_);
 					}
 				}
 				else
 				{
 					load(v);
-					e_.push_ax();
+					emit_push_ax(&e_);
 					value subscript = expression();
 					expect(tok::r_bracket, "expected ]");
 					load(subscript);
 					scale_ax(size);
-					e_.mov_cx_ax();
-					e_.pop_ax();
-					e_.add_ax_cx();
+					emit_mov_cx_ax(&e_);
+					emit_pop_ax(&e_);
+					emit_add_ax_cx(&e_);
 				}
 				make_deref(v, element);
 				continue;
@@ -1951,22 +1957,22 @@ namespace
 					// not need the address on the stack as the 16-bit path does.
 					const value target = v;
 					load(v);
-					e_.push_dx();
-					e_.push_ax();
+					emit_push_dx(&e_);
+					emit_push_ax(&e_);
 					if (increment)
 					{
-						e_.add_ax_imm(step);
-						e_.adc_dx_imm(0);
+						emit_add_ax_imm(&e_, step);
+						emit_adc_dx_imm(&e_, 0);
 					}
 					else
 					{
-						e_.sub_ax_imm(step);
-						e_.sbb_dx_zero();
+						emit_sub_ax_imm(&e_, step);
+						emit_sbb_dx_zero(&e_);
 					}
 					if (target.kind == val_deref) store_indirect(target.type, target.bias);
 					else store(target);
-					e_.pop_ax();
-					e_.pop_dx();
+					emit_pop_ax(&e_);
+					emit_pop_dx(&e_);
 					v.kind = val_reg;
 					continue;
 				}
@@ -1977,21 +1983,21 @@ namespace
 					// that follows needs nothing on the stack.
 					const value target = v;
 					load(v);
-					e_.push_ax(); // the value the expression produces
-					if (increment) e_.add_ax_imm(step);
-					else e_.sub_ax_imm(step);
+					emit_push_ax(&e_); // the value the expression produces
+					if (increment) emit_add_ax_imm(&e_, step);
+					else emit_sub_ax_imm(&e_, step);
 					store_indirect(target.type, target.bias);
-					e_.pop_ax();
+					emit_pop_ax(&e_);
 				}
 				else
 				{
 					const value target = v;
 					load(v);
-					e_.push_ax();
-					if (increment) e_.add_ax_imm(step);
-					else e_.sub_ax_imm(step);
+					emit_push_ax(&e_);
+					if (increment) emit_add_ax_imm(&e_, step);
+					else emit_sub_ax_imm(&e_, step);
 					store(target);
-					e_.pop_ax();
+					emit_pop_ax(&e_);
 				}
 				v.kind = val_reg;
 				continue;
@@ -2055,8 +2061,8 @@ namespace
 			}
 			const bool wide = is_wide(v.type);
 			load(v);
-			if (wide) e_.negate_dx_ax();
-			else e_.neg_ax();
+			if (wide) emit_negate_dx_ax(&e_);
+			else emit_neg_ax(&e_);
 			return v;
 		}
 		if (k == tok::tilde)
@@ -2070,8 +2076,8 @@ namespace
 			}
 			const bool wide = is_wide(v.type);
 			load(v);
-			e_.not_ax();
-			if (wide) e_.not_dx();
+			emit_not_ax(&e_);
+			if (wide) emit_not_dx(&e_);
 			return v;
 		}
 		if (k == tok::bang)
@@ -2090,10 +2096,10 @@ namespace
 			}
 			const bool wide = is_wide(v.type);
 			load(v);
-			if (wide) e_.or_ax_dx();
-			else e_.test_ax_ax();
+			if (wide) emit_or_ax_dx(&e_);
+			else emit_test_ax_ax(&e_);
 			v.kind = val_flags;
-			v.offset = int(condition::equal);
+			v.offset = int(cond_equal);
 			v.type = t_int_;
 			return v;
 		}
@@ -2109,13 +2115,13 @@ namespace
 				load(v);
 				if (increment)
 				{
-					e_.add_ax_imm(step);
-					e_.adc_dx_imm(0);
+					emit_add_ax_imm(&e_, step);
+					emit_adc_dx_imm(&e_, 0);
 				}
 				else
 				{
-					e_.sub_ax_imm(step);
-					e_.sbb_dx_zero();
+					emit_sub_ax_imm(&e_, step);
+					emit_sbb_dx_zero(&e_);
 				}
 				if (target.kind == val_deref) store_indirect(target.type, target.bias);
 				else store(target);
@@ -2128,16 +2134,16 @@ namespace
 				// that follows needs nothing on the stack.
 				const value target = v;
 				load(v);
-				if (increment) e_.add_ax_imm(step);
-				else e_.sub_ax_imm(step);
+				if (increment) emit_add_ax_imm(&e_, step);
+				else emit_sub_ax_imm(&e_, step);
 				store_indirect(target.type, target.bias);
 				v.kind = val_reg;
 				return v;
 			}
 			const value target = v;
 			load(v);
-			if (increment) e_.add_ax_imm(step);
-			else e_.sub_ax_imm(step);
+			if (increment) emit_add_ax_imm(&e_, step);
+			else emit_sub_ax_imm(&e_, step);
 			store(target);
 			v.kind = val_reg;
 			return v;
@@ -2222,17 +2228,17 @@ namespace
 
 			if (op == tok::and_and || op == tok::or_or)
 			{
-				const int shortcut = e_.label();
-				const int done = e_.label();
+				const int shortcut = emit_label(&e_);
+				const int done = emit_label(&e_);
 				const condition first = test_value(left);
-				if (op == tok::and_and) e_.jump_unless(first, shortcut);
-				else e_.jump_if(first, shortcut);
+				if (op == tok::and_and) emit_jump_unless(&e_, first, shortcut);
+				else emit_jump_if(&e_, first, shortcut);
 				value right = binary_expression(level);
-				e_.set_from_condition(test_value(right));
-				e_.jump(done);
-				e_.bind(shortcut);
-				e_.mov_ax_imm(op == tok::and_and ? 0 : 1);
-				e_.bind(done);
+				emit_set_from_condition(&e_, test_value(right));
+				emit_jump(&e_, done);
+				emit_bind(&e_, shortcut);
+				emit_mov_ax_imm(&e_, op == tok::and_and ? 0 : 1);
+				emit_bind(&e_, done);
 				left.kind = val_reg;
 				left.type = t_int_;
 				continue;
@@ -2285,8 +2291,8 @@ namespace
 				if (!left_real && !keep_left)
 				{
 					load(left);
-					if (left_wide) e_.push_dx();
-					e_.push_ax();
+					if (left_wide) emit_push_dx(&e_);
+					emit_push_ax(&e_);
 					pushed = true;
 				}
 				right = binary_expression(level);
@@ -2416,14 +2422,14 @@ namespace
 						(constant & 31) >= 16;
 					if (high_only)
 					{
-						if (left.kind == val_local) e_.load_ax_frame(left.offset + 2);
+						if (left.kind == val_local) emit_load_ax_frame(&e_, left.offset + 2);
 						else
 						{
-							e_.load_ax_absolute(0);
+							emit_load_ax_absolute(&e_, 0);
 							data_reference(left.offset + 2);
 						}
-						if (unsigned_operation) e_.xor_dx_dx();
-						else e_.cwd();
+						if (unsigned_operation) emit_xor_dx_dx(&e_);
+						else emit_cwd(&e_);
 						shift_ax_constant(tok::shr, int(constant & 31) - 16, unsigned_operation);
 						left.kind = val_reg;
 					}
@@ -2469,8 +2475,8 @@ namespace
 				if (wide)
 				{
 					if (!is_wide(right.type)) widen(right.type);
-					e_.mov_cx_dx();
-					e_.mov_bx_ax();
+					emit_mov_cx_dx(&e_);
+					emit_mov_bx_ax(&e_);
 					load(left);
 					widen(left.type); // a wide left would have been pushed
 					apply_operator_wide(op, unsigned_operation);
@@ -2487,8 +2493,8 @@ namespace
 				if (!pushed && !left_real)
 				{
 					load(left);
-					if (left_wide) e_.push_dx();
-					e_.push_ax();
+					if (left_wide) emit_push_dx(&e_);
+					emit_push_ax(&e_);
 				}
 				load(right);
 				if (scaled) scale_ax(element);
@@ -2496,18 +2502,18 @@ namespace
 				if (wide)
 				{
 					if (!is_wide(right.type)) widen(right.type);
-					e_.mov_cx_dx();
-					e_.mov_bx_ax();
-					e_.pop_ax();
-					if (left_wide) e_.pop_dx();
+					emit_mov_cx_dx(&e_);
+					emit_mov_bx_ax(&e_);
+					emit_pop_ax(&e_);
+					if (left_wide) emit_pop_dx(&e_);
 					else widen(left.type);
 					apply_operator_wide(op, unsigned_operation);
 				}
 				else
 				{
-					e_.mov_cx_ax();
-					e_.pop_ax();
-					if (left_wide) e_.pop_dx(); // the left operand was pushed as a pair
+					emit_mov_cx_ax(&e_);
+					emit_pop_ax(&e_);
+					if (left_wide) emit_pop_dx(&e_); // the left operand was pushed as a pair
 					apply_operator(op, unsigned_operation);
 				}
 			}
@@ -2526,8 +2532,8 @@ namespace
 			{
 				if (element != 1)
 				{
-					e_.mov_cx_imm(element);
-					e_.idiv_cx();
+					emit_mov_cx_imm(&e_, element);
+					emit_idiv_cx(&e_);
 				}
 			}
 			else if (left_pointer && (op == tok::plus || op == tok::minus))
@@ -2572,19 +2578,19 @@ namespace
 			return chosen;
 		}
 
-		const int otherwise = e_.label();
-		const int done = e_.label();
-		e_.jump_unless(test_value(v), otherwise);
+		const int otherwise = emit_label(&e_);
+		const int done = emit_label(&e_);
+		emit_jump_unless(&e_, test_value(v), otherwise);
 		// The middle arm is a full expression, so a comma belongs to it rather
 		// than ending the argument or declarator the conditional sits in.
 		value then_value = expression();
 		load(then_value);
-		e_.jump(done);
+		emit_jump(&e_, done);
 		expect(tok::colon, "expected : in a conditional expression");
-		e_.bind(otherwise);
+		emit_bind(&e_, otherwise);
 		value else_value = conditional_expression();
 		load_converted(else_value, then_value.type);
-		e_.bind(done);
+		emit_bind(&e_, done);
 
 		value result;
 		result.kind = val_reg;
@@ -2610,7 +2616,7 @@ namespace
 
 		if (simple)
 		{
-			if (target.kind == val_deref && target.address == addr_reg) e_.push_ax();
+			if (target.kind == val_deref && target.address == addr_reg) emit_push_ax(&e_);
 			value source = assignment_expression();
 			load_converted(source, target.type);
 			store(target);
@@ -2657,7 +2663,7 @@ namespace
 			}
 		}
 
-		if (target.kind == val_deref && target.address == addr_reg) e_.push_ax();
+		if (target.kind == val_deref && target.address == addr_reg) emit_push_ax(&e_);
 		value current = target;
 		load(current);
 
@@ -2700,8 +2706,8 @@ namespace
 			return result;
 		}
 
-		if (wide) e_.push_dx();
-		e_.push_ax();
+		if (wide) emit_push_dx(&e_);
+		emit_push_ax(&e_);
 		source = assignment_expression();
 		load(source);
 		if (pointer_target && element != 1 && (binary == tok::plus || binary == tok::minus))
@@ -2709,16 +2715,16 @@ namespace
 		if (wide)
 		{
 			if (!is_wide(source.type)) widen(source.type);
-			e_.mov_cx_dx();
-			e_.mov_bx_ax();
-			e_.pop_ax();
-			e_.pop_dx();
+			emit_mov_cx_dx(&e_);
+			emit_mov_bx_ax(&e_);
+			emit_pop_ax(&e_);
+			emit_pop_dx(&e_);
 			apply_operator_wide(binary, is_unsigned(target.type) || is_unsigned(source.type));
 		}
 		else
 		{
-			e_.mov_cx_ax();
-			e_.pop_ax();
+			emit_mov_cx_ax(&e_);
+			emit_pop_ax(&e_);
 			apply_operator(binary, is_unsigned(target.type) || is_unsigned(source.type));
 		}
 		store(target);
@@ -3293,26 +3299,26 @@ namespace
 	{
 		// Room for the register restores, which are only known once the whole
 		// body has been generated. A nop is no bytes at all if nothing needs it.
-		epilogue_slots_.push_back(e_.at());
-		e_.emit(op::nop, 2);
-		e_.emit(op::nop, 2);
-		e_.mov_sp_bp();
-		e_.pop_bp();
-		e_.ret();
+		epilogue_slots_.push_back(emit_at(&e_));
+		emit_op(&e_, op_nop, 2, operand_none(), operand_none());
+		emit_op(&e_, op_nop, 2, operand_none(), operand_none());
+		emit_mov_sp_bp(&e_);
+		emit_pop_bp(&e_);
+		emit_ret(&e_);
 	}
 
 	// Where a variable lives, as an operand the back end can work on directly.
 	operand generator::place_of(const value& target, int extra)
 	{
-		if (target.kind == val_local) return emitter::frame(target.offset + extra);
-		return operand::absolute(0);
+		if (target.kind == val_local) return emit_frame(target.offset + extra);
+		return operand_absolute(0);
 	}
 
 	// An operation applied straight to a variable in memory.
 	void generator::memory_operation(op kind, int width, const value& target, const operand& source,
 	                                 int extra)
 	{
-		e_.emit(kind, width, place_of(target, extra), source);
+		emit_op(&e_, kind, width, place_of(target, extra), source);
 		if (target.kind != val_local) data_reference(target.offset + extra);
 	}
 
@@ -3328,18 +3334,18 @@ namespace
 		op kind;
 		switch (what)
 		{
-		case tok::plus: kind = ::op::add; break;
-		case tok::minus: kind = ::op::sub; break;
-		case tok::amp: kind = ::op::and_; break;
-		case tok::pipe: kind = ::op::or_; break;
-		case tok::caret: kind = ::op::xor_; break;
+		case tok::plus: kind = op_add; break;
+		case tok::minus: kind = op_sub; break;
+		case tok::amp: kind = op_and_; break;
+		case tok::pipe: kind = op_or_; break;
+		case tok::caret: kind = op_xor_; break;
 		default:
 			if (!is_comparison(what)) return false;
-			kind = ::op::cmp;
+			kind = op_cmp;
 			break;
 		}
 
-		e_.emit(kind, 2, operand::in(reg_a), place_of(right));
+		emit_op(&e_, kind, 2, operand_in(reg_a), place_of(right));
 		if (right.kind != val_local) data_reference(right.offset);
 		return true;
 	}
@@ -3354,16 +3360,16 @@ namespace
 	{
 		if (prologue_slots_ < 0) return;
 		const int first = body_start_;
-		const int last = e_.at();
+		const int last = emit_at(&e_);
 
 		// A use inside a loop is worth many on a straight line, and from here
 		// a loop is simply a branch back to somewhere already generated.
 		std::vector<int> weight(size_t(last - first), 1);
 		for (int i = first; i < last; ++i)
 		{
-			const instruction& in = e_.code[size_t(i)];
-			if ((in.code != op::jmp && in.code != op::jcc) || in.label < 0) continue;
-			const int target = e_.labels[size_t(in.label)];
+			const instruction& in = EMIT_CODE(e_, int(i));
+			if ((in.code != op_jmp && in.code != op_jcc) || in.label < 0) continue;
+			const int target = EMIT_LABEL(e_, int(in.label));
 			if (target < first || target >= i) continue;
 			for (int k = target; k <= i; ++k)
 				if (weight[size_t(k - first)] < 512) weight[size_t(k - first)] *= 8;
@@ -3373,18 +3379,18 @@ namespace
 		std::map<int, bool> rejected;
 		for (int i = first; i < last; ++i)
 		{
-			const instruction& in = e_.code[size_t(i)];
+			const instruction& in = EMIT_CODE(e_, int(i));
 			// A run of hand-assembled bytes says nothing about what it touches.
-			if (in.code == op::literal) return;
+			if (in.code == op_literal) return;
 			for (const operand* o : {&in.dest, &in.source})
 			{
 				if (o->reg == reg_si || o->reg == reg_di || o->index == reg_si || o->index == reg_di)
-					if (o->kind != operand_kind::immediate) return;
-				if (o->kind != operand_kind::memory || o->reg != reg_bp || o->index != reg_none)
+					if (o->kind != operand_kind_immediate) return;
+				if (o->kind != operand_kind_memory || o->reg != reg_bp || o->index != reg_none)
 					continue;
 				// An address that escapes reaches slots this pass cannot see,
 				// so one of them anywhere in the body settles the question.
-				if (in.code == op::lea) return;
+				if (in.code == op_lea) return;
 				if (in.width != 2) rejected[o->value] = true;
 				else uses[o->value] += weight[size_t(i - first)];
 			}
@@ -3409,12 +3415,12 @@ namespace
 
 		for (int i = first; i < last; ++i)
 		{
-			instruction& in = e_.code[size_t(i)];
+			instruction& in = EMIT_CODE(e_, int(i));
 			for (operand* o : {&in.dest, &in.source})
 			{
-				if (o->kind != operand_kind::memory || o->reg != reg_bp) continue;
+				if (o->kind != operand_kind_memory || o->reg != reg_bp) continue;
 				for (int n = 0; n < count; ++n)
-					if (o->value == chosen[n]) *o = operand::in(registers[n]);
+					if (o->value == chosen[n]) *o = operand_in(registers[n]);
 			}
 		}
 
@@ -3426,21 +3432,21 @@ namespace
 		const auto put = [&](int at, const operand& dest, const operand& source)
 		{
 			instruction moved;
-			moved.code = op::mov;
+			moved.code = op_mov;
 			moved.width = 2;
 			moved.dest = dest;
 			moved.source = source;
-			e_.code[size_t(at)] = moved;
+			EMIT_CODE(e_, int(at)) = moved;
 		};
 
 		for (int n = 0; n < count; ++n)
 		{
-			put(prologue_slots_ + n, emitter::frame(save[n]), operand::in(registers[n]));
+			put(prologue_slots_ + n, emit_frame(save[n]), operand_in(registers[n]));
 			// A parameter arrives on the stack, so it is fetched once.
 			if (chosen[n] > 0)
-				put(prologue_slots_ + 2 + n, operand::in(registers[n]), emitter::frame(chosen[n]));
+				put(prologue_slots_ + 2 + n, operand_in(registers[n]), emit_frame(chosen[n]));
 			for (const int at : epilogue_slots_)
-				put(at + n, operand::in(registers[n]), emitter::frame(save[n]));
+				put(at + n, operand_in(registers[n]), emit_frame(save[n]));
 		}
 
 		fold_address_copies(first, last);
@@ -3455,25 +3461,25 @@ namespace
 		{
 			// A helper takes its second 32-bit operand in CX:BX and a DOS call
 			// takes whatever the program put in the registers, so both count.
-			if (in.code == op::call || in.code == op::call_at || in.code == op::interrupt)
+			if (in.code == op_call || in.code == op_call_at || in.code == op_interrupt)
 				return true;
 			for (const operand* o : {&in.dest, &in.source})
 			{
-				if (o->kind == operand_kind::memory && (o->reg == which || o->index == which))
+				if (o->kind == operand_kind_memory && (o->reg == which || o->index == which))
 					return true;
-				if (o->kind != operand_kind::reg || o->reg != which) continue;
+				if (o->kind != operand_kind_reg || o->reg != which) continue;
 				if (o == &in.source) return true;
-				if (in.code != op::mov && in.code != op::lea && in.code != op::pop &&
-					in.code != op::setcc)
+				if (in.code != op_mov && in.code != op_lea && in.code != op_pop &&
+					in.code != op_setcc)
 					return true;
 			}
 			return false;
 		};
 		const auto writes = [&](const instruction& in)
 		{
-			return in.dest.kind == operand_kind::reg && in.dest.reg == which &&
-				(in.code == op::mov || in.code == op::lea || in.code == op::pop ||
-					in.code == op::setcc);
+			return in.dest.kind == operand_kind_reg && in.dest.reg == which &&
+				(in.code == op_mov || in.code == op_lea || in.code == op_pop ||
+					in.code == op_setcc);
 		};
 
 		std::vector<bool> live(size_t(last - first) + 1, false);
@@ -3482,14 +3488,14 @@ namespace
 			changed = false;
 			for (int k = last - 1; k >= first; --k)
 			{
-				const instruction& in = e_.code[size_t(k)];
+				const instruction& in = EMIT_CODE(e_, int(k));
 				bool out = false;
-				if (in.code != op::ret)
+				if (in.code != op_ret)
 				{
-					if (in.code != op::jmp) out = live[size_t(k + 1 - first)];
-					if ((in.code == op::jmp || in.code == op::jcc) && in.label >= 0)
+					if (in.code != op_jmp) out = live[size_t(k + 1 - first)];
+					if ((in.code == op_jmp || in.code == op_jcc) && in.label >= 0)
 					{
-						const int target = e_.labels[size_t(in.label)];
+						const int target = EMIT_LABEL(e_, int(in.label));
 						out = out || target < first || target >= last ||
 							live[size_t(target - first)];
 					}
@@ -3512,15 +3518,18 @@ namespace
 	{
 		const std::vector<bool> live = live_registers(first, last, reg_b);
 		std::vector<bool> entered(size_t(last - first) + 1, false);
-		for (const int index : e_.labels)
+		for (int label = 0; label < e_.labels.count; ++label)
+		{
+			const int index = EMIT_LABEL(e_, label);
 			if (index >= first && index < last) entered[size_t(index - first)] = true;
+		}
 
 		for (int i = first; i + 1 < last; ++i)
 		{
-			instruction& copy = e_.code[size_t(i)];
-			if (copy.code != op::mov || copy.width != 2) continue;
-			if (copy.dest.kind != operand_kind::reg || copy.dest.reg != reg_b) continue;
-			if (copy.source.kind != operand_kind::reg) continue;
+			instruction& copy = EMIT_CODE(e_, int(i));
+			if (copy.code != op_mov || copy.width != 2) continue;
+			if (copy.dest.kind != operand_kind_reg || copy.dest.reg != reg_b) continue;
+			if (copy.source.kind != operand_kind_reg) continue;
 			const int base = copy.source.reg;
 			if (base != reg_si && base != reg_di) continue;
 
@@ -3528,13 +3537,13 @@ namespace
 			bool settled = false, rejected = false, base_gone = false;
 			for (int k = i + 1; k < last && !settled && !rejected; ++k)
 			{
-				const instruction& in = e_.code[size_t(k)];
+				const instruction& in = EMIT_CODE(e_, int(k));
 				// Where control can arrive another way, or leave, the question
 				// is not what the next instruction does but whether BX is
 				// wanted at all from here on.
-				if (entered[size_t(k - first)] || in.code == op::literal ||
-					in.code == op::jmp || in.code == op::jcc || in.code == op::ret ||
-					in.code == op::call || in.code == op::call_at || in.code == op::interrupt)
+				if (entered[size_t(k - first)] || in.code == op_literal ||
+					in.code == op_jmp || in.code == op_jcc || in.code == op_ret ||
+					in.code == op_call || in.code == op_call_at || in.code == op_interrupt)
 				{
 					if (live[size_t(k - first)]) rejected = true;
 					settled = true;
@@ -3543,12 +3552,12 @@ namespace
 				for (int side = 0; side < 2 && !rejected; ++side)
 				{
 					const operand& o = side == 0 ? in.dest : in.source;
-					if (o.kind == operand_kind::reg && o.reg == reg_b)
+					if (o.kind == operand_kind_reg && o.reg == reg_b)
 					{
-						if (side == 0 && in.code == op::mov) settled = true;
+						if (side == 0 && in.code == op_mov) settled = true;
 						else rejected = true;
 					}
-					else if (o.kind == operand_kind::memory && (o.reg == reg_b || o.index == reg_b))
+					else if (o.kind == operand_kind_memory && (o.reg == reg_b || o.index == reg_b))
 					{
 						// The copy is only worth removing if the register it
 						// came from still holds the address at every use.
@@ -3556,20 +3565,20 @@ namespace
 						else uses.push_back(k * 2 + side);
 					}
 				}
-				if (in.code == op::xchg) rejected = true;
-				if (in.dest.kind == operand_kind::reg && in.dest.reg == base &&
-					in.code != op::cmp && in.code != op::test && in.code != op::push)
+				if (in.code == op_xchg) rejected = true;
+				if (in.dest.kind == operand_kind_reg && in.dest.reg == base &&
+					in.code != op_cmp && in.code != op_test && in.code != op_push)
 					base_gone = true;
 			}
 			if (!settled || rejected || uses.empty()) continue;
 
 			for (const int packed : uses)
 			{
-				instruction& in = e_.code[size_t(packed / 2)];
+				instruction& in = EMIT_CODE(e_, int(packed / 2));
 				operand& o = packed % 2 == 0 ? in.dest : in.source;
 				o.reg = uint8_t(base);
 			}
-			copy.code = op::nop;
+			copy.code = op_nop;
 			copy.dest = {};
 			copy.source = {};
 		}
@@ -3701,21 +3710,21 @@ namespace
 			}
 		}
 
-		::op kind = ::op::add;
+		::op kind = op_add;
 		switch (op)
 		{
-		case tok::plus: kind = ::op::add; break;
-		case tok::minus: kind = ::op::sub; break;
-		case tok::amp: kind = ::op::and_; break;
-		case tok::pipe: kind = ::op::or_; break;
-		default: kind = ::op::xor_; break;
+		case tok::plus: kind = op_add; break;
+		case tok::minus: kind = op_sub; break;
+		case tok::amp: kind = op_and_; break;
+		case tok::pipe: kind = op_or_; break;
+		default: kind = op_xor_; break;
 		}
 		const bool wide = width == 4;
 
 		// The carry between the halves only matters for + and -.
 		::op high_kind = kind;
-		if (op == tok::plus) high_kind = ::op::adc;
-		else if (op == tok::minus) high_kind = ::op::sbb;
+		if (op == tok::plus) high_kind = op_adc;
+		else if (op == tok::minus) high_kind = op_sbb;
 
 		if (constant_source)
 		{
@@ -3724,19 +3733,19 @@ namespace
 			if (!wide && (op == tok::plus || op == tok::minus) && (low == 1 || low == 0xffff))
 			{
 				const bool up = (op == tok::plus) == (low == 1);
-				memory_operation(up ? ::op::inc : ::op::dec, width, target, {});
+				memory_operation(up ? op_inc : op_dec, width, target, {});
 			}
 			else
 			{
-				memory_operation(kind, width, target, operand::constant(low));
-				if (wide) memory_operation(high_kind, 2, target, operand::constant(high), 2);
+				memory_operation(kind, width, target, operand_constant(low));
+				if (wide) memory_operation(high_kind, 2, target, operand_constant(high), 2);
 			}
 		}
 		else
 		{
 			load(source);
-			memory_operation(kind, wide ? 2 : width, target, operand::in(reg_a));
-			if (wide) memory_operation(high_kind, 2, target, operand::in(reg_d), 2);
+			memory_operation(kind, wide ? 2 : width, target, operand_in(reg_a));
+			if (wide) memory_operation(high_kind, 2, target, operand_in(reg_d), 2);
 		}
 
 		at_ = start + (step_only ? 2 : rest + 1);
@@ -3746,7 +3755,7 @@ namespace
 	void generator::function_body(int function_index, const std::vector<int>& parameters,
 	                              const std::vector<std::string>& parameter_names)
 	{
-		e_.bind(label_of(function_index));
+		emit_bind(&e_, label_of(function_index));
 		symbols_[size_t(function_index)].defined = true;
 		symbols_[size_t(function_index)].start = symbols_[size_t(function_index)].label;
 		symbols_[size_t(function_index)].body = int(at_);
@@ -3754,15 +3763,15 @@ namespace
 		return_type_ = symbols_[size_t(function_index)].type;
 		current_function_ = function_index;
 
-		e_.push_bp();
-		e_.mov_bp_sp();
-		e_.sub_sp_imm(0);
-		frame_patch_ = e_.refers_to_deferred();
+		emit_push_bp(&e_);
+		emit_mov_bp_sp(&e_);
+		emit_sub_sp_imm(&e_, 0);
+		frame_patch_ = emit_refers_to_deferred(&e_);
 		frame_ = 0;
-		prologue_slots_ = e_.at();
-		for (int i = 0; i < 4; ++i) e_.emit(op::nop, 2);
+		prologue_slots_ = emit_at(&e_);
+		for (int i = 0; i < 4; ++i) emit_op(&e_, op_nop, 2, operand_none(), operand_none());
 		epilogue_slots_.clear();
-		body_start_ = e_.at();
+		body_start_ = emit_at(&e_);
 
 		++scope_;
 		int offset = target_.frame_base;
@@ -3789,16 +3798,16 @@ namespace
 		for (const auto& entry : pending_gotos_)
 		{
 			const auto found = labels_.find(entry.first);
-			if (found == labels_.end() || !e_.is_bound(found->second))
+			if (found == labels_.end() || !emit_is_bound(&e_, found->second))
 				fail(("undefined label: " + entry.first).c_str());
 		}
 		pending_gotos_.clear();
 
 		emit_return();
 		promote_locals();
-		e_.set_deferred(frame_patch_, frame_);
+		emit_set_deferred(&e_, frame_patch_, frame_);
 		symbols_[size_t(function_index)].frame = frame_;
-		symbols_[size_t(function_index)].finish = e_.here();
+		symbols_[size_t(function_index)].finish = emit_here(&e_);
 		leave_scope(--scope_);
 		hoisted_ = false;
 		current_function_ = -1;
@@ -3967,18 +3976,18 @@ namespace
 		const bool has_step = at_ != step_at;
 		expect(tok::r_paren, "expected ) after for");
 
-		const int condition_label = e_.label();
-		const int body_start = e_.label();
-		const int step_label = e_.label();
-		if (has_condition) e_.jump(condition_label);
-		e_.bind(body_start);
+		const int condition_label = emit_label(&e_);
+		const int body_start = emit_label(&e_);
+		const int step_label = emit_label(&e_);
+		if (has_condition) emit_jump(&e_, condition_label);
+		emit_bind(&e_, body_start);
 
-		break_labels_.push_back(e_.label());
+		break_labels_.push_back(emit_label(&e_));
 		continue_labels_.push_back(step_label);
 		statement();
 		const size_t after = at_;
 
-		e_.bind(step_label);
+		emit_bind(&e_, step_label);
 		if (has_step)
 		{
 			at_ = step_at;
@@ -3988,19 +3997,19 @@ namespace
 
 		if (has_condition)
 		{
-			e_.bind(condition_label);
+			emit_bind(&e_, condition_label);
 			at_ = condition_at;
 			value v = expression();
 			const condition taken = test_value(v);
 			at_ = after;
-			e_.jump_if(taken, body_start);
+			emit_jump_if(&e_, taken, body_start);
 		}
 		else
 		{
-			e_.jump(body_start);
+			emit_jump(&e_, body_start);
 		}
 
-		e_.bind(break_labels_.back());
+		emit_bind(&e_, break_labels_.back());
 		break_labels_.pop_back();
 		continue_labels_.pop_back();
 		leave_scope(--scope_);
@@ -4016,27 +4025,27 @@ namespace
 		frame_ += 2;
 		switch_context context;
 		context.temporary = -frame_;
-		e_.store_ax_frame(context.temporary);
-		const int to_dispatch = e_.label();
-		e_.jump(to_dispatch);
+		emit_store_ax_frame(&e_, context.temporary);
+		const int to_dispatch = emit_label(&e_);
+		emit_jump(&e_, to_dispatch);
 
 		switches_.push_back(context);
-		break_labels_.push_back(e_.label());
+		break_labels_.push_back(emit_label(&e_));
 		statement();
-		e_.jump(break_labels_.back());
+		emit_jump(&e_, break_labels_.back());
 
-		e_.bind(to_dispatch);
+		emit_bind(&e_, to_dispatch);
 		const switch_context& done = switches_.back();
 		for (const auto& entry : done.cases)
 		{
-			e_.load_ax_frame(done.temporary);
-			e_.cmp_ax_imm(int(entry.first));
-			e_.jump_if(condition::equal, entry.second);
+			emit_load_ax_frame(&e_, done.temporary);
+			emit_cmp_ax_imm(&e_, int(entry.first));
+			emit_jump_if(&e_, cond_equal, entry.second);
 		}
-		if (done.default_label >= 0) e_.jump(done.default_label);
+		if (done.default_label >= 0) emit_jump(&e_, done.default_label);
 		switches_.pop_back();
 
-		e_.bind(break_labels_.back());
+		emit_bind(&e_, break_labels_.back());
 		break_labels_.pop_back();
 	}
 
@@ -4060,20 +4069,20 @@ namespace
 			value v = expression();
 			const condition taken = test_value(v);
 			expect(tok::r_paren, "expected ) after the condition");
-			const int otherwise = e_.label();
-			e_.jump_unless(taken, otherwise);
+			const int otherwise = emit_label(&e_);
+			emit_jump_unless(&e_, taken, otherwise);
 			statement();
 			if (accept(tok::kw_else))
 			{
-				const int done = e_.label();
-				e_.jump(done);
-				e_.bind(otherwise);
+				const int done = emit_label(&e_);
+				emit_jump(&e_, done);
+				emit_bind(&e_, otherwise);
 				statement();
-				e_.bind(done);
+				emit_bind(&e_, done);
 			}
 			else
 			{
-				e_.bind(otherwise);
+				emit_bind(&e_, otherwise);
 			}
 			return;
 		}
@@ -4096,23 +4105,23 @@ namespace
 			}
 			expect(tok::r_paren, "expected ) after the condition");
 
-			const int condition_label = e_.label();
-			const int start = e_.label();
-			e_.jump(condition_label);
-			e_.bind(start);
-			break_labels_.push_back(e_.label());
+			const int condition_label = emit_label(&e_);
+			const int start = emit_label(&e_);
+			emit_jump(&e_, condition_label);
+			emit_bind(&e_, start);
+			break_labels_.push_back(emit_label(&e_));
 			continue_labels_.push_back(condition_label);
 			statement();
 			const size_t after = at_;
 
-			e_.bind(condition_label);
+			emit_bind(&e_, condition_label);
 			at_ = condition_at;
 			value v = expression();
 			const condition taken = test_value(v);
 			at_ = after;
-			e_.jump_if(taken, start);
+			emit_jump_if(&e_, taken, start);
 
-			e_.bind(break_labels_.back());
+			emit_bind(&e_, break_labels_.back());
 			break_labels_.pop_back();
 			continue_labels_.pop_back();
 			return;
@@ -4121,20 +4130,20 @@ namespace
 		case tok::kw_do:
 		{
 			advance();
-			const int start = e_.here();
-			const int condition_label = e_.label();
-			break_labels_.push_back(e_.label());
+			const int start = emit_here(&e_);
+			const int condition_label = emit_label(&e_);
+			break_labels_.push_back(emit_label(&e_));
 			continue_labels_.push_back(condition_label);
 			statement();
-			e_.bind(condition_label);
+			emit_bind(&e_, condition_label);
 			if (!accept(tok::kw_while)) fail("expected while after do");
 			expect(tok::l_paren, "expected ( after while");
 			value v = expression();
 			const condition taken = test_value(v);
 			expect(tok::r_paren, "expected )");
 			expect(tok::semicolon, "expected ;");
-			e_.jump_if(taken, start);
-			e_.bind(break_labels_.back());
+			emit_jump_if(&e_, taken, start);
+			emit_bind(&e_, break_labels_.back());
 			break_labels_.pop_back();
 			continue_labels_.pop_back();
 			return;
@@ -4156,7 +4165,7 @@ namespace
 			if (switches_.empty()) fail("case outside a switch");
 			const long label = constant_expression();
 			expect(tok::colon, "expected : after case");
-			switches_.back().cases.emplace_back(label, e_.here());
+			switches_.back().cases.emplace_back(label, emit_here(&e_));
 			return;
 		}
 
@@ -4164,21 +4173,21 @@ namespace
 			advance();
 			if (switches_.empty()) fail("default outside a switch");
 			expect(tok::colon, "expected : after default");
-			switches_.back().default_label = e_.here();
+			switches_.back().default_label = emit_here(&e_);
 			return;
 
 		case tok::kw_break:
 			advance();
 			expect(tok::semicolon, "expected ;");
 			if (break_labels_.empty()) fail("break outside a loop or switch");
-			e_.jump(break_labels_.back());
+			emit_jump(&e_, break_labels_.back());
 			return;
 
 		case tok::kw_continue:
 			advance();
 			expect(tok::semicolon, "expected ;");
 			if (continue_labels_.empty()) fail("continue outside a loop");
-			e_.jump(continue_labels_.back());
+			emit_jump(&e_, continue_labels_.back());
 			return;
 
 		case tok::kw_goto:
@@ -4188,9 +4197,9 @@ namespace
 			const std::string name = peek().text;
 			advance();
 			expect(tok::semicolon, "expected ; after goto");
-			if (labels_.find(name) == labels_.end()) labels_[name] = e_.label();
+			if (labels_.find(name) == labels_.end()) labels_[name] = emit_label(&e_);
 			pending_gotos_.emplace_back(name, 0);
-			e_.jump(labels_[name]);
+			emit_jump(&e_, labels_[name]);
 			return;
 		}
 
@@ -4205,7 +4214,7 @@ namespace
 			expect(tok::semicolon, "expected ; after return");
 			// Inside a body that was copied to a call site there is no frame to
 			// unwind: the value is already where the caller wants it.
-			if (!inline_returns_.empty()) e_.jump(inline_returns_.back());
+			if (!inline_returns_.empty()) emit_jump(&e_, inline_returns_.back());
 			else emit_return();
 			return;
 		}
@@ -4223,8 +4232,8 @@ namespace
 		if (kind() == tok::identifier && peek(1).kind == tok::colon)
 		{
 			const std::string name = peek().text;
-			if (labels_.find(name) == labels_.end()) labels_[name] = e_.label();
-			e_.bind(labels_[name]);
+			if (labels_.find(name) == labels_.end()) labels_[name] = emit_label(&e_);
+			emit_bind(&e_, labels_[name]);
 			advance();
 			advance();
 			if (kind() != tok::r_brace) statement();
@@ -4248,28 +4257,32 @@ namespace
 		// treats all three as scratch.
 		if (target_.hosted)
 		{
-			e_.bytes({0x53, 0x56, 0x57}); // push rbx / push rsi / push rdi
-			e_.call(label_of(main_index));
+			emit_byte(&e_, 0x53); // push rbx
+			emit_byte(&e_, 0x56); // push rsi
+			emit_byte(&e_, 0x57); // push rdi
+			emit_call(&e_, label_of(main_index));
 			symbols_[size_t(main_index)].called = true;
-			e_.bytes({0x5f, 0x5e, 0x5b}); // pop rdi / pop rsi / pop rbx
-			e_.ret();
+			emit_byte(&e_, 0x5f); // pop rdi
+			emit_byte(&e_, 0x5e); // pop rsi
+			emit_byte(&e_, 0x5b); // pop rbx
+			emit_ret(&e_);
 			return;
 		}
 
 		// mov sp, <top of our block>; shrink the block DOS gave us so that a
 		// child process has somewhere to load, then call main and exit.
-		e_.mov_sp_imm(0);
-		stack_patch_ = e_.refers_to_deferred();
-		e_.mov_bx_imm(0);
-		paragraph_patch_ = e_.refers_to_deferred();
-		e_.emit(op::mov, 1, operand::in(reg_ah), operand::constant(0x4a));
-		e_.interrupt(0x21);
+		emit_mov_sp_imm(&e_, 0);
+		stack_patch_ = emit_refers_to_deferred(&e_);
+		emit_mov_bx_imm(&e_, 0);
+		paragraph_patch_ = emit_refers_to_deferred(&e_);
+		emit_op(&e_, op_mov, 1, operand_in(reg_ah), operand_constant(0x4a));
+		emit_interrupt(&e_, 0x21);
 
-		e_.call(label_of(main_index));
+		emit_call(&e_, label_of(main_index));
 		symbols_[size_t(main_index)].called = true;
 
-		e_.emit(op::mov, 1, operand::in(reg_ah), operand::constant(0x4c));
-		e_.interrupt(0x21);
+		emit_op(&e_, op_mov, 1, operand_in(reg_ah), operand_constant(0x4c));
+		emit_interrupt(&e_, 0x21);
 	}
 
 	// The thunk a C program calls to reach a BIOS or DOS service: registers in,
@@ -4278,40 +4291,40 @@ namespace
 	{
 		const auto from_frame = [&](int r, int displacement)
 		{
-			e_.emit(op::mov, 2, operand::in(r), emitter::frame(displacement));
+			emit_op(&e_, op_mov, 2, operand_in(r), emit_frame(displacement));
 		};
 		const auto to_global = [&](int symbol, int r)
 		{
-			e_.emit(op::mov, 2, operand::absolute(0), operand::in(r));
+			emit_op(&e_, op_mov, 2, operand_absolute(0), operand_in(r));
 			data_reference(symbols_[size_t(symbol)].offset);
 		};
 		const auto set_global = [&](int symbol, int value)
 		{
-			e_.emit(op::mov, 2, operand::absolute(0), operand::constant(value));
+			emit_op(&e_, op_mov, 2, operand_absolute(0), operand_constant(value));
 			data_reference(symbols_[size_t(symbol)].offset);
 		};
 
-		e_.push_bp();
-		e_.mov_bp_sp();
-		if (with_si) e_.emit(op::push, 2, operand::in(reg_si));
+		emit_push_bp(&e_);
+		emit_mov_bp_sp(&e_);
+		if (with_si) emit_op(&e_, op_push, 2, operand_in(reg_si), operand_none());
 		from_frame(reg_a, 4);
 		from_frame(reg_b, 6);
 		from_frame(reg_c, 8);
 		from_frame(reg_d, 10);
 		if (with_si) from_frame(reg_si, 12);
-		e_.interrupt(number);
+		emit_interrupt(&e_, number);
 
 		to_global(bx, reg_b);
 		to_global(cx, reg_c);
 		to_global(dx, reg_d);
 		set_global(cf, 0);
-		const int carry_clear = e_.label();
-		e_.jump_if(condition::above_equal, carry_clear);
+		const int carry_clear = emit_label(&e_);
+		emit_jump_if(&e_, cond_above_equal, carry_clear);
 		set_global(cf, 1);
-		e_.bind(carry_clear);
-		if (with_si) e_.emit(op::pop, 2, operand::in(reg_si));
-		e_.pop_bp();
-		e_.ret();
+		emit_bind(&e_, carry_clear);
+		if (with_si) emit_op(&e_, op_pop, 2, operand_in(reg_si), operand_none());
+		emit_pop_bp(&e_);
+		emit_ret(&e_);
 	}
 
 	// The subroutines the 32-bit operators call, written out after the program
@@ -4324,8 +4337,11 @@ namespace
 		const auto referenced = [&](int which)
 		{
 			if (helper_label_[which] < 0) return false;
-			for (const instruction& in : e_.code)
-				if (in.code == op::call && in.label == helper_label_[which]) return true;
+			for (int i = 0; i < e_.code.count; ++i)
+			{
+				const instruction& in = EMIT_CODE(e_, i);
+				if (in.code == op_call && in.label == helper_label_[which]) return true;
+			}
 			return false;
 		};
 
@@ -4333,55 +4349,55 @@ namespace
 		for (int i = 0; i < helper_count; ++i) used[i] = referenced(i);
 		if (used[h_ldiv] || used[h_uldiv] || used[h_lmod] || used[h_ulmod]) used[h_uldivmod] = true;
 
-		const auto bytes = [&](std::initializer_list<int> list) { for (const int b : list) e_.byte(b); };
+		const auto bytes = [&](std::initializer_list<int> list) { for (const int b : list) emit_byte(&e_, b); };
 
 		// The helpers were hand-assembled, but their branches go through the
 		// layout record like everything else, so they shorten with the rest.
 		const auto branch = [&](condition c)
 		{
-			const int target = e_.label();
-			e_.jump_if(c, target);
+			const int target = emit_label(&e_);
+			emit_jump_if(&e_, c, target);
 			return target;
 		};
-		const auto here = [&](int target) { e_.bind(target); };
-		const auto again = [&](condition c, int target) { e_.jump_if(c, target); };
-		const auto negate = [&] { e_.negate_dx_ax(); };
+		const auto here = [&](int target) { emit_bind(&e_, target); };
+		const auto again = [&](condition c, int target) { emit_jump_if(&e_, c, target); };
+		const auto negate = [&] { emit_negate_dx_ax(&e_); };
 
 		if (used[h_uldivmod] || used[h_uldiv])
 		{
 			// Restoring division a bit at a time: SI:DI accumulates the
 			// remainder while the quotient replaces the dividend in DX:AX.
-			e_.bind(helper_label(h_uldivmod));
-			if (helper_label_[h_uldiv] >= 0) e_.bind(helper_label_[h_uldiv]);
+			emit_bind(&e_, helper_label(h_uldivmod));
+			if (helper_label_[h_uldiv] >= 0) emit_bind(&e_, helper_label_[h_uldiv]);
 			bytes({0x56, 0x57, 0x55}); // push si / push di / push bp
 			bytes({0x31, 0xf6, 0x31, 0xff}); // xor si,si / xor di,di
 			bytes({0xbd, 0x20, 0x00}); // mov bp,32
-			const int loop = e_.here();
+			const int loop = emit_here(&e_);
 			bytes({0xd1, 0xe0, 0xd1, 0xd2, 0xd1, 0xd7, 0xd1, 0xd6}); // shl ax,1 / rcl dx,1 / rcl di,1 / rcl si,1
 			bytes({0x39, 0xce}); // cmp si,cx
-			const int skip_low = branch(condition::below);
-			const int to_subtract = branch(condition::above);
+			const int skip_low = branch(cond_below);
+			const int to_subtract = branch(cond_above);
 			bytes({0x39, 0xdf}); // cmp di,bx
-			const int skip = branch(condition::below);
+			const int skip = branch(cond_below);
 			here(to_subtract);
 			bytes({0x29, 0xdf, 0x19, 0xce}); // sub di,bx / sbb si,cx
 			bytes({0x0c, 0x01}); // or al,1
 			here(skip_low);
 			here(skip);
-			e_.byte(0x4d); // dec bp
-			again(condition::not_equal, loop);
+			emit_byte(&e_, 0x4d); // dec bp
+			again(cond_not_equal, loop);
 			bytes({0x89, 0xf1, 0x89, 0xfb}); // mov cx,si / mov bx,di
 			bytes({0x5d, 0x5f, 0x5e}); // pop bp / pop di / pop si
-			e_.ret();
+			emit_ret(&e_);
 		}
 
-		const auto call_divide = [&] { e_.call(helper_label(h_uldivmod)); };
+		const auto call_divide = [&] { emit_call(&e_, helper_label(h_uldivmod)); };
 
 		if (used[h_lmul])
 		{
 			// The high word of a 32-bit product needs only the low halves of
 			// the two cross terms, so three 16-bit multiplies are enough.
-			e_.bind(helper_label(h_lmul));
+			emit_bind(&e_, helper_label(h_lmul));
 			bytes({0x56, 0x57}); // push si / push di
 			bytes({0x89, 0xc6, 0x89, 0xd7}); // mov si,ax / mov di,dx
 			bytes({0xf7, 0xe1}); // mul cx
@@ -4393,82 +4409,82 @@ namespace
 			bytes({0xf7, 0xe3}); // mul bx
 			bytes({0x01, 0xca}); // add dx,cx
 			bytes({0x5f, 0x5e}); // pop di / pop si
-			e_.ret();
+			emit_ret(&e_);
 		}
 
 		if (used[h_ulmod])
 		{
-			e_.bind(helper_label(h_ulmod));
+			emit_bind(&e_, helper_label(h_ulmod));
 			call_divide();
 			bytes({0x89, 0xd8, 0x89, 0xca}); // mov ax,bx / mov dx,cx
-			e_.ret();
+			emit_ret(&e_);
 		}
 
 		if (used[h_ldiv])
 		{
-			e_.bind(helper_label(h_ldiv));
-			e_.byte(0x56); // push si
+			emit_bind(&e_, helper_label(h_ldiv));
+			emit_byte(&e_, 0x56); // push si
 			bytes({0x31, 0xf6}); // xor si,si
 			bytes({0x85, 0xd2}); // test dx,dx
-			int positive = branch(condition::greater_equal);
+			int positive = branch(cond_greater_equal);
 			bytes({0x83, 0xf6, 0x01}); // xor si,1
 			negate();
 			here(positive);
 			bytes({0x85, 0xc9}); // test cx,cx
-			positive = branch(condition::greater_equal);
+			positive = branch(cond_greater_equal);
 			bytes({0x83, 0xf6, 0x01}); // xor si,1
 			bytes({0xf7, 0xd9, 0xf7, 0xdb, 0x83, 0xd9, 0x00}); // neg cx / neg bx / sbb cx,0
 			here(positive);
 			call_divide();
 			bytes({0x85, 0xf6}); // test si,si
-			const int done = branch(condition::equal);
+			const int done = branch(cond_equal);
 			negate();
 			here(done);
-			e_.byte(0x5e); // pop si
-			e_.ret();
+			emit_byte(&e_, 0x5e); // pop si
+			emit_ret(&e_);
 		}
 
 		if (used[h_lmod])
 		{
 			// The sign of a remainder follows the dividend, not the divisor.
-			e_.bind(helper_label(h_lmod));
-			e_.byte(0x56); // push si
+			emit_bind(&e_, helper_label(h_lmod));
+			emit_byte(&e_, 0x56); // push si
 			bytes({0x31, 0xf6}); // xor si,si
 			bytes({0x85, 0xd2}); // test dx,dx
-			int positive = branch(condition::greater_equal);
+			int positive = branch(cond_greater_equal);
 			bytes({0xbe, 0x01, 0x00}); // mov si,1
 			negate();
 			here(positive);
 			bytes({0x85, 0xc9}); // test cx,cx
-			positive = branch(condition::greater_equal);
+			positive = branch(cond_greater_equal);
 			bytes({0xf7, 0xd9, 0xf7, 0xdb, 0x83, 0xd9, 0x00}); // neg cx / neg bx / sbb cx,0
 			here(positive);
 			call_divide();
 			bytes({0x89, 0xd8, 0x89, 0xca}); // mov ax,bx / mov dx,cx
 			bytes({0x85, 0xf6}); // test si,si
-			const int done = branch(condition::equal);
+			const int done = branch(cond_equal);
 			negate();
 			here(done);
-			e_.byte(0x5e); // pop si
-			e_.ret();
+			emit_byte(&e_, 0x5e); // pop si
+			emit_ret(&e_);
 		}
 
 		const int shifts[3] = {h_lshl, h_lshr, h_lsar};
 		for (const int which : shifts)
 		{
 			if (!used[which]) continue;
-			e_.bind(helper_label(which));
+			emit_bind(&e_, helper_label(which));
 			bytes({0x88, 0xd9}); // mov cl,bl
 			bytes({0x80, 0xe1, 0x1f}); // and cl,31
-			const int done = branch(condition::equal);
-			const int loop = e_.here();
+			const int done = branch(cond_equal);
+			const int loop = emit_here(&e_);
 			if (which == h_lshl) bytes({0xd1, 0xe0, 0xd1, 0xd2}); // shl ax,1 / rcl dx,1
 			else if (which == h_lshr) bytes({0xd1, 0xea, 0xd1, 0xd8}); // shr dx,1 / rcr ax,1
 			else bytes({0xd1, 0xfa, 0xd1, 0xd8}); // sar dx,1 / rcr ax,1
 			bytes({0xfe, 0xc9}); // dec cl
-			again(condition::not_equal, loop);
+			again(cond_not_equal, loop);
 			here(done);
-			e_.ret();
+			emit_ret(&e_);
 		}
 
 		for (const int which : {int(h_lcmp), int(h_ulcmp)})
@@ -4476,25 +4492,25 @@ namespace
 			if (!used[which]) continue;
 			// Reduces the pair to -1, 0 or 1 so the caller can use the ordinary
 			// signed conditions whatever the operand signedness was.
-			e_.bind(helper_label(which));
+			emit_bind(&e_, helper_label(which));
 			bytes({0x39, 0xca}); // cmp dx,cx
-			const condition low = which == h_lcmp ? condition::less : condition::below;
-			const condition high = which == h_lcmp ? condition::greater : condition::above;
+			const condition low = which == h_lcmp ? cond_less : cond_below;
+			const condition high = which == h_lcmp ? cond_greater : cond_above;
 			const int less_high = branch(low);
 			const int greater_high = branch(high);
 			bytes({0x39, 0xd8}); // cmp ax,bx
-			const int less_low = branch(condition::below);
-			const int greater_low = branch(condition::above);
-			e_.xor_ax_ax();
-			e_.ret();
+			const int less_low = branch(cond_below);
+			const int greater_low = branch(cond_above);
+			emit_xor_ax_ax(&e_);
+			emit_ret(&e_);
 			here(less_high);
 			here(less_low);
-			e_.mov_ax_imm(-1);
-			e_.ret();
+			emit_mov_ax_imm(&e_, -1);
+			emit_ret(&e_);
 			here(greater_high);
 			here(greater_low);
-			e_.mov_ax_imm(1);
-			e_.ret();
+			emit_mov_ax_imm(&e_, 1);
+			emit_ret(&e_);
 		}
 	}
 
@@ -4517,31 +4533,31 @@ namespace
 		{
 			const int index = define(name, sym_function, type);
 			symbols_[size_t(index)].defined = true;
-			symbols_[size_t(index)].start = e_.here();
+			symbols_[size_t(index)].start = emit_here(&e_);
 			symbols_[size_t(index)].label = symbols_[size_t(index)].start;
 			return index;
 		};
 
 		const int int21 = thunk("__int21", t_int_);
 		emit_interrupt_call(0x21, cf, bx, cx, dx, false);
-		symbols_[size_t(int21)].finish = e_.here();
+		symbols_[size_t(int21)].finish = emit_here(&e_);
 
 		const int int10 = thunk("__int10", t_int_);
 		emit_interrupt_call(0x10, cf, bx, cx, dx, false);
-		symbols_[size_t(int10)].finish = e_.here();
+		symbols_[size_t(int10)].finish = emit_here(&e_);
 
 		// The same call with SI set, for the handful of services that take a
 		// buffer there rather than in DX.
 		const int int21si = thunk("__int21si", t_int_);
 		emit_interrupt_call(0x21, cf, bx, cx, dx, true);
-		symbols_[size_t(int21si)].finish = e_.here();
+		symbols_[size_t(int21si)].finish = emit_here(&e_);
 
 		// The segment everything lives in, which a program needs when it hands
 		// DOS a far pointer.
 		const int seg = thunk("__seg", t_uint_);
-		e_.mov_ax_cs();
-		e_.ret();
-		symbols_[size_t(seg)].finish = e_.here();
+		emit_mov_ax_cs(&e_);
+		emit_ret(&e_);
+		symbols_[size_t(seg)].finish = emit_here(&e_);
 	}
 
 	void generator::run()
@@ -4603,8 +4619,8 @@ namespace
 			if (entry.kind != sym_function || !entry.defined) continue;
 			if (entry.start < 0 || entry.finish < 0) continue;
 			span s;
-			s.from = e_.labels[size_t(entry.start)];
-			s.to = e_.labels[size_t(entry.finish)];
+			s.from = EMIT_LABEL(e_, int(entry.start));
+			s.to = EMIT_LABEL(e_, int(entry.finish));
 			s.symbol = int(i);
 			if (s.from < 0 || s.to <= s.from) continue;
 			spans.push_back(s);
@@ -4620,8 +4636,8 @@ namespace
 		std::vector<int> roots;
 		const auto reference = [&](int at, int label)
 		{
-			if (label < 0 || !e_.is_bound(label)) return;
-			const auto target = starts.find(e_.labels[size_t(label)]);
+			if (label < 0 || !emit_is_bound(&e_, label)) return;
+			const auto target = starts.find(EMIT_LABEL(e_, int(label)));
 			if (target == starts.end()) return;
 
 			size_t low = 0, high = spans.size();
@@ -4637,12 +4653,12 @@ namespace
 				roots.push_back(target->second);
 		};
 
-		for (size_t i = 0; i < e_.code.size(); ++i)
+		for (int i = 0; i < e_.code.count; ++i)
 		{
-			const instruction& in = e_.code[i];
-			if (in.code == op::call) reference(int(i), in.label);
+			const instruction& in = EMIT_CODE(e_, i);
+			if (in.code == op_call) reference(i, in.label);
 			for (const operand* o : {&in.dest, &in.source})
-				if (o->reference == reference_kind::code) reference(int(i), o->target);
+				if (o->reference == reference_kind_code) reference(i, o->target);
 		}
 		for (const function_fixup& fixup : function_fixups_) roots.push_back(fixup.function);
 
@@ -4661,7 +4677,7 @@ namespace
 
 		for (const span& s : spans)
 			if (!reached[size_t(s.symbol)])
-				e_.drop(symbols_[size_t(s.symbol)].start, symbols_[size_t(s.symbol)].finish);
+				emit_drop(&e_, symbols_[size_t(s.symbol)].start, symbols_[size_t(s.symbol)].finish);
 	}
 
 	std::vector<uint8_t> generator::finish(int& code_size, int& data_size)
@@ -4676,10 +4692,10 @@ namespace
 		// form for every branch, drops what the program never reaches, and
 		// moves what is left.
 		drop_unreachable();
-		e_.lay_out(target_.code_origin);
+		emit_lay_out(&e_, target_.code_origin);
 
 		// Data follows the code, so its address is only known after that.
-		code_size = int(e_.image.size());
+		code_size = int(e_.image.count);
 		if (code_size % 2 != 0) ++code_size;
 		const int data_base = target_.code_origin + code_size;
 		data_size = int(data_.size());
@@ -4694,9 +4710,9 @@ namespace
 			         code_size, data_size);
 			throw compile_error{message, 0, 0};
 		}
-		if (stack_patch_ >= 0) e_.set_deferred(stack_patch_, stack_top);
-		if (paragraph_patch_ >= 0) e_.set_deferred(paragraph_patch_, (stack_top + 15) / 16);
-		if (!e_.resolve(target_.code_origin, data_base))
+		if (stack_patch_ >= 0) emit_set_deferred(&e_, stack_patch_, stack_top);
+		if (paragraph_patch_ >= 0) emit_set_deferred(&e_, paragraph_patch_, (stack_top + 15) / 16);
+		if (!emit_resolve(&e_, target_.code_origin, data_base))
 			throw compile_error{"a jump was never given somewhere to go", 0, 0};
 
 		// The data section holds pointers of its own, and it does not move.
@@ -4710,13 +4726,14 @@ namespace
 		{
 			const symbol& entry = symbols_[size_t(fixup.function)];
 			if (!entry.defined) throw compile_error{("undefined function: " + entry.name).c_str(), 0, 0};
-			put_word(fixup.position, target_.code_origin + e_.offset_of(entry.label));
+			put_word(fixup.position, target_.code_origin + emit_offset_of(&e_, entry.label));
 		}
 
 		for (const data_fixup& fixup : data_fixups_)
 			put_word(fixup.position, data_base + fixup.offset);
 
-		std::vector<uint8_t> image = e_.image;
+		std::vector<uint8_t> image((const uint8_t*)e_.image.items,
+		                           (const uint8_t*)e_.image.items + e_.image.count);
 		while (image.size() % 2 != 0) image.push_back(0x90);
 		image.insert(image.end(), data_.begin(), data_.end());
 		return image;
@@ -4731,7 +4748,7 @@ namespace
 		{
 			if (entry.kind != sym_function || !entry.defined) continue;
 			if (entry.start < 0 || entry.finish < 0 || entry.name.empty()) continue;
-			const int size = e_.offset_of(entry.finish) - e_.offset_of(entry.start);
+			const int size = emit_offset_of(&e_, entry.finish) - emit_offset_of(&e_, entry.start);
 			if (size > 0) functions.emplace_back(entry.name, size);
 		}
 	}
