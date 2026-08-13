@@ -49,6 +49,7 @@ Release):
 .\dd.ps1 test               # build + run the test suite
 .\dd.ps1 run                # build + launch the app
 .\dd.ps1 bench              # build, compile the benchmark for this machine, run it
+.\dd.ps1 bench -Exe         # the same, as a standalone bin\bench.exe
 .\dd.ps1 cli --info GAME.EXE
 .\dd.ps1 cli --cc .\shell\shell.c
 .\dd.ps1 test -Release      # Release

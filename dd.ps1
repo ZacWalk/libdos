@@ -8,7 +8,8 @@
     dd run     Build the GUI app, then launch it.
     dd cli     Build the CLI, then run it with whatever arguments follow.
     dd bench   Build the CLI, compile cc\bench\bench.c for this machine with
-               the compiler that was just built, and run it here.
+               the compiler that was just built, and run it here. With -Exe,
+               write it out as a Windows program in bin\ and run that instead.
 
     Both commands build the code first. Output binaries land in bin\ using the
     naming convention <name><64|32><r|d>, e.g. ovrwincli64d.exe, ovrwinapp64r.exe.
@@ -25,6 +26,10 @@
 
 .PARAMETER Win32
     Build the 32-bit (Win32) platform instead of x64.
+
+.PARAMETER Exe
+    For 'bench', write a standalone Windows executable and run that rather than
+    calling the compiled code in process.
 
 .PARAMETER Arguments
     Everything after the command is passed through to the binary. For 'bench',
@@ -48,6 +53,8 @@ param(
 
     [switch]$Win32,
 
+    [switch]$Exe,
+
     [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
     [string[]]$Arguments
 )
@@ -64,9 +71,13 @@ if (-not $Command) {
     Write-Host '  cli     Build and run the CLI with the remaining arguments'
     Write-Host '  bench   Build, compile the benchmark for this machine, run it (Release)'
     Write-Host ''
-    Write-Host 'Options: -Release, -DebugBuild, -Win32'
+    Write-Host 'Options: -Release, -DebugBuild, -Win32, -Exe (bench: write and run an .exe)'
     exit 0
 }
+
+# What to run once the build is done, for a command that produces a program of
+# its own rather than printing.
+$runAfter = $null
 
 # Resolve configuration: explicit -Release/-DebugBuild win; otherwise the two
 # commands that are about speed default to Release and everything else to Debug.
@@ -104,7 +115,13 @@ switch ($Command) {
         $project = Join-Path $root 'cli\ovrwin-cli.vcxproj'
         $exeName = "ovrwincli$suffix.exe"
         $source  = if ($Arguments) { $Arguments[0] } else { Join-Path $root 'cc\bench\bench.c' }
-        $exeArgs = @('--ccnative', $source)
+        if ($Exe) {
+            $runAfter = Join-Path $root ('bin\' + [System.IO.Path]::GetFileNameWithoutExtension($source) + '.exe')
+            $exeArgs = @('--ccexe', $source, '-o', $runAfter)
+        }
+        else {
+            $exeArgs = @('--ccnative', $source)
+        }
     }
 }
 
@@ -150,4 +167,19 @@ if (-not (Test-Path $exePath)) {
 
 Write-Host "Launching $exeName ..." -ForegroundColor Green
 if ($exeArgs) { & $exePath @exeArgs } else { & $exePath }
-exit $LASTEXITCODE
+$code = $LASTEXITCODE
+
+if ($runAfter -and $code -eq 0) {
+    if (-not (Test-Path $runAfter)) { throw "Expected program not found: $runAfter" }
+    Write-Host "Running $(Split-Path -Leaf $runAfter) ..." -ForegroundColor Green
+    & $runAfter
+    $answer = $LASTEXITCODE
+    Write-Host "exit code $answer"
+
+    # What the program returned is its answer, not this script's verdict; only a
+    # fault, which comes back as a status code rather than a small number, is a
+    # failure here.
+    $code = if ($answer -lt 0 -or $answer -gt 255) { 1 } else { 0 }
+}
+
+exit $code
