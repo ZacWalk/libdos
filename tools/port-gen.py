@@ -1,12 +1,16 @@
 """Mechanical half of the parser's port from C++ to C.
 
-Reads the method bodies out of cc/gen.cpp, turns `generator::foo(...)` into
-`gen_foo(generator* g, ...)`, gives every member and every method call the `g`
-it now needs, and appends the result to the hand-written prelude of cc/gen.c.
+Reads the method bodies out of cc/gen.cpp and turns them into C: methods become
+`gen_foo(generator* g, ...)`, members and method calls get the `g` they now
+need, C++ references become pointers - in the signature, in the body and at
+every call site - and a default argument becomes an explicit one.
 
 What it deliberately does not touch: std::string, std::vector, std::map,
 lambdas and throw. Those need decisions, not substitutions, and the compiler
-will list every one of them.
+lists every one of them.
+
+    python tools/port-gen.py --reset    put gen.c back to its hand-written prelude
+    python tools/port-gen.py            append the translated body
 """
 
 import re
@@ -25,6 +29,20 @@ MEMBERS = [
     "helper_label_", "t_void_", "t_char_", "t_uchar_", "t_int_", "t_uint_", "t_long_",
     "t_ulong_", "t_real_",
 ]
+
+# Written by hand in the prelude: (argument count, defaults, which are pointers).
+PRELUDE = {
+    "gen_reserve_data": (3, [None, None, "2"], []),
+    "gen_settled": (2, [None, None], [1]),
+    "gen_fits_cx": (2, [None, None], [1]),
+    "gen_fits_cx_bx": (2, [None, None], [1]),
+    "gen_add_address_to_ax": (2, [None, None], [1]),
+    "gen_discard": (2, [None, None], []),
+    "gen_emitted_since": (2, [None, None], []),
+    "make_deref": (2, [None, None], [0]),
+    "in_memory": (1, [None], [0]),
+    "source_of": (1, [None], [0]),
+}
 
 METHODS = [
     "run", "finish", "report", "helper_label", "fail", "kind", "advance", "accept", "expect",
@@ -50,41 +68,83 @@ METHODS = [
     "emit_startup", "drop_unreachable",
 ]
 
-# Containers that became a cc_list, and the macro that reaches into each.
 ACCESSORS = {
-    "symbols_": ("SYMBOL_AT(g, %s)", "symbol"),
-    "types_": ("TYPE_AT(g, %s)", "type_info"),
-    "records_": ("RECORD_AT(g, %s)", "record_info"),
-    "data_": ("DATA_AT(g, %s)", "uint8_t"),
+    "symbols_": "SYMBOL_AT(g, %s)",
+    "types_": "TYPE_AT(g, %s)",
+    "records_": "RECORD_AT(g, %s)",
+    "data_": "DATA_AT(g, %s)",
 }
 
 
 def body_of(text):
-    """Everything after the class declaration, which is rewritten by hand."""
     at = text.find("\t// Code generation")
     if at < 0:
         raise SystemExit("cannot find the start of the method bodies")
-    at = text.rindex("\n", 0, at) + 1  # the divider line above it
-    return text[at:]
+    return text[text.rindex("\n", 0, at) + 1:]
 
 
-def matching_paren(text, start):
-    """Index of the ')' closing the '(' at `start`."""
+def matching(text, start, opening="(", closing=")"):
     depth = 0
     i = start
     while i < len(text):
-        if text[i] == "(":
+        if text[i] == opening:
             depth += 1
-        elif text[i] == ")":
+        elif text[i] == closing:
             depth -= 1
             if depth == 0:
                 return i
         i += 1
-    raise SystemExit("unbalanced parentheses")
+    raise SystemExit("unbalanced %s at %d" % (opening, start))
+
+
+def split_arguments(text):
+    parts = []
+    depth = 0
+    start = 0
+    for i, c in enumerate(text):
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == "," and depth == 0:
+            parts.append(text[start:i])
+            start = i + 1
+    if text.strip():
+        parts.append(text[start:])
+    return parts
+
+
+REFERENCE = re.compile(r"^\s*(const\s+)?([\w:]+(?:<[^<>]*>)?)\s*&\s*(\w+)\s*$")
+
+# A const reference to one of these is cheaper to pass by value than to take
+# the address of at every call site.
+BY_VALUE = {"operand", "emission_mark"}
+
+
+def convert_parameters(arguments):
+    out = []
+    defaults = []
+    pointers = []
+    for index, argument in enumerate(arguments):
+        default = None
+        if "=" in argument:
+            argument, default = argument.split("=", 1)
+            default = default.strip()
+        found = REFERENCE.match(argument)
+        if found and found.group(2) in BY_VALUE:
+            argument = " %s %s" % (found.group(2), found.group(3))
+        elif found:
+            pointers.append(index)
+            argument = " %s%s* %s" % (found.group(1) or "", found.group(2), found.group(3))
+        else:
+            argument = argument.rstrip()
+        out.append(argument)
+        defaults.append(default)
+    return out, defaults, pointers
 
 
 def rewrite_definitions(text):
-    """RET generator::name(args) [const] -> static RET gen_name(generator* g, args)"""
+    signatures = {}
     out = []
     at = 0
     while True:
@@ -98,53 +158,128 @@ def rewrite_definitions(text):
         prefix = text[line_start:found].strip()
 
         open_paren = text.index("(", found)
-        name = text[found + len("generator::"):open_paren]
-        close = matching_paren(text, open_paren)
-        arguments = text[open_paren + 1:close].strip()
+        name = "gen_" + text[found + len("generator::"):open_paren]
+        close = matching(text, open_paren)
+        arguments, defaults, pointers = convert_parameters(split_arguments(text[open_paren + 1:close]))
+
+        # `g` is the first parameter now, so every recorded position shifts.
+        signatures[name] = (len(arguments) + 1, [None] + defaults, [p + 1 for p in pointers])
 
         tail = text[close + 1:]
         if tail.lstrip().startswith("const"):
             tail = tail.lstrip()[len("const"):]
 
-        separator = "" if not arguments else ", "
-        out.append("static %s gen_%s(generator* g%s%s)" % (prefix, name, separator, arguments))
+        separator = "" if not arguments else ","
+        out.append("static %s %s(generator* g%s%s)" % (prefix, name, separator, ",".join(arguments)))
+        text = text[:close + 1] + tail
         at = close + 1
-        text = text[:at] + tail
-        at = len(text) - len(tail)
-    return "".join(out)
+    return "".join(out), signatures
+
+
+def is_definition(text, found):
+    """A definition starts a line with `static`; a call does not."""
+    line_start = text.rfind("\n", 0, found) + 1
+    return text[line_start:found].lstrip().startswith("static ")
+
+
+def fix_calls(text, signatures):
+    """Pad a call that relied on a default argument, and pass by address."""
+    for name, (count, defaults, pointers) in signatures.items():
+        at = 0
+        while True:
+            found = text.find(name + "(", at)
+            if found < 0:
+                break
+            if found > 0 and (text[found - 1].isalnum() or text[found - 1] == "_"):
+                at = found + 1
+                continue
+            if is_definition(text, found):
+                at = found + 1
+                continue
+
+            open_paren = found + len(name)
+            close = matching(text, open_paren)
+            arguments = split_arguments(text[open_paren + 1:close])
+
+            for index in range(len(arguments), count):
+                if defaults[index] is None:
+                    break
+                arguments.append(" " + defaults[index])
+
+            for index in pointers:
+                if index >= len(arguments):
+                    continue
+                argument = arguments[index].strip()
+                if re.match(r"^[\w\.\[\]]+$", argument) and not argument[0].isdigit():
+                    arguments[index] = " &" + argument
+
+            replacement = name + "(" + ",".join(arguments) + ")"
+            text = text[:found] + replacement + text[close + 1:]
+            at = found + len(replacement)
+    return text
+
+
+def fix_pointer_bodies(text, signatures):
+    """Inside a definition, a parameter that became a pointer needs -> not `.`"""
+    for name, (_, _, pointers) in signatures.items():
+        if not pointers:
+            continue
+        at = 0
+        while True:
+            found = text.find(name + "(generator* g", at)
+            if found < 0:
+                found = text.find(name + "(const value* ", at)  # the static helpers
+            if found < 0 or not is_definition(text, found):
+                break
+
+            open_paren = text.index("(", found)
+            close = matching(text, open_paren)
+            arguments = split_arguments(text[open_paren + 1:close])
+            names = [arguments[i].strip().split()[-1].lstrip("*") for i in pointers
+                     if i < len(arguments)]
+
+            start = text.index("{", close)
+            finish = matching(text, start, "{", "}")
+            body = text[start:finish]
+            for member in names:
+                body = re.sub(r"\b%s\.(?!\.)" % member, member + "->", body)
+            text = text[:start] + body + text[finish:]
+            at = start + len(body)
+    return text
 
 
 def rewrite(text):
-    text = rewrite_definitions(text)
+    text = re.sub(r"\btok::(\w+)", r"tok_\1", text)
+    text, signatures = rewrite_definitions(text)
+    for name, entry in PRELUDE.items():
+        signatures.setdefault(name, entry)
 
-    # Members.
     for member in MEMBERS:
         text = re.sub(r"(?<![\w.>])%s\b" % member, "g->" + member, text)
 
-    # peek() hands back a pointer now, so the dot syntax needs the star.
     text = re.sub(r"(?<![\w.>])peek\(\)", "(*gen_peek(g, 0))", text)
     text = re.sub(r"(?<![\w.>])peek\(([^()]*)\)", r"(*gen_peek(g, \1))", text)
     text = re.sub(r"(?<![\w.>])type\(([^()]*)\)", r"(*gen_type(g, \1))", text)
 
-    # Method calls.
     for method in METHODS:
         text = re.sub(r"(?<![\w.>:])%s\(\)" % method, "gen_%s(g)" % method, text)
         text = re.sub(r"(?<![\w.>:])%s\(" % method, "gen_%s(g, " % method, text)
 
-    # Container access.
-    for member, (macro, _) in ACCESSORS.items():
-        text = re.sub(r"g->%s\[size_t\(([^\[\]]+?)\)\]" % member, lambda m, f=macro: f % ("(int)(" + m.group(1) + ")"), text)
+    text = fix_pointer_bodies(text, signatures)
+    text = fix_calls(text, signatures)
+
+    for member, macro in ACCESSORS.items():
+        text = re.sub(r"g->%s\[size_t\(([^\[\]]+?)\)\]" % member,
+                      lambda m, f=macro: f % ("(int)(" + m.group(1) + ")"), text)
         text = re.sub(r"g->%s\[(\w+)\]" % member, lambda m, f=macro: f % m.group(1), text)
     text = re.sub(r"g->(\w+)\.size\(\)", r"g->\1.count", text)
     text = re.sub(r"g->(\w+)\.empty\(\)", r"(g->\1.count == 0)", text)
 
-    # C spellings.
     text = re.sub(r"\bnullptr\b", "NULL", text)
     text = re.sub(r"\btrue\b", "1", text)
     text = re.sub(r"\bfalse\b", "0", text)
     text = re.sub(r"\bbool\b", "int", text)
     text = re.sub(r"\b(int|size_t|uint8_t|uint16_t|int32_t|long|condition|char)\(", r"(\1)(", text)
-
     return text
 
 
@@ -162,11 +297,11 @@ def main():
         print("gen.c is back to its prelude")
         return 0
 
-    with open(SOURCE, "r", encoding="utf-8", newline="") as file:
-        source = file.read()
-
     if SENTINEL not in target:
         raise SystemExit("the sentinel is gone; run with --reset first")
+
+    with open(SOURCE, "r", encoding="utf-8", newline="") as file:
+        source = file.read()
 
     body = rewrite(body_of(source))
     with open(TARGET, "w", encoding="utf-8", newline="") as file:
