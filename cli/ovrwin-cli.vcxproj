@@ -101,6 +101,7 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="..\host\host-win32.cpp" />
     <ClCompile Include="..\cc\emit.cpp" />
+    <ClCompile Include="..\cc\emit-x64.cpp" />
     <ClCompile Include="..\cc\gen.cpp" />
     <ClCompile Include="..\cc\lex.cpp" />
   </ItemGroup>

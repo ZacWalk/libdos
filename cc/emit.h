@@ -137,6 +137,7 @@ struct instruction
 	// Settled by lay_out().
 	int32_t offset = 0;
 	int32_t length = 0;
+	int32_t fixup = 0; // where in the instruction an address goes, from the start
 };
 
 struct emitter
@@ -149,6 +150,7 @@ struct emitter
 
 	// What the back end may emit. Set once, before anything is generated.
 	cc_cpu cpu = cc_cpu::i8086;
+	cc_machine machine = cc_machine::i8088;
 
 	// A run of raw bytes coalesces into one instruction, but never across a
 	// label: a label names an instruction, so the run has to start again.
@@ -395,5 +397,8 @@ struct emitter
 private:
 	std::vector<std::pair<int, int>> dropped_;
 
-	int encode(const instruction& in, int position, std::vector<uint8_t>* into) const;
+	int encode(instruction& in, int position, std::vector<uint8_t>* into) const;
+	int encode_8086(instruction& in, int position, std::vector<uint8_t>* into) const;
+	int encode_x64(instruction& in, int position, std::vector<uint8_t>* into) const;
+	int branch_length(op code) const;
 };
