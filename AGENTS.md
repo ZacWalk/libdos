@@ -1,7 +1,8 @@
 # ovrwin Repository Guidance
 
 ovrwin is a C++20 DOS program emulator: a platform-independent static library
-(`src/`), a Windows host implementation (`host/`), a Win32 app (`app/`) and a
+(`src/`), a Windows host implementation (`host/`), an app built on the shared
+[platform-h](https://github.com/ZacWalk/platform-h) layer (`app/`) and a
 command-line driver that is both the test suite and the debugger (`cli/`).
 Alongside it are a C compiler for 16-bit DOS (`cc/`) and a DOS shell written in
 C and built with it (`shell/`).
@@ -19,14 +20,34 @@ covers at a glance.
   file-system access, no threads.
 - The library takes bytes and returns bytes. Reading files is the host's job,
   through `host_services` in `src/host.h`.
-- `host/`, `app/` and `cli/` own everything Windows: the window, GDI, waveOut,
-  the file system and the console.
+- `app/` talks to the outside world through `pf::` only - window, menu, input,
+  audio, dialogs and file paths. It names no operating system, and nothing
+  Win32-shaped may go into platform-h to make it easier; see that repo's rules.
+- `host/` and `cli/` own what is left of Windows: the file system and the
+  console. `host/host-win32.cpp` is shared by the app and the CLI.
 - `cc/` is platform independent too, and opens no files: a caller supplies
   source text through `cc_sources`, the same way a host supplies the drive.
 - `shell/` is C for the emulated machine, not for the host. It is compiled by
   `cc/`, so it can only use the subset in [docs/todo.md](docs/todo.md).
 - When the app needs a new capability, expose a platform-neutral operation from
   `machine.h` rather than reaching into `machine_state`.
+
+### Why `host/` is still Win32
+
+Considered and deliberately deferred, so nobody re-opens it by accident.
+Everything in `host-win32.cpp` but one call maps onto `<filesystem>`,
+`<fstream>` and `<chrono>`. The exception is `code_alloc` / `code_commit`,
+which wants pages that are writable and then executable and has no standard
+form - and routing that through `pf::` would drag the platform layer, and the
+`WinMain` that forces `app_init` stubs on a console program, into the CLI. If
+it is ever done, the shape is standard C++ plus a small OS-specific file, not
+`pf::`.
+
+Two behaviours would change and both want tests written first: `FindFirstFileA`
+is doing the DOS wildcard matching and the 8.3 short name today - and gets the
+name wrong on a volume with short-name creation disabled, truncating to 12
+characters without honouring the dot - and `std::filesystem` has no hidden,
+system or archive attribute.
 
 ## Coding Guidelines
 
@@ -35,39 +56,43 @@ covers at a glance.
   removes real duplication.
 - `src/rom-font.cpp` is generated data. Never hand-edit it; run
   `tools/make-font.ps1`.
-- Never edit anything under `intermediate/` or `bin/`.
-- Debug uses the static debug runtime (`/MTd`), Release the static runtime
-  (`/MT`). Changing this breaks the project-reference link.
+- Never edit anything under `build/` or `exe/`.
+- Debug and Release both link the static CRT (`/MTd`, `/MT`), set once in
+  `CMakeLists.txt` before the platform layer is pulled in so it is built the
+  same way. Changing it breaks the link.
 
 ## Build And Validation
 
-`dd.ps1` builds and runs in one step and finds MSBuild via `vswhere`, so no
-developer prompt is needed. It defaults to Debug x64 (`run` defaults to
-Release):
+`dd.ps1` builds and runs in one step. It finds Visual Studio with `vswhere` and
+falls back to the CMake and Ninja that ship with it, so no developer prompt is
+needed and nothing has to be installed. Release is the default:
 
 ```powershell
-.\dd.ps1 test               # build + run the test suite
+.\dd.ps1 test               # build + the CLI suite and the app's offscreen check
 .\dd.ps1 run                # build + launch the app
 .\dd.ps1 bench              # build, compile the benchmark for this machine, run it
-.\dd.ps1 bench -Exe         # the same, as a standalone bin\bench.exe
+.\dd.ps1 bench -Exe         # the same, as a standalone exe\bench.exe
 .\dd.ps1 cli --info GAME.EXE
 .\dd.ps1 cli --cc .\shell\shell.c
-.\dd.ps1 test -Release      # Release
-.\dd.ps1 test -Win32        # 32-bit
+.\dd.ps1 test -Config Debug
+.\dd.ps1 clean
 ```
 
-Direct MSBuild after any source or project change:
+Direct CMake after any source change:
 
 ```powershell
-msbuild ovrwin.sln /m /p:Configuration=Debug /p:Platform=x64
-.\bin\ovrwincli64d.exe --test    # returns non-zero on failure
+cmake --preset release
+cmake --build --preset release
+.\exe\ovrwincli.exe --test    # returns non-zero on failure
 ```
 
-Gotcha: at the **solution** level the 32-bit platform is named `x86`
-(`/p:Platform=x86`); `Platform=Win32` only works on an individual `.vcxproj`.
+Build trees are per preset under `build/`; binaries land in `exe/` as
+`ovrwin.exe` and `ovrwincli.exe`, with a `-d` suffix for Debug.
 
-Outputs go to `bin/` as `<name><64|32><r|d>` (`64`/`32` = x64/Win32, `d`/`r` =
-Debug/Release), e.g. `ovrwin64d.lib`, `ovrwinapp64r.exe`, `ovrwincli64d.exe`.
+The app builds against a sibling `../platform-h` checkout when one exists and
+against the pinned revision in `CMakeLists.txt` otherwise - so a green local
+build says nothing about the pin. After changing platform-h, push it and re-pin
+here.
 
 ## Debugging A Program That Does Not Work
 
@@ -116,8 +141,10 @@ whether a test already encodes the current behaviour:
 - The disassembler, which the debugger depends on.
 
 A green build proves nothing on its own - run `.\dd.ps1 test` and check for
-`FAIL` lines. Smoke-test app changes by launching it; the title bar reports the
-program, the video mode and the pause state.
+`FAIL` lines. It runs the CLI suite and then the app's offscreen self-check,
+which pins the picture scaling and that the framebuffer reaches the screen.
+Do not launch the GUI to verify a change; `ovrwin.exe -test` is the headless
+form and `dd.ps1 run` is for the human.
 
 ## Known Gaps
 

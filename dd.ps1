@@ -1,185 +1,187 @@
-#requires -Version 5.1
 <#
 .SYNOPSIS
-    Build-and-run helper for ovrwin.
+    ovrwin build helper.
 
 .DESCRIPTION
-    dd test    Build the CLI, then run the behavioural test suite.
-    dd run     Build the GUI app, then launch it.
-    dd cli     Build the CLI, then run it with whatever arguments follow.
-    dd bench   Build the CLI, compile cc\bench\bench.c for this machine with
-               the compiler that was just built, and run it here. With -Exe,
-               write it out as a Windows program in bin\ and run that instead.
+    dd run   - build and launch the app
+    dd build - build everything
+    dd test  - build and run the behavioural test suite
+    dd cli   - build and run the CLI with the remaining arguments
+    dd bench - build, compile cc\bench\bench.c for this machine with the
+               compiler that was just built, and run it here. With -Exe, write
+               it out as a Windows program in exe\ and run that instead.
+    dd clean - remove build/ and exe/
 
-    Both commands build the code first. Output binaries land in bin\ using the
-    naming convention <name><64|32><r|d>, e.g. ovrwincli64d.exe, ovrwinapp64r.exe.
-
-.PARAMETER Command
-    'test', 'run', 'cli' or 'bench'.
-
-.PARAMETER Release
-    Force the Release configuration. By default 'run' and 'bench' build Release
-    and 'test' and 'cli' build Debug.
-
-.PARAMETER DebugBuild
-    Force the Debug configuration (overrides the 'run' default of Release).
-
-.PARAMETER Win32
-    Build the 32-bit (Win32) platform instead of x64.
-
-.PARAMETER Exe
-    For 'bench', write a standalone Windows executable and run that rather than
-    calling the compiled code in process.
-
-.PARAMETER Arguments
-    Everything after the command is passed through to the binary. For 'bench',
-    a source file to compile and run instead of the benchmark.
+    Pass -Config Debug to build a command's target as Debug instead. Binaries
+    land in exe\ as ovrwin.exe and ovrwincli.exe, with a -d suffix for Debug.
 
 .EXAMPLE
     .\dd.ps1 test
-    .\dd.ps1 run
+    .\dd.ps1 run .\GAME
+    .\dd.ps1 cli --info .\GAME\GAME.EXE
     .\dd.ps1 bench
-    .\dd.ps1 cli --info .\samples\game\GAME.EXE
 #>
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('test', 'run', 'cli', 'bench')]
-    [string]$Command,
+    [ValidateSet('run', 'build', 'test', 'cli', 'bench', 'clean')]
+    [string] $Command = 'run',
 
-    [switch]$Release,
+    [ValidateSet('Debug', 'Release')]
+    [string] $Config = 'Release',
 
-    [switch]$DebugBuild,
+    # For 'bench': write a standalone Windows executable and run that rather
+    # than calling the compiled code in process.
+    [switch] $Exe,
 
-    [switch]$Win32,
-
-    [switch]$Exe,
-
-    [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
-    [string[]]$Arguments
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]] $Rest
 )
 
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
+$suffix = if ($Config -eq 'Debug') { '-d' } else { '' }
+$appExe = Join-Path $root "exe\ovrwin$suffix.exe"
+$cliExe = Join-Path $root "exe\ovrwincli$suffix.exe"
 
-if (-not $Command) {
-    Write-Host 'Usage: .\dd.ps1 COMMAND [options] [arguments]'
-    Write-Host ''
-    Write-Host 'Commands:'
-    Write-Host '  test    Build and run the test suite (Debug by default)'
-    Write-Host '  run     Build and launch the GUI app (Release by default)'
-    Write-Host '  cli     Build and run the CLI with the remaining arguments'
-    Write-Host '  bench   Build, compile the benchmark for this machine, run it (Release)'
-    Write-Host ''
-    Write-Host 'Options: -Release, -DebugBuild, -Win32, -Exe (bench: write and run an .exe)'
-    exit 0
+function Get-VisualStudioPath {
+    $vswhere = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Microsoft Visual Studio\Installer\vswhere.exe'
+    if (-not (Test-Path $vswhere)) {
+        throw 'vswhere.exe was not found; install Visual Studio with the C++ desktop workload.'
+    }
+
+    $path = & $vswhere -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath |
+        Select-Object -First 1
+
+    if (-not $path) {
+        throw 'No Visual Studio installation with the C++ desktop workload was found.'
+    }
+
+    return $path
 }
 
-# What to run once the build is done, for a command that produces a program of
-# its own rather than printing.
-$runAfter = $null
+# cl and rc only work inside the MSVC environment, and Ninja invokes cl directly.
+function Enter-MsvcEnvironment {
+    param([string] $VisualStudio)
 
-# Resolve configuration: explicit -Release/-DebugBuild win; otherwise the two
-# commands that are about speed default to Release and everything else to Debug.
-if ($Release) { $configuration = 'Release' }
-elseif ($DebugBuild) { $configuration = 'Debug' }
-elseif ($Command -eq 'run' -or $Command -eq 'bench') { $configuration = 'Release' }
-else { $configuration = 'Debug' }
+    if ($env:VSCMD_ARG_TGT_ARCH -eq 'x64') {
+        return
+    }
 
-# Resolve platform and the matching binary-name suffix.
-$platform   = if ($Win32) { 'Win32' } else { 'x64' }
-$archSuffix = if ($Win32) { '32'    } else { '64' }
-$cfgSuffix  = if ($configuration -eq 'Release') { 'r' } else { 'd' }
-$suffix     = "$archSuffix$cfgSuffix"
+    $vcvars = Join-Path $VisualStudio 'VC\Auxiliary\Build\vcvars64.bat'
+    if (-not (Test-Path $vcvars)) {
+        throw "vcvars64.bat was not found at $vcvars."
+    }
+
+    & cmd.exe /c "`"$vcvars`" >nul 2>&1 && set" | ForEach-Object {
+        if ($_ -match '^([^=]+)=(.*)$') {
+            Set-Item -LiteralPath "Env:$($Matches[1])" -Value $Matches[2]
+        }
+    }
+}
+
+# Prefer whatever is on PATH, then the copy Visual Studio ships, so neither tool
+# has to be installed separately.
+function Resolve-Tool {
+    param([string] $Name, [string] $VisualStudio, [string] $BundledRelativePath)
+
+    $onPath = Get-Command $Name -ErrorAction SilentlyContinue
+    if ($onPath) {
+        return $onPath.Source
+    }
+
+    $bundled = Join-Path $VisualStudio $BundledRelativePath
+    if (Test-Path $bundled) {
+        return $bundled
+    }
+
+    throw "$Name was not found on PATH or under $VisualStudio."
+}
+
+function Invoke-Build {
+    $vs = Get-VisualStudioPath
+    Enter-MsvcEnvironment -VisualStudio $vs
+
+    $cmake = Resolve-Tool -Name 'cmake' -VisualStudio $vs `
+        -BundledRelativePath 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
+    $ninja = Resolve-Tool -Name 'ninja' -VisualStudio $vs `
+        -BundledRelativePath 'Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe'
+
+    $env:PATH = "$(Split-Path $ninja);$env:PATH"
+
+    # The linker fails with LNK1168 if the previous build is still running.
+    Get-Process ovrwin, ovrwin-d, ovrwincli, ovrwincli-d -ErrorAction SilentlyContinue | Stop-Process -Force
+
+    $preset = $Config.ToLowerInvariant()
+
+    Push-Location $root
+    try {
+        & $cmake --preset $preset
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+        & $cmake --build --preset $preset
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
+    finally {
+        Pop-Location
+    }
+}
 
 switch ($Command) {
+    'build' { Invoke-Build }
+
     'run' {
-        $project = Join-Path $root 'app\ovrwin-app.vcxproj'
-        $exeName = "ovrwinapp$suffix.exe"
-        $exeArgs = $Arguments
+        Invoke-Build
+        Start-Process -FilePath $appExe -WorkingDirectory $root -ArgumentList $Rest
     }
+
     'test' {
-        $project = Join-Path $root 'cli\ovrwin-cli.vcxproj'
-        $exeName = "ovrwincli$suffix.exe"
-        $exeArgs = @('--test')
+        Invoke-Build
+        & $cliExe --test
+        $code = $LASTEXITCODE
+
+        # GUI subsystem app: Out-String makes PowerShell wait for it to finish.
+        & $appExe '-test' | Out-String | Write-Host
+        if ($LASTEXITCODE -ne 0) { $code = $LASTEXITCODE }
+
+        exit $code
     }
+
     'cli' {
-        $project = Join-Path $root 'cli\ovrwin-cli.vcxproj'
-        $exeName = "ovrwincli$suffix.exe"
-        $exeArgs = $Arguments
+        Invoke-Build
+        & $cliExe @Rest
+        exit $LASTEXITCODE
     }
+
     'bench' {
-        # The generated code is x64, so only an x64 build can run what it
-        # compiled; a 32-bit one would have to fall back to the emulator.
-        if ($Win32) { throw 'bench needs the x64 build: the generated code is x64.' }
-        $project = Join-Path $root 'cli\ovrwin-cli.vcxproj'
-        $exeName = "ovrwincli$suffix.exe"
-        $source  = if ($Arguments) { $Arguments[0] } else { Join-Path $root 'cc\bench\bench.c' }
-        if ($Exe) {
-            $runAfter = Join-Path $root ('bin\' + [System.IO.Path]::GetFileNameWithoutExtension($source) + '.exe')
-            $exeArgs = @('--ccexe', $source, '-o', $runAfter)
+        Invoke-Build
+
+        $source = if ($Rest) { $Rest[0] } else { Join-Path $root 'cc\bench\bench.c' }
+
+        if (-not $Exe) {
+            & $cliExe --ccnative $source
+            exit $LASTEXITCODE
         }
-        else {
-            $exeArgs = @('--ccnative', $source)
+
+        $program = Join-Path $root ('exe\' + [System.IO.Path]::GetFileNameWithoutExtension($source) + '.exe')
+        & $cliExe --ccexe $source -o $program
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+        & $program
+        $answer = $LASTEXITCODE
+        Write-Host "exit code $answer"
+
+        # What the program returned is its answer, not this script's verdict;
+        # only a fault, which comes back as a status code rather than a small
+        # number, is a failure here.
+        exit $(if ($answer -lt 0 -or $answer -gt 255) { 1 } else { 0 })
+    }
+
+    'clean' {
+        Get-Process ovrwin, ovrwin-d, ovrwincli, ovrwincli-d -ErrorAction SilentlyContinue | Stop-Process -Force
+        foreach ($path in @('build', 'exe')) {
+            $full = Join-Path $root $path
+            if (Test-Path $full) { Remove-Item -LiteralPath $full -Recurse -Force }
         }
     }
 }
-
-# Locate MSBuild via vswhere (works from any shell, no dev prompt required).
-function Get-MSBuildPath {
-    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-    if (-not (Test-Path $vswhere)) {
-        throw "vswhere.exe not found at '$vswhere'. Is Visual Studio installed?"
-    }
-
-    $installPath = & $vswhere -latest -prerelease -products * `
-        -requires Microsoft.Component.MSBuild `
-        -property installationPath
-    if (-not $installPath) {
-        throw 'Could not locate a Visual Studio installation with MSBuild.'
-    }
-
-    $candidates = @(
-        (Join-Path $installPath 'MSBuild\Current\Bin\MSBuild.exe'),
-        (Join-Path $installPath 'MSBuild\Current\Bin\amd64\MSBuild.exe')
-    )
-    foreach ($c in $candidates) {
-        if (Test-Path $c) { return $c }
-    }
-    throw "MSBuild.exe not found under '$installPath'."
-}
-
-$msbuild = Get-MSBuildPath
-
-Write-Host "Building $configuration|$platform ..." -ForegroundColor Cyan
-& $msbuild $project /m /nologo `
-    /p:Configuration=$configuration `
-    /p:Platform=$platform `
-    /p:SolutionDir="$root\"
-if ($LASTEXITCODE -ne 0) {
-    throw "Build failed with exit code $LASTEXITCODE."
-}
-
-$exePath = Join-Path $root "bin\$exeName"
-if (-not (Test-Path $exePath)) {
-    throw "Expected binary not found: $exePath"
-}
-
-Write-Host "Launching $exeName ..." -ForegroundColor Green
-if ($exeArgs) { & $exePath @exeArgs } else { & $exePath }
-$code = $LASTEXITCODE
-
-if ($runAfter -and $code -eq 0) {
-    if (-not (Test-Path $runAfter)) { throw "Expected program not found: $runAfter" }
-    Write-Host "Running $(Split-Path -Leaf $runAfter) ..." -ForegroundColor Green
-    & $runAfter
-    $answer = $LASTEXITCODE
-    Write-Host "exit code $answer"
-
-    # What the program returned is its answer, not this script's verdict; only a
-    # fault, which comes back as a status code rather than a small number, is a
-    # failure here.
-    $code = if ($answer -lt 0 -or $answer -gt 255) { 1 } else { 0 }
-}
-
-exit $code
