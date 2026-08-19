@@ -1,8 +1,11 @@
 # Build output
+build/
+exe/
 bin/
 intermediate/
 tmp/
 trace.txt
+debug_trace.log
 
 # Visual Studio
 .vs/

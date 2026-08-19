@@ -261,7 +261,7 @@ script, one build, no diff in the output.
    is still valid C++ and the fingerprint says whether it changed anything.
 7. **`cc.h`** - the public header. `cc_result` owns an arena now, and the image,
    the message and the function map all point into it. *(done)*
-8. **`build-cc.ps1`** (below), building the same sources outside MSBuild.
+8. **`build-cc.ps1`** (below), building the same sources outside CMake.
 
 At the end of step 8 nothing self-hosts yet, the compiler is C, the tests still
 pass, and the fingerprint is unchanged.
@@ -325,7 +325,7 @@ needing the compiler to be able to read its own source yet.
 
 `build-cc.ps1` stays deliberately small - find `cl` through `vswhere` the way
 `dd.ps1` does, one compile of `cc/all.c`, one of a driver, `/W4 /WX /std:c17`,
-no MSBuild. The emulator keeps its solution; only the compiler gets a script.
+no CMake. The emulator keeps its build; only the compiler gets a script.
 
 ## What to be suspicious of
 
