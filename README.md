@@ -37,9 +37,9 @@ Blaster digital audio, `EXEC` for child processes, and the 386 instruction set
 
 | Path | Contents |
 |------|----------|
-| `src/` | The emulator. Platform independent - no Windows headers, no file system. Builds `ovrwin.lib`. |
-| `host/` | The Windows implementation of the host interface: one directory presented as the emulated drive. |
-| `app/` | Win32 app: a window, a DIB blit, waveOut audio and the key mapping. |
+| `src/` | The emulator. Platform independent - no Windows headers, no file system. Builds `ovrwin_core`. |
+| `host/` | The Windows implementation of the host interface: one directory presented as the emulated drive, plus the pages the JIT executes from. Shared by the app and the CLI, and the last Windows-specific code in the repository. |
+| `app/` | The app, written against the shared [platform-h](https://github.com/ZacWalk/platform-h) layer: window, menu, picture, sound and the key mapping, with no operating system named. |
 | `cli/` | Command line driver: the test suite, plus tools to inspect, disassemble, trace and headlessly run a program. |
 | `cc/` | A C compiler for 16-bit DOS. Platform independent, and it opens no files either. `cc/include` and `cc/lib` are the C library it compiles against. |
 | `shell/` | `dos.h` and a DOS command interpreter written in C, built by `cc/`. |
@@ -52,19 +52,22 @@ Blaster digital audio, `EXEC` for child processes, and the 386 instruction set
 .\dd.ps1 test       # build + run the test suite
 .\dd.ps1 run        # build + launch the app
 .\dd.ps1 bench      # compile the benchmark for this machine and run it here
-.\dd.ps1 bench -Exe # the same, but as a standalone bin\bench.exe
+.\dd.ps1 bench -Exe # the same, but as a standalone exe\bench.exe
 .\dd.ps1 cli --info .\GAME\GAME.EXE
+.\dd.ps1 build -Config Debug
 ```
 
-Or with MSBuild directly:
+Or with CMake directly - `dd.ps1` only adds finding the toolchain:
 
 ```powershell
-msbuild ovrwin.sln /m /p:Configuration=Release /p:Platform=x64
+cmake --preset release
+cmake --build --preset release
 ```
 
-Binaries land in `bin/` as `<name><64|32><r|d>` - architecture then
-configuration, e.g. `ovrwin64d.lib`, `ovrwinapp64r.exe`, `ovrwincli64d.exe`.
-Intermediate artifacts go under `intermediate/`.
+Binaries land in `exe/` as `ovrwin.exe` and `ovrwincli.exe`, with a `-d` suffix
+for Debug. Build trees go under `build/<preset>/`. The platform layer is pulled
+in by `FetchContent` at the revision pinned in `CMakeLists.txt`, except that a
+sibling `../platform-h` checkout is used instead when one exists.
 
 ## The app
 
@@ -101,8 +104,9 @@ solid block and never an uneven one. Each axis gets its own factor, bounded so
 a pixel is at least square and at most twice as tall as it is wide - roughly
 its shape on the display a 200-line mode was written for.
 
-Emulation is paced by the sound card: each frame's audio is queued to waveOut,
-and waiting for a free buffer is what keeps the machine running at real time.
+Emulation is paced by the sound card: each frame's audio is queued to the
+platform audio stream, and waiting for room in that queue is what keeps the
+machine running at real time. With sound off it falls back to the wall clock.
 
 ## Building DOS programs
 
@@ -112,15 +116,15 @@ and because a program compiled here and run there exercises the whole emulator
 from one end to the other.
 
 ```powershell
-.\bin\ovrwincli64d.exe --cc .\shell\hello.c        # writes hello.COM
-.\bin\ovrwincli64d.exe --run .\shell\hello.COM --screen
+.\exe\ovrwincli.exe --cc .\shell\hello.c        # writes hello.COM
+.\exe\ovrwincli.exe --run .\shell\hello.COM --screen
 ```
 
 A program that wants the C library includes it, because there is nothing to
 link with:
 
 ```powershell
-.\bin\ovrwincli64d.exe --cc prog.c -I cc\include -I cc\lib -D NDEBUG
+.\exe\ovrwincli.exe --cc prog.c -I cc\include -I cc\lib -D NDEBUG
 ```
 
 It is one pass with no syntax tree, in the shape of Fabrice Bellard's Tiny C
@@ -138,9 +142,9 @@ COMMAND.COM's command set. It runs as a real DOS program inside the emulator
 and launches others through INT 21h `EXEC`:
 
 ```powershell
-.\bin\ovrwincli64d.exe --cc .\shell\shell.c
+.\exe\ovrwincli.exe --cc .\shell\shell.c
 copy .\shell\shell.COM .\GAME\
-.\bin\ovrwincli64d.exe --run .\GAME\SHELL.COM --args "dir" --screen
+.\exe\ovrwincli.exe --run .\GAME\SHELL.COM --args "dir" --screen
 ```
 
 The prompt the app comes up with is a separate, native one: it has to work
@@ -149,21 +153,21 @@ anything.
 
 ## The command line
 
-`ovrwincli64d.exe --test` runs the behavioural test suite and returns non-zero
-on failure. The same binary is the debugger:
+`ovrwincli.exe --test` runs the behavioural test suite and returns non-zero on
+failure. The same binary is the debugger:
 
 ```powershell
-.\bin\ovrwincli64d.exe --info GAME.EXE                  # MZ header, memory needed
-.\bin\ovrwincli64d.exe --cc program.c [-I dir] [-D name=value]  # compile C to a DOS .COM
-.\bin\ovrwincli64d.exe --disasm GAME.EXE 40             # disassemble from the entry point
-.\bin\ovrwincli64d.exe --run GAME.EXE --frames 400 --bmp shot.bmp
-.\bin\ovrwincli64d.exe --run GAME.EXE --trace           # every DOS and BIOS call
-.\bin\ovrwincli64d.exe --run GAME.EXE --trace-tail 200  # the last instructions executed
-.\bin\ovrwincli64d.exe --run GAME.EXE --screen --state  # text screen, registers, memory
-.\bin\ovrwincli64d.exe --run GAME.EXE --keys " \n" --key-delay 240 --bmp shot.bmp
-.\bin\ovrwincli64d.exe --run GAME.EXE --wav sound.wav    # what came out of the speaker
-.\bin\ovrwincli64d.exe --run .\GAME --args "dir" --screen  # mount a folder, use the shell
-.\bin\ovrwincli64d.exe --bench GAME.EXE --seconds 3     # guest instructions a second
+.\exe\ovrwincli.exe --info GAME.EXE                  # MZ header, memory needed
+.\exe\ovrwincli.exe --cc program.c [-I dir] [-D name=value]  # compile C to a DOS .COM
+.\exe\ovrwincli.exe --disasm GAME.EXE 40             # disassemble from the entry point
+.\exe\ovrwincli.exe --run GAME.EXE --frames 400 --bmp shot.bmp
+.\exe\ovrwincli.exe --run GAME.EXE --trace           # every DOS and BIOS call
+.\exe\ovrwincli.exe --run GAME.EXE --trace-tail 200  # the last instructions executed
+.\exe\ovrwincli.exe --run GAME.EXE --screen --state  # text screen, registers, memory
+.\exe\ovrwincli.exe --run GAME.EXE --keys " \n" --key-delay 240 --bmp shot.bmp
+.\exe\ovrwincli.exe --run GAME.EXE --wav sound.wav    # what came out of the speaker
+.\exe\ovrwincli.exe --run .\GAME --args "dir" --screen  # mount a folder, use the shell
+.\exe\ovrwincli.exe --bench GAME.EXE --seconds 3     # guest instructions a second
 ```
 
 `--trace` and `--trace-tail` are how you find out why a program gave up: the
@@ -174,10 +178,10 @@ without the app.
 
 ## Embedding
 
-Add a project reference to `src/ovrwin.vcxproj`, include `src/machine.h`, and
-link the matching `ovrwin<arch><cfg>.lib`. Implement `host_services` from
-`src/host.h` to decide what the emulated drive is, then feed the machine an
-image (`load_program`), step it with `exec(cycles)`, and read `framebuffer()`
-and `generate_audio()`. `app/app.cpp` is a complete worked host.
+Link the `ovrwin_core` CMake target and include `src/machine.h`. Implement
+`host_services` from `src/host.h` to decide what the emulated drive is, then
+feed the machine an image (`load_program`), step it with `exec(cycles)`, and
+read `framebuffer()` and `generate_audio()`. `app/main.cpp` is a complete
+worked host.
 
 Contributing, or working on this with an AI agent? See [AGENTS.md](AGENTS.md).
