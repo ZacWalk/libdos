@@ -1,5 +1,7 @@
 # ovrwin
 
+[![Build](https://github.com/ZacWalk/ovrwin/actions/workflows/build.yml/badge.svg)](https://github.com/ZacWalk/ovrwin/actions/workflows/build.yml)
+
 Runs DOS games on modern Windows. Point it at a folder with a DOS executable
 and play.
 
@@ -49,12 +51,11 @@ Blaster digital audio, `EXEC` for child processes, and the 386 instruction set
 ## Build and run
 
 ```powershell
-.\dd.ps1 test       # build + run the test suite
-.\dd.ps1 run        # build + launch the app
-.\dd.ps1 bench      # compile the benchmark for this machine and run it here
-.\dd.ps1 bench -Exe # the same, but as a standalone exe\bench.exe
-.\dd.ps1 cli --info .\GAME\GAME.EXE
-.\dd.ps1 build -Config Debug
+.\dd.ps1 build              # both configurations
+.\dd.ps1 test               # build and run the suite
+.\dd.ps1 run                # build, then launch the app
+.\dd.ps1 bench --yes        # compile the benchmark for this machine and run it
+.\dd.ps1 bench --exe true --yes   # the same, but as a standalone exe\bench.exe
 ```
 
 Or with CMake directly - `dd.ps1` only adds finding the toolchain:
