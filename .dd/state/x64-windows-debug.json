@@ -1,0 +1,15 @@
+{
+  "directory": "C:\\code\\apps\\ovrwin\\build\\debug",
+  "mapping": {
+    "configure": "debug",
+    "build": "debug",
+    "test": "debug"
+  },
+  "multiConfig": false,
+  "manifestHash": "F2C26C301FE274548BE618B6C163F1076F670B63ACD4F7FF9FE511D1060D88AA",
+  "generator": "Ninja",
+  "files": {
+    "C:\\code\\apps\\ovrwin\\CMakePresets.json": "36515D47D7DCA0D928D6A9D0610D7BE0349C61AEAB7C7176D9FBF419215FE235"
+  },
+  "root": "C:\\code\\apps\\ovrwin"
+}

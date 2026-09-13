@@ -31,7 +31,7 @@ endif()
 include(FetchContent)
 FetchContent_Declare(platform_h
     GIT_REPOSITORY https://github.com/ZacWalk/platform-h.git
-    GIT_TAG        8e9be5de233d1797ce7a2b50fe663042469611a9
+    GIT_TAG        894afaf337c722c4eafa0ec6b91fa6b83e06966e
 )
 FetchContent_MakeAvailable(platform_h)
 
@@ -103,3 +103,10 @@ foreach(target ovrwin_cli ovrwin_app)
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_SOURCE_DIR}/exe"
     )
 endforeach()
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(ovrwin_tests tests/smoke.cpp)
+    add_test(NAME ovrwin_unit COMMAND ovrwin_tests)
+    set_tests_properties(ovrwin_unit PROPERTIES TIMEOUT 30 LABELS ovrwin)
+endif()
