@@ -150,8 +150,9 @@ nothing. That keeps `src/` clean and keeps the fallback honest.
 
 **The interpreter stays.** It is the reference implementation, the oracle for
 differential testing, the only engine for `--trace` and `--trace-tail`, and the
-engine for every non-x64 build. `dd.ps1 test -Win32` must stay green, so the
-whole of `jit-x64.cpp` sits behind `#if defined(_M_X64) || defined(__x86_64__)`.
+engine for every non-x64 build, so the whole of `jit-x64.cpp` sits behind
+`#if defined(_M_X64) || defined(__x86_64__)`. The dd presets build x64 only, so
+no 32-bit build checks that guard today.
 
 `machine_state` gets one opaque pointer, `jit_state* jit`, owned by `machine`
 and explicitly not part of the observable machine: `machine_reset` flushes it,

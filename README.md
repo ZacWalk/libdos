@@ -32,8 +32,8 @@ C and built with it - see [Building DOS programs](#building-dos-programs).
 
 How it all fits together is in [docs/design.md](docs/design.md). What is missing
 or approximate is in [docs/todo.md](docs/todo.md) - headline gaps are Sound
-Blaster digital audio, `EXEC` for child processes, and the 386 instruction set
-(so a DOS extender will not run).
+Blaster digital audio, `EXEC` overlay loading, and the 386 instruction set (so
+a DOS extender will not run).
 
 ## Layout
 
