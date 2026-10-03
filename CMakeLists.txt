@@ -109,4 +109,10 @@ if(BUILD_TESTING)
     add_executable(ovrwin_tests tests/smoke.cpp)
     add_test(NAME ovrwin_unit COMMAND ovrwin_tests)
     set_tests_properties(ovrwin_unit PROPERTIES TIMEOUT 30 LABELS ovrwin)
+
+    # The real gates: the CLI's behavioural suite, then the app's offscreen self-check.
+    add_test(NAME ovrwin_cli_suite COMMAND ovrwin_cli --test)
+    add_test(NAME ovrwin_app_selftest COMMAND ovrwin_app -test)
+    set_tests_properties(ovrwin_cli_suite ovrwin_app_selftest PROPERTIES
+        TIMEOUT 120 LABELS ovrwin WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 endif()
