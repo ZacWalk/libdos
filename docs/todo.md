@@ -175,7 +175,7 @@ The bookkeeping a memory model needs is now there. `emitter` holds an
 **instruction list** rather than bytes: each entry names an operation, a width,
 and operands that may be a register, an immediate, or a memory form, and an
 operand that means an address carries a reference instead of a number. Only
-`emit.cpp` knows an opcode, so `lay_out()` can choose an encoding for each
+`emit.c` knows an opcode, so `lay_out()` can choose an encoding for each
 branch, drop what the program cannot reach, move everything that is left, and
 recompute every label. That is the smallest thing that deserves to be called an
 intermediate representation, and it is what the three pieces below all rest on.
@@ -185,13 +185,13 @@ them into three segments is arithmetic.
 There are three back ends over that one list, which is the claim it was built to
 make:
 
-- **8086**, in `emit.cpp`. The default, and what a `.COM` needs.
+- **8086**, in `emit.c`. The default, and what a `.COM` needs.
 - **386**, the same file with more to say: `SETcc` instead of a branch over a
   clear, `MOVZX`/`MOVSX` instead of a load and a fix-up, and a conditional
   branch that reaches in one instruction. Still a 16-bit `.COM` - `--cpu 386`
   is the switch, and every compiler test runs at both levels. Worth 5% of the
   instructions on the benchmark.
-- **x64**, in `emit-x64.cpp`, a second file of the same shape: a different
+- **x64**, in `emit-x64.c`, a second file of the same shape: a different
   mod/rm table, different prefixes, a branch that reaches further, and agreeing
   with the first on nothing but the opcode bytes. `--ccnative` compiles a
   program for the machine the compiler is running on, puts it in memory the

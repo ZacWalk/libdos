@@ -87,6 +87,26 @@ for a second as a smoke check. After a build the suite runs directly too:
 Build trees are per preset under `build/`; binaries land in `exe/` as
 `ovrwin.exe` and `ovrwincli.exe`, with a `-d` suffix for Debug.
 
+The [dd](https://github.com/ZacWalk/dd) build driver is vendored unmodified as
+`dd.ps1` and `.dd/`, with file hashes recorded in
+[docs/dd-upstream.json](docs/dd-upstream.json). Project settings live in
+`dd.psd1`; platform-h, the one dependency, is pinned by the `GIT_TAG` in
+`CMakeLists.txt`, not in `cmake/dd-dependencies.json`.
+`.\dd.ps1 commands --json` lists this project's own commands. dd's
+[two modes](https://github.com/ZacWalk/dd/blob/main/docs/mcp.md#two-modes) —
+CLI, and MCP for an MCP client — and its
+[commands](https://github.com/ZacWalk/dd/blob/main/docs/cli.md#commands) are
+documented in its own repository.
+
+`dd bench` compiles a C source with ovrwin's own compiler and runs it (ported
+from the pre-dd driver). Build the CLI first with `dd build`:
+
+```pwsh
+.\dd.ps1 bench --dry-run                 # default source cc/bench/bench.c, run natively
+.\dd.ps1 bench --exe true --yes          # emit an executable into exe/ then run it
+.\dd.ps1 bench --source cc/bench/other.c --yes
+```
+
 The app builds against a sibling `../platform-h` checkout when one exists and
 against the pinned revision in `CMakeLists.txt` otherwise - so a green local
 build says nothing about the pin. After changing platform-h, push it and re-pin
@@ -147,36 +167,3 @@ the headless form and `dd.ps1 launch` is for the human.
 ## Known Gaps
 
 The gap list lives in [docs/todo.md](docs/todo.md). Keep it current.
-
-## dd build system
-
-This repo uses the vendored dd build system. dd has two modes.
-
-**CLI mode** is the default; each verb runs once and exits:
-
-```pwsh
-.\dd.ps1 test                  # build both configs and run the suite
-.\dd.ps1 build debug
-.\dd.ps1 doctor --json
-.\dd.ps1 commands --json       # list this project's own commands
-```
-
-**MCP mode** — `.\dd.ps1 mcp` turns the process into a stdio JSON-RPC server for an
-MCP client, adapting typed requests onto CLI mode. It owns stdout for protocol
-messages, so it prints no result envelope and rejects `--json`. Register it with
-`.\dd.ps1 ide --mcp`.
-
-Project settings live in `dd.psd1`; dependency pins live in
-`cmake/dd-dependencies.json` with `dependencies.owner = 'dd'`. Vendored dd file
-hashes are recorded in `docs/dd-upstream.json`.
-
-### Project commands
-
-`dd bench` compiles a C source with ovrwin's own compiler and runs it (ported from
-the pre-dd driver). Build the CLI first with `dd build`.
-
-```pwsh
-.\dd.ps1 bench --dry-run                 # default source cc/bench/bench.c, run natively
-.\dd.ps1 bench --exe true --yes          # emit an executable into exe/ then run it
-.\dd.ps1 bench --source cc/bench/other.c --yes
-```
