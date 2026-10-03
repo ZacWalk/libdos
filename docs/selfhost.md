@@ -1,7 +1,8 @@
 # Making cc compile itself
 
-The compiler is 6,800 lines of C++ across four files. This is the plan for
-turning it into C that it can read, and then for feeding it its own source.
+The compiler was 6,800 lines of C++ across four files when this plan began. It
+is the plan for turning that into C the compiler can read, and then for feeding
+it its own source; steps marked *(done)* have landed.
 
 Two separate goals hide inside "self-hosting", and they should be kept apart or
 neither gets finished:
