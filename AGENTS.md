@@ -63,26 +63,24 @@ system or archive attribute.
 
 ## Build And Validation
 
-`dd.ps1` builds and runs in one step. It finds Visual Studio with `vswhere` and
-falls back to the CMake and Ninja that ship with it, so no developer prompt is
-needed and nothing has to be installed. Release is the default:
+Build with the vendored dd driver in PowerShell 7.4+. It sets up the MSVC
+environment itself, so no developer prompt is needed. `build` and `test` cover
+Debug and Release unless one is named:
 
 ```powershell
-.\dd.ps1 test               # build + the CLI suite and the app's offscreen check
-.\dd.ps1 run                # build + launch the app
-.\dd.ps1 bench              # build, compile the benchmark for this machine, run it
-.\dd.ps1 bench -Exe         # the same, as a standalone exe\bench.exe
-.\dd.ps1 cli --info GAME.EXE
-.\dd.ps1 cli --cc .\shell\shell.c
-.\dd.ps1 test -Config Debug
-.\dd.ps1 clean
+.\dd.ps1 test --label ovrwin        # build + the CLI suite and the app's offscreen check
+.\dd.ps1 build release              # or debug
+.\dd.ps1 launch                     # build Release + start the app (for the human)
+.\dd.ps1 run cli -- --info GAME.EXE
+.\dd.ps1 run cli -- --cc .\shell\shell.c
+.\dd.ps1 bench --yes                # compile the benchmark for this machine and run it
+.\dd.ps1 clean --dry-run
 ```
 
-Direct CMake after any source change:
+Use `--label ovrwin`: an unfiltered `.\dd.ps1 test` also opens the app's window
+for a second as a smoke check. After a build the suite runs directly too:
 
 ```powershell
-cmake --preset release
-cmake --build --preset release
 .\exe\ovrwincli.exe --test    # returns non-zero on failure
 ```
 
@@ -140,11 +138,11 @@ whether a test already encodes the current behaviour:
   variadic functions. A second pair of programs pins `EXEC`.
 - The disassembler, which the debugger depends on.
 
-A green build proves nothing on its own - run `.\dd.ps1 test` and check for
-`FAIL` lines. It runs the CLI suite and then the app's offscreen self-check,
-which pins the picture scaling and that the framebuffer reaches the screen.
-Do not launch the GUI to verify a change; `ovrwin.exe -test` is the headless
-form and `dd.ps1 run` is for the human.
+A green build proves nothing on its own - run `.\dd.ps1 test --label ovrwin`.
+It runs the CLI suite and then the app's offscreen self-check, which pins the
+picture scaling and that the framebuffer reaches the screen, in both
+configurations. Do not launch the GUI to verify a change; `ovrwin.exe -test` is
+the headless form and `dd.ps1 launch` is for the human.
 
 ## Known Gaps
 
@@ -181,4 +179,4 @@ the pre-dd driver). Build the CLI first with `dd build`.
 .\dd.ps1 bench --dry-run                 # default source cc/bench/bench.c, run natively
 .\dd.ps1 bench --exe true --yes          # emit an executable into exe/ then run it
 .\dd.ps1 bench --source cc/bench/other.c --yes
-```;
+```
