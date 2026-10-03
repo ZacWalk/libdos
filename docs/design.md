@@ -9,9 +9,9 @@ Four pieces, with a hard boundary between the first and the rest:
 
 | | |
 |---|---|
-| `src/` | The emulator. Platform independent: no Windows headers, no file system, no threads. Builds `ovrwin.lib`. |
+| `src/` | The emulator. Platform independent: no Windows headers, no file system, no threads. Builds `ovrwin_core`. |
 | `host/` | The Windows side of `host_services`: one directory presented as the emulated drive. |
-| `app/` | A Win32 host. Owns the window, GDI, waveOut and the menus. |
+| `app/` | The platform-h host. Owns the window, picture, sound and menus through `pf::`. |
 | `cli/` | A console harness that drives the library headlessly and doubles as the debugger. |
 | `cc/` | A C compiler targeting 16-bit DOS. Platform independent, and like `src/` it opens no files. |
 | `shell/` | A DOS command interpreter written in C and built by `cc/`. |
@@ -309,4 +309,4 @@ The disassembler in `debug.cpp` is shared by the CLI, and the CLI's
    caller and returns.
 4. State a program can observe lives in emulated memory, not in C++ fields.
 5. `cli/main.cpp` is the contract. A green build proves nothing; run
-   `.\dd.ps1 test`.
+   `.\dd.ps1 test --label ovrwin`.
