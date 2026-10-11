@@ -502,6 +502,15 @@ namespace
 			case pf::mouse_message_type::right_button_down:
 				g_emulator->mouse_button(1, true);
 				return 0;
+			case pf::mouse_message_type::right_button_up:
+				g_emulator->mouse_button(1, false);
+				return 0;
+			case pf::mouse_message_type::middle_button_down:
+				g_emulator->mouse_button(2, true);
+				return 0;
+			case pf::mouse_message_type::middle_button_up:
+				g_emulator->mouse_button(2, false);
+				return 0;
 			default:
 				return 0;
 			}
@@ -681,6 +690,17 @@ namespace
 		g_emulator->text_screen(screen, sizeof(screen));
 		check(std::string_view(screen).find(">a") != std::string_view::npos,
 		      "a key held when the window loses the focus is let go");
+
+		// A program sees a button held until its release arrives, and the
+		// middle button is the driver's third.
+		const auto buttons = [] { return g_emulator->state().bios.mouse.buttons; };
+		const pf::mouse_params click{};
+		g_reactor->handle_mouse(frame, pf::mouse_message_type::right_button_down, click);
+		g_reactor->handle_mouse(frame, pf::mouse_message_type::middle_button_down, click);
+		check(buttons() == 6, "the right and middle buttons reach the machine");
+		g_reactor->handle_mouse(frame, pf::mouse_message_type::right_button_up, click);
+		g_reactor->handle_mouse(frame, pf::mouse_message_type::middle_button_up, click);
+		check(buttons() == 0, "the right and middle buttons are let go");
 
 		// The close box and Alt+F4 arrive as nothing but a close message, so
 		// that is how the self-check ends the session too.
