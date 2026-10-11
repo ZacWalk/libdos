@@ -175,7 +175,8 @@ It runs two CTest entries in each configuration: `ovrwin_cli_suite`, the CLI
 suite, and `ovrwin_app_selftest`, the app's offscreen self-check, which pins the
 picture scaling, that the framebuffer reaches the screen, that a repaint draws
 the picture rather than leaving the window black, that a key held when the
-window loses the focus is let go, and that a close message ends the session.
+window loses the focus is let go, that the right and middle mouse buttons are
+let go, and that a close message ends the session.
 There is no separate unit-test binary; a new check of
 `src/` or `cc/` goes in the CLI suite. Do not launch the GUI to verify a change;
 `ovrwin.exe -test` is the headless form and `dd.ps1 launch` is for the human.

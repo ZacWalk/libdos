@@ -317,15 +317,6 @@ the DOS one does through `EXEC`; it resets the machine instead.
 - Alt, Alt+key and F10 never reach a program in the app: platform-h does not
   forward `WM_SYSKEYDOWN`/`WM_SYSKEYUP`, so Windows uses them for the menu bar
   instead. The BIOS translates Alt combinations for when they do arrive.
-- The right mouse button stays down once pressed in the app, and the middle
-  button is never seen: the platform-h revision ovrwin pins (`894afaf`) reports
-  the right button's press but not its release, and nothing of the middle
-  button. platform-h now reports both (`right_button_up`, `middle_button_down`,
-  `middle_button_up`), and ovrwin adopts them once its pin moves past that
-  change: `handle_mouse` in `app/main.cpp` passes `right_button_up` to
-  `mouse_button(1, false)`, and the middle pair as button 2. Not before - a
-  local build against a sibling `../platform-h` compiles it, but CI builds the
-  pin.
 - No joystick. Port 201h reports nothing attached.
 
 ## Host and app
