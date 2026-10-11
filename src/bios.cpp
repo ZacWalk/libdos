@@ -123,27 +123,83 @@ void bios_keyboard_interrupt(machine_state& s)
 	default: break;
 	}
 	write8(s, bda_segment, bda_keyboard_flags, flags);
+
+	// Shift, Ctrl, Alt and the three locks only change the flags. A BIOS never
+	// puts them in the buffer, where a program would read them as keys.
+	switch (make)
+	{
+	case 0x1d: case 0x2a: case 0x36: case 0x38: case 0x3a: case 0x45: case 0x46: return;
+	default: break;
+	}
 	if (release || make >= 0x59) return;
 
 	const bool shift = (flags & 0x03) != 0;
 	const bool control = (flags & 0x04) != 0;
+	const bool alt = (flags & 0x08) != 0;
 	const bool caps = (flags & 0x40) != 0;
 	const bool num_lock = (flags & 0x20) != 0;
 
+	uint8_t scancode = make;
 	uint8_t ascii = shift ? ascii_shifted[make] : ascii_plain[make];
 	// The cursor pad shares its scancodes with the numeric keypad; without
-	// NumLock those keys are extended keys with no character.
-	if (!num_lock && make >= 0x47 && make <= 0x53) ascii = 0;
+	// NumLock those keys are extended keys with no character, Shift or not, so
+	// Shift+Left stays an arrow. The keypad's minus and plus have no second
+	// meaning and always type.
+	if (!num_lock && make >= 0x47 && make <= 0x53 && make != 0x4a && make != 0x4e) ascii = 0;
 	if (caps && ascii >= 'a' && ascii <= 'z') ascii = uint8_t(ascii - 32);
 	else if (caps && shift && ascii >= 'A' && ascii <= 'Z') ascii = uint8_t(ascii + 32);
-	if (control)
+
+	// With a modifier held, a function key, and the cursor pad under Ctrl,
+	// report codes of their own rather than the key's scancode: that is how a
+	// program tells Shift+F1 from F1, or Ctrl+Left from Left.
+	if (make >= 0x3b && make <= 0x44)
 	{
-		if (ascii >= 'a' && ascii <= 'z') ascii = uint8_t(ascii - 'a' + 1);
-		else if (ascii >= 'A' && ascii <= 'Z') ascii = uint8_t(ascii - 'A' + 1);
-		else if (make == 0x0e) ascii = 0x7f;
-		else ascii = 0;
+		const int index = make - 0x3b;
+		scancode = uint8_t(alt ? 0x68 + index : control ? 0x5e + index : shift ? 0x54 + index : make);
+		ascii = 0;
 	}
-	bios_push_key(s, make, ascii);
+	else if (make == 0x57 || make == 0x58)
+	{
+		scancode = uint8_t((alt ? 0x8b : control ? 0x89 : shift ? 0x87 : 0x85) + make - 0x57);
+		ascii = 0;
+	}
+	else if (alt)
+	{
+		if (make >= 0x02 && make <= 0x0d) scancode = uint8_t(make + 0x76); // Alt+1 is 7800h
+		ascii = 0;
+	}
+	else if (control)
+	{
+		static const uint8_t control_pad[13] = {
+			0x77, 0x8d, 0x84, 0x8e, 0x73, 0x8f, 0x74, 0x90, 0x75, 0x91, 0x76, 0x92, 0x93,
+		};
+		if (make >= 0x47 && make <= 0x53)
+		{
+			scancode = control_pad[make - 0x47];
+			ascii = 0;
+		}
+		else if (ascii >= 'a' && ascii <= 'z') ascii = uint8_t(ascii - 'a' + 1);
+		else if (ascii >= 'A' && ascii <= 'Z') ascii = uint8_t(ascii - 'A' + 1);
+		else
+		{
+			switch (make)
+			{
+			case 0x01: ascii = 0x1b; break; // Esc
+			case 0x07: ascii = 0x1e; break; // 6
+			case 0x0c: ascii = 0x1f; break; // -
+			case 0x0e: ascii = 0x7f; break; // Backspace
+			case 0x0f: scancode = 0x94; ascii = 0; break; // Tab
+			case 0x1a: ascii = 0x1b; break; // [
+			case 0x1b: ascii = 0x1d; break; // ]
+			case 0x1c: ascii = 0x0a; break; // Enter
+			case 0x2b: ascii = 0x1c; break; // backslash
+			case 0x37: scancode = 0x96; ascii = 0; break; // keypad *
+			case 0x39: ascii = 0x20; break; // Space
+			default: ascii = 0; break;
+			}
+		}
+	}
+	bios_push_key(s, scancode, ascii);
 }
 
 namespace

@@ -2257,7 +2257,15 @@ namespace
 				// turns into the integer the rest of the compiler can use.
 				if (is_real(v.type) && !is_real(cast)) v.constant = long(v.real);
 				else if (is_real(cast)) v.real = double(v.constant);
-				if (!is_wide(cast) && !is_real(cast)) v.constant = long(int16_t(v.constant));
+				if (!is_wide(cast) && !is_real(cast))
+				{
+					// Narrowed the way the target's register would hold it, so
+					// (unsigned)0x8000 >> 15 is 1 and not a sign-extended -1.
+					if (type_size(cast) == 1)
+						v.constant = is_unsigned(cast) ? long(uint8_t(v.constant)) : long(int8_t(v.constant));
+					else
+						v.constant = is_unsigned(cast) ? long(uint16_t(v.constant)) : long(int16_t(v.constant));
+				}
 				v.type = cast;
 				return v;
 			}
@@ -2665,6 +2673,9 @@ namespace
 
 		if (target.kind != val_local && target.kind != val_global && target.kind != val_deref)
 			fail("cannot assign to this expression");
+		// Neither would fail on its own: each compiles to a store of one word.
+		if (is_array(target.type)) fail("cannot assign to an array");
+		if (is_record(target.type)) fail("structure assignment is not supported");
 		advance();
 
 		if (simple)
@@ -3924,6 +3935,13 @@ namespace
 				symbols_[size_t(index)].parameters = parameters;
 				if (kind() == tok::l_brace)
 				{
+					if (symbols_[size_t(index)].defined)
+						fail(("redefinition of function: " + std::string(name_text(name))).c_str());
+					// A structure would travel as its address and be read as
+					// its first word, so refuse rather than miscompile.
+					if (is_record(type(declared).base)) fail("returning a structure is not supported");
+					for (const int parameter : parameters)
+						if (is_record(parameter)) fail("passing a structure by value is not supported");
 					function_body(index, parameters, parameter_names);
 					return;
 				}

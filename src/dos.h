@@ -51,13 +51,21 @@ struct dos_state
 	uint16_t load_segment = 0;
 	uint32_t dta = 0; // segment:offset, packed seg << 16 | offset
 	uint8_t current_drive = 2; // 0 = A:
-	char cwd[3][64] = {}; // per-drive current directory, no leading backslash
+	char cwd[3][64] = {}; // per-drive current directory, "\GAMES\WL" with no trailing backslash
 	uint8_t return_code = 0;
 	uint8_t return_type = 0;
 	bool terminated = false;
 	bool ctrl_break = false;
 	uint8_t verify = 0;
 	uint8_t switch_char = '/';
+
+	// The INT 21h AH=0Ah read in progress, as DS:DX, which spans one call per key.
+	bool line_input = false;
+	uint32_t line_buffer = 0;
+
+	// The scancode an extended key still owes the next AH=01h/06h/07h/08h.
+	bool extended_pending = false;
+	uint8_t extended_scancode = 0;
 
 	dos_file files[dos_max_files];
 	dos_search searches[dos_max_searches];

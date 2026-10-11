@@ -106,11 +106,9 @@ endforeach()
 
 include(CTest)
 if(BUILD_TESTING)
-    add_executable(ovrwin_tests tests/smoke.cpp)
-    add_test(NAME ovrwin_unit COMMAND ovrwin_tests)
-    set_tests_properties(ovrwin_unit PROPERTIES TIMEOUT 30 LABELS ovrwin)
-
-    # The real gates: the CLI's behavioural suite, then the app's offscreen self-check.
+    # The gates: the CLI's behavioural suite, then the app's offscreen self-check.
+    # A new check of src/ or cc/ goes in the CLI suite; there is no separate unit
+    # test binary.
     add_test(NAME ovrwin_cli_suite COMMAND ovrwin_cli --test)
     add_test(NAME ovrwin_app_selftest COMMAND ovrwin_app -test)
     set_tests_properties(ovrwin_cli_suite ovrwin_app_selftest PROPERTIES

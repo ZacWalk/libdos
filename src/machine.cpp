@@ -341,7 +341,13 @@ bool machine::shell_active() const { return state_->shell.active; }
 
 bool machine::run_program(const char* name, const char* command_line)
 {
-	return shell_run(*state_, name, command_line);
+	machine_state& s = *state_;
+	if (!shell_run(s, name, command_line)) return false;
+
+	// Typing the name would have brought the prompt back after a program that
+	// would not load; a host starting one directly gets the same.
+	if (s.shell.active && !s.shell.program_running) shell_prompt(s);
+	return true;
 }
 
 bool machine::exited() const { return state_->exited; }

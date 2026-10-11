@@ -13,15 +13,15 @@
 
 param(
 	[switch]$Save,
-	[switch]$Release,
-	[switch]$Win32
+	[switch]$Release
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$name = 'ovrwincli' + $(if ($Win32) { '32' } else { '64' }) + $(if ($Release) { 'r' } else { 'd' }) + '.exe'
-$cli = Join-Path $root "bin\$name"
-if (-not (Test-Path $cli)) { throw "$cli is not built. Run .\dd.ps1 test first." }
+# dd builds the CLI into exe\, with a -d suffix for Debug.
+$name = 'ovrwincli' + $(if ($Release) { '' } else { '-d' }) + '.exe'
+$cli = Join-Path $root "exe\$name"
+if (-not (Test-Path $cli)) { throw "$cli is not built. Run .\dd.ps1 build first." }
 
 # Each entry is compiled to a .COM; the bytes are what is being pinned.
 $corpus = @(
