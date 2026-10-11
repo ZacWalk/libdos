@@ -170,6 +170,9 @@ void dos_resolve_path(machine_state& s, const char* input, char* out, int out_si
 		const int index = (drive - 'A') < 3 ? (drive - 'A') : 2;
 		const char* cwd = s.dos.cwd[index];
 		for (int i = 0; cwd[i] != 0 && length < 200; ++i) work[length++] = cwd[i];
+		// The current directory has no trailing backslash, so the relative
+		// part needs one; "\GAMES" and "WL.EXE" are "\GAMES\WL.EXE".
+		work[length++] = '\\';
 	}
 
 	for (int i = 0; rest[i] != 0 && length < 200; ++i)
@@ -250,6 +253,29 @@ namespace
 		if (bios_pop_key(s, key)) return true;
 		if (wait) bios_retry_interrupt(s);
 		return false;
+	}
+
+	// What DOS's character functions hand a program: a key with no character,
+	// such as F1 or an arrow, comes back as 0 and then as its scancode on the
+	// next call, which is how a program reads one.
+	bool console_char(machine_state& s, uint8_t& ch, bool wait)
+	{
+		dos_state& d = s.dos;
+		if (d.extended_pending)
+		{
+			d.extended_pending = false;
+			ch = d.extended_scancode;
+			return true;
+		}
+		uint16_t key = 0;
+		if (!console_read(s, key, wait)) return false;
+		ch = uint8_t(key & 0xff);
+		if (ch == 0)
+		{
+			d.extended_pending = true;
+			d.extended_scancode = uint8_t(key >> 8);
+		}
+		return true;
 	}
 
 	uint32_t dta_address(machine_state& s)
@@ -1006,10 +1032,12 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 
 	case 0x01: case 0x07: case 0x08:
 	{
-		uint16_t key = 0;
-		if (!console_read(s, key, true)) return true;
-		c.set_al(uint8_t(key & 0xff));
-		if (c.ah() == 0x01) console_write(s, c.al());
+		const bool second_half = d.extended_pending;
+		uint8_t ch = 0;
+		if (!console_char(s, ch, true)) return true;
+		c.set_al(ch);
+		// Neither half of an extended key is a character to echo.
+		if (c.ah() == 0x01 && ch != 0 && !second_half) console_write(s, ch);
 		return true;
 	}
 
@@ -1028,15 +1056,15 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 	case 0x06:
 		if (c.dl() == 0xff)
 		{
-			uint16_t key = 0;
-			if (!console_read(s, key, false))
+			uint8_t ch = 0;
+			if (!console_char(s, ch, false))
 			{
 				cpu_set_iret_flag(s, flag_zf, true);
 				c.set_al(0);
 				return true;
 			}
 			cpu_set_iret_flag(s, flag_zf, false);
-			c.set_al(uint8_t(key & 0xff));
+			c.set_al(ch);
 			return true;
 		}
 		console_write(s, c.dl());
@@ -1055,8 +1083,17 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 	case 0x0a:
 	{
 		// Buffered input: gather a line, one key per call, so the machine
-		// keeps running while the user types.
+		// keeps running while the user types. The count typed so far lives in
+		// the buffer's second byte, which on entry to a fresh read is only the
+		// template DOS offers for editing, so a new read starts it at zero.
 		const uint16_t buffer = c.dx();
+		const uint32_t where = (uint32_t(c.ds()) << 16) | buffer;
+		if (!d.line_input || d.line_buffer != where)
+		{
+			d.line_input = true;
+			d.line_buffer = where;
+			write8(s, c.ds(), uint16_t(buffer + 1), 0);
+		}
 		const uint8_t capacity = read8(s, c.ds(), buffer);
 		uint8_t length = read8(s, c.ds(), uint16_t(buffer + 1));
 		uint16_t key = 0;
@@ -1065,10 +1102,12 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 		const uint8_t ch = uint8_t(key & 0xff);
 		if (ch == 13)
 		{
+			// Only the carriage return is echoed, as DOS does: the cursor
+			// goes back to the start of the line and the caller moves on.
 			write8(s, c.ds(), uint16_t(buffer + 2 + length), 13);
 			write8(s, c.ds(), uint16_t(buffer + 1), length);
 			console_write(s, '\r');
-			console_write(s, '\n');
+			d.line_input = false;
 			return true;
 		}
 		if (ch == 8)
@@ -1095,7 +1134,7 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 	case 0x0b:
 	{
 		uint16_t key = 0;
-		c.set_al(bios_peek_key(s, key) ? 0xff : 0x00);
+		c.set_al(d.extended_pending || bios_peek_key(s, key) ? 0xff : 0x00);
 		return true;
 	}
 
@@ -1104,6 +1143,7 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 		{
 			uint16_t key = 0;
 			while (bios_pop_key(s, key)) {}
+			d.extended_pending = false;
 			if (c.al() == 0x01 || c.al() == 0x06 || c.al() == 0x07 || c.al() == 0x08 || c.al() == 0x0a)
 			{
 				c.set_ah(c.al());

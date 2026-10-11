@@ -28,7 +28,9 @@ if (-not $sourcePath.StartsWith([IO.Path]::GetFullPath($root), $(if ($IsWindows)
 }
 
 $emitExe = [bool]$p.exe
-$program = Join-Path $root ('exe/' + [IO.Path]::GetFileNameWithoutExtension($sourcePath) + $ext)
+# dd wants the files a command wrote as project-relative paths.
+$programRelative = 'exe/' + [IO.Path]::GetFileNameWithoutExtension($sourcePath) + $ext
+$program = Join-Path $root $programRelative
 
 $plan = @{ command = 'bench'; cli = $cli; source = $source; mode = $(if ($emitExe) { 'ccexe' } else { 'ccnative' }) }
 if ($emitExe) { $plan.program = $program }
@@ -62,5 +64,5 @@ $answer = $LASTEXITCODE
 # surfaces as a status code rather than a small number, counts as a failure here.
 $failed = $answer -lt 0 -or $answer -gt 255
 @{ schema = 1; data = @{ status = 'complete'; plan = $plan; answer = $answer; compile = $compile; output = $run }
-    files = @($program) } | ConvertTo-Json -Depth 10 -Compress | Write-Output
+    files = @($programRelative) } | ConvertTo-Json -Depth 10 -Compress | Write-Output
 exit $(if ($failed) { 1 } else { 0 })

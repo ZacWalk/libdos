@@ -192,13 +192,15 @@ static cc_macro* macro_define(cc_preprocessor* p, int name)
 	return entry;
 }
 
-static void skip_space(cc_preprocessor* p, int* at_line_start)
+/* Returns 0 only for a comment that never ends, which would otherwise take the
+ * rest of the file with it and leave a misleading error behind. */
+static int skip_space(cc_preprocessor* p, int* at_line_start)
 {
 	cc_scanner* s = current(p);
 	for (;;)
 	{
 		char c;
-		if (s->position >= s->length) return;
+		if (s->position >= s->length) return 1;
 		c = s->text[s->position];
 		if (c == '\n')
 		{
@@ -234,6 +236,7 @@ static void skip_space(cc_preprocessor* p, int* at_line_start)
 			}
 			if (s->text[s->position + 1] == '*')
 			{
+				const int opened = s->line;
 				s->position += 2;
 				while (s->position + 1 < s->length &&
 				       !(s->text[s->position] == '*' && s->text[s->position + 1] == '/'))
@@ -241,11 +244,16 @@ static void skip_space(cc_preprocessor* p, int* at_line_start)
 					if (s->text[s->position] == '\n') ++s->line;
 					++s->position;
 				}
+				if (s->position + 1 >= s->length)
+				{
+					s->line = opened;
+					return fail(p, "unterminated comment");
+				}
 				s->position += 2;
 				continue;
 			}
 		}
-		return;
+		return 1;
 	}
 }
 
@@ -282,7 +290,7 @@ static int next_raw(cc_preprocessor* p, cc_token* token, int* at_line_start, int
 	size_t i;
 
 	*have = 0;
-	skip_space(p, at_line_start);
+	if (!skip_space(p, at_line_start)) return 0;
 	s = current(p);
 	if (s->position >= s->length) return 1;
 
@@ -399,9 +407,10 @@ static int next_raw(cc_preprocessor* p, cc_token* token, int* at_line_start, int
 		token->value = value;
 		if (value > 65535 || value < -32768) token->wide = 1;
 		/* A decimal literal is never unsigned unless it says so, so one that
-		 * does not fit in an int is a long. A hex or octal one may be an
+		 * does not fit in an int is a long, and one with a U suffix that fits
+		 * in 16 bits is an unsigned int. A hex or octal one may be an
 		 * unsigned int first, which is what makes 0xFFFF mean 65535. */
-		else if (base_ten && value > 32767) token->wide = 1;
+		else if (base_ten && value > 32767 && !token->unsigned_literal) token->wide = 1;
 		*have = 1;
 		return 1;
 	}
@@ -1216,6 +1225,8 @@ static int run(cc_preprocessor* p, const char* text, const char* name,
 	size_t length = 0;
 	int i;
 	int kept;
+	int end_line = 1;
+	const char* end_file = NULL;
 
 	normalised = cc_normalise_source(p->arena, text, strlen(text), &length);
 	if (normalised == NULL) return fail(p, "out of memory");
@@ -1227,6 +1238,7 @@ static int run(cc_preprocessor* p, const char* text, const char* name,
 	first->position = 0;
 	first->line = 1;
 	first->file = cc_name_text(p->names, intern_word(p, name));
+	end_file = first->file;
 
 	macro_define(p, intern_word(p, "__OVRWIN__"));
 	macro_define(p, intern_word(p, "__DOS__"));
@@ -1285,6 +1297,21 @@ static int run(cc_preprocessor* p, const char* text, const char* name,
 
 		if (current(p)->position >= current(p)->length)
 		{
+			/* The end of the input is the end of the main file: an error
+			 * found there is reported on its last line, and a conditional
+			 * still open there was never closed. */
+			if (p->stack.count == 1)
+			{
+				cc_scanner* last = current(p);
+				end_line = last->line;
+				if (last->length > 0 && last->text[last->length - 1] == '\n' && end_line > 1) --end_line;
+				end_file = last->file;
+				if (p->conditions.count > 0)
+				{
+					last->line = end_line;
+					return fail(p, "unterminated #if");
+				}
+			}
 			p->stack.count -= 1;
 			continue;
 		}
@@ -1310,6 +1337,8 @@ static int run(cc_preprocessor* p, const char* text, const char* name,
 		cc_token end;
 		memset(&end, 0, sizeof(end));
 		end.kind = tok_end;
+		end.line = end_line;
+		end.file = end_file;
 		token_list_add(&p->out->tokens, &end);
 	}
 

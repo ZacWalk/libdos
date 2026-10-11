@@ -35,6 +35,7 @@ namespace
 	constexpr int samples_per_frame = sound_sample_rate / 60;
 
 	pf::window_frame_ptr g_frame;
+	std::shared_ptr<pf::frame_reactor> g_reactor;
 	std::unique_ptr<machine> g_emulator;
 	std::unique_ptr<win32_host> g_host;
 	pf::audio_stream_ptr g_audio;
@@ -43,6 +44,12 @@ namespace
 	bool g_running = true;
 	bool g_paused = false;
 	bool g_sound_on = true;
+
+	// What the machine has been told is held down. A key let go while another
+	// window has the focus - a dialog a shortcut such as Ctrl+O opened, or
+	// another application - is released there, so without this it would stay
+	// down in the machine and turn every later key into Ctrl+key.
+	std::array<bool, 256> g_keys_down = {};
 
 	pf::isize g_client;
 
@@ -64,8 +71,9 @@ namespace
 	picture_layout g_layout;
 
 	// The window-sized surface everything is composed into, so the letterbox
-	// and the picture arrive in one blit and nothing flickers.
-	std::vector<uint32_t> g_surface;
+	// and the picture arrive in one blit and nothing flickers. A bitmap, so a
+	// repaint can hand it to the paint context as well.
+	pf::bitmap g_surface;
 
 	// Source column for each visible destination column, so scaling costs no
 	// divide per pixel.
@@ -93,7 +101,9 @@ namespace
 	// then left alone, because the picture covers the rest of every frame.
 	void rebuild_surface(const picture_layout& layout)
 	{
-		g_surface.assign(static_cast<size_t>(g_client.cx) * g_client.cy, 0);
+		g_surface.width = g_client.cx;
+		g_surface.height = g_client.cy;
+		g_surface.pixels.assign(static_cast<size_t>(g_client.cx) * g_client.cy, 0);
 
 		const int first = std::max(0, layout.x);
 		const int last = std::min(g_client.cx, layout.x + layout.width * layout.scale_x);
@@ -103,21 +113,23 @@ namespace
 			g_columns.push_back((dx - layout.x) / layout.scale_x);
 	}
 
-	void present()
+	// Draws the current frame into the surface. False when there is nothing
+	// to show yet.
+	bool compose()
 	{
-		if (!g_frame || g_client.cx <= 0 || g_client.cy <= 0) return;
+		if (!g_emulator || g_client.cx <= 0 || g_client.cy <= 0) return false;
 
 		const auto layout = compute_layout();
-		if (layout.width <= 0 || layout.height <= 0) return;
+		if (layout.width <= 0 || layout.height <= 0) return false;
 
-		if (layout != g_layout || g_surface.size() != static_cast<size_t>(g_client.cx) * g_client.cy)
+		if (layout != g_layout || g_surface.pixels.size() != static_cast<size_t>(g_client.cx) * g_client.cy)
 		{
 			g_layout = layout;
 			rebuild_surface(layout);
 		}
 
 		const uint32_t* source = g_emulator->framebuffer();
-		if (source == nullptr || g_columns.empty()) return;
+		if (source == nullptr || g_columns.empty()) return false;
 
 		const int first_x = std::max(0, layout.x);
 		const int first_y = std::max(0, layout.y);
@@ -127,11 +139,17 @@ namespace
 		{
 			const uint32_t* row = source +
 				static_cast<size_t>((dy - layout.y) / layout.scale_y) * layout.width;
-			uint32_t* out = g_surface.data() + static_cast<size_t>(dy) * g_client.cx + first_x;
+			uint32_t* out = g_surface.pixels.data() + static_cast<size_t>(dy) * g_client.cx + first_x;
 			for (const int sx : g_columns) *out++ = row[sx];
 		}
+		return true;
+	}
 
-		g_frame->present_pixels(g_surface.data(), g_client.cx, g_client.cy);
+	// The frame loop's way to the screen: straight to the window, between
+	// paints. A repaint goes through handle_paint instead.
+	void present()
+	{
+		if (g_frame && compose()) g_frame->present_pixels(g_surface.pixels.data(), g_client.cx, g_client.cy);
 	}
 
 	void update_title()
@@ -192,25 +210,23 @@ namespace
 		return true;
 	}
 
-	// Accepts either a program or a folder, which is what a drop can be.
-	void open_path(const pf::file_path& path)
+	// Accepts either a program or a folder, which is what a drop can be. False
+	// when nothing was mounted, so whatever was running before still is.
+	bool open_path(const pf::file_path& path)
 	{
-		if (pf::is_directory(path))
-		{
-			mount(path);
-			return;
-		}
+		if (pf::is_directory(path)) return mount(path);
 
 		if (!path.exists())
 		{
 			report("Cannot open that path.");
-			return;
+			return false;
 		}
 
 		const auto folder = path.folder();
-		if (!mount(folder.empty() ? pf::file_path{"."} : folder)) return;
+		if (!mount(folder.empty() ? pf::file_path{"."} : folder)) return false;
 		if (!g_emulator->run_program(path.name().c_str(), "")) report("That file is not a DOS program.");
 		update_title();
+		return true;
 	}
 
 	void open_program()
@@ -231,6 +247,27 @@ namespace
 	{
 		g_paused = !g_paused;
 		update_title();
+	}
+
+	void press_key(const machine_key key)
+	{
+		g_emulator->key_down(key);
+		if (key != machine_key::none) g_keys_down[size_t(key)] = true;
+	}
+
+	void release_key(const machine_key key)
+	{
+		g_emulator->key_up(key);
+		if (key != machine_key::none) g_keys_down[size_t(key)] = false;
+	}
+
+	// The window no longer hears about the keys it has, so it lets go of them.
+	// A focus change can also come while the window is being torn down.
+	void release_all_keys()
+	{
+		if (!g_emulator) return;
+		for (size_t i = 0; i < g_keys_down.size(); ++i)
+			if (g_keys_down[i]) release_key(machine_key(i));
 	}
 
 	void toggle_sound()
@@ -258,7 +295,11 @@ namespace
 		machine_menu.text = "&Machine";
 		machine_menu.children.emplace_back("&Reset", menu_reset, []
 		{
+			// Back to a prompt the user can see and type at, as opening a
+			// folder does: a paused machine would keep showing the old
+			// picture under a title that says "command prompt".
 			g_emulator->start_shell();
+			g_paused = false;
 			update_title();
 		}, nullptr, nullptr, key_binding{'R', key_mod::ctrl});
 		machine_menu.children.emplace_back("&Pause", menu_pause, toggle_pause, nullptr,
@@ -394,8 +435,19 @@ namespace
 			case pf::message_type::erase_background:
 				return 1; // the frame loop paints every pixel
 
+			case pf::message_type::close:
+				// The platform leaves WM_CLOSE to the reactor; without this the
+				// close box and Alt+F4 do nothing and only EXIT or File > Exit
+				// end the session.
+				window->close();
+				return 0;
+
 			case pf::message_type::destroy:
 				g_running = false;
+				return 0;
+
+			case pf::message_type::kill_focus:
+				release_all_keys();
 				return 0;
 
 			case pf::message_type::drop_files:
@@ -417,11 +469,11 @@ namespace
 					if (!params.repeat) toggle_pause();
 					return 0;
 				}
-				g_emulator->key_down(translate_key(params.vk));
+				press_key(translate_key(params.vk));
 			}
 			else if (message == pf::keyboard_message_type::key_up)
 			{
-				g_emulator->key_up(translate_key(params.vk));
+				release_key(translate_key(params.vk));
 			}
 			return 0;
 		}
@@ -455,9 +507,13 @@ namespace
 			}
 		}
 
-		void handle_paint(pf::window_frame_ptr&, pf::draw_context&) override
+		void handle_paint(pf::window_frame_ptr&, pf::draw_context& dc) override
 		{
-			present();
+			// The platform paints into a back buffer and then copies it over
+			// the window, so a present_pixels from here would be painted over:
+			// black until the next frame, and for good while paused.
+			if (compose()) dc.draw_bitmap(0, 0, g_surface);
+			else dc.fill_solid_rect(dc.clip_rect(), pf::color_t(0, 0, 0));
 		}
 
 		void handle_size(pf::window_frame_ptr&, const pf::isize extent, pf::measure_context&) override
@@ -533,6 +589,31 @@ namespace
 		return 0;
 	}
 
+	// Stands in for the paint context in the self-check and keeps whatever
+	// bitmap a repaint hands it.
+	struct recording_draw_context final : pf::draw_context
+	{
+		pf::irect clip;
+		const pf::bitmap* drawn = nullptr;
+
+		pf::irect clip_rect() const override { return clip; }
+		void fill_solid_rect(const pf::irect&, pf::color_t) override {}
+		void fill_solid_rect(int, int, int, int, pf::color_t) override {}
+		void draw_text(int, int, const pf::irect&, std::string_view, const pf::font&, pf::color_t,
+		               pf::color_t) override {}
+		pf::isize measure_text(std::string_view, const pf::font&) const override { return {}; }
+		void draw_text_h(int, int, std::string_view, pf::font_handle, pf::color_t) override {}
+		pf::isize measure_text_h(std::string_view, pf::font_handle) const override { return {}; }
+		void draw_lines(std::span<const pf::ipoint>, pf::color_t) override {}
+		void draw_solid_line(pf::ipoint, pf::ipoint, pf::color_t, int) override {}
+		void draw_ellipse(int, int, int, int, pf::color_t, int) override {}
+		void fill_ellipse(int, int, int, int, pf::color_t) override {}
+		void set_clip_rect(const pf::irect&) override {}
+		void clear_clip_rect() override {}
+		void draw_bitmap(int, int, const pf::bitmap& bmp) override { drawn = &bmp; }
+		void draw_bitmap(const pf::irect&, const pf::bitmap& bmp) override { drawn = &bmp; }
+	};
+
 	// Headless check of everything the window contributes: that a mode has a
 	// size, that the scaled picture fits inside the client area, and that
 	// pixels actually reach the surface that gets blitted.
@@ -550,6 +631,8 @@ namespace
 			}
 		};
 
+		const auto lit = [](const uint32_t p) { return (p & 0xffffff) != 0; };
+
 		for (int i = 0; i < frames; ++i)
 		{
 			if (!pf::platform_events()) break;
@@ -562,20 +645,53 @@ namespace
 		check(g_layout.scale_x >= 1 && g_layout.scale_y >= 1, "the picture scale is a whole number");
 		check(g_layout.scale_y <= g_layout.scale_x * 2, "a pixel is no more than twice as tall as wide");
 		check(g_layout.x >= 0 && g_layout.y >= 0, "the picture fits inside the client area");
-		check(g_surface.size() == static_cast<size_t>(g_client.cx) * g_client.cy,
+		check(g_surface.pixels.size() == static_cast<size_t>(g_client.cx) * g_client.cy &&
+		      g_surface.width == g_client.cx && g_surface.height == g_client.cy,
 		      "the surface covers the client area");
 
 		// The prompt has drawn by now, so an all-black surface would mean the
 		// framebuffer never reached it.
-		check(std::any_of(g_surface.begin(), g_surface.end(),
-		                  [](const uint32_t p) { return (p & 0xffffff) != 0; }),
+		check(std::any_of(g_surface.pixels.begin(), g_surface.pixels.end(), lit),
 		      "the framebuffer reached the surface");
+
+		// A repaint has to draw the picture through the paint context: the
+		// platform copies its back buffer over the window afterwards, so a
+		// frame blitted around it is lost - which left a paused window black.
+		recording_draw_context dc;
+		dc.clip = pf::irect(0, 0, g_client.cx, g_client.cy);
+		pf::window_frame_ptr frame = g_frame;
+		g_reactor->handle_paint(frame, dc);
+		check(dc.drawn != nullptr && dc.drawn->width == g_client.cx && dc.drawn->height == g_client.cy &&
+		      std::any_of(dc.drawn->pixels.begin(), dc.drawn->pixels.end(), lit),
+		      "a repaint draws the picture through the paint context");
+
+		// Ctrl+O opens a dialog, which then gets Ctrl's release. Losing the
+		// focus lets go of what is held, so the next key types itself rather
+		// than arriving as Ctrl+key - which the prompt would drop.
+		pf::keyboard_params control;
+		control.vk = pf::platform_key::Control;
+		g_reactor->handle_keyboard(frame, pf::keyboard_message_type::key_down, control);
+		g_reactor->handle_message(frame, pf::message_type::kill_focus, pf::message_params{});
+		pf::keyboard_params letter;
+		letter.vk = 'A';
+		g_reactor->handle_keyboard(frame, pf::keyboard_message_type::key_down, letter);
+		g_reactor->handle_keyboard(frame, pf::keyboard_message_type::key_up, letter);
+		for (int i = 0; i < 10; ++i) g_emulator->exec(g_emulator->cycles_per_frame());
+		char screen[4096] = {};
+		g_emulator->text_screen(screen, sizeof(screen));
+		check(std::string_view(screen).find(">a") != std::string_view::npos,
+		      "a key held when the window loses the focus is let go");
+
+		// The close box and Alt+F4 arrive as nothing but a close message, so
+		// that is how the self-check ends the session too.
+		g_reactor->handle_message(g_frame, pf::message_type::close, pf::message_params{});
+		check(!g_running, "a close message ends the session");
+		if (g_running) g_frame->close();
 
 		pf::write_stdout(std::format("ovrwin app: {} (client {}x{}, mode {}x{} at {}x{})\n",
 		                             failures == 0 ? "PASS" : "FAIL", g_client.cx, g_client.cy,
 		                             g_layout.width, g_layout.height, g_layout.scale_x, g_layout.scale_y));
 
-		g_frame->close();
 		return failures == 0 ? 0 : 1;
 	}
 }
@@ -599,7 +715,8 @@ app_init_result app_init(const pf::window_frame_ptr& main_frame,
 	g_host = std::make_unique<win32_host>();
 	g_emulator->set_host(g_host.get());
 
-	main_frame->set_reactor(std::make_shared<app_reactor>());
+	g_reactor = std::make_shared<app_reactor>();
+	main_frame->set_reactor(g_reactor);
 	main_frame->set_menu(build_menu());
 	main_frame->set_text("ovrwin");
 
@@ -612,10 +729,10 @@ app_init_result app_init(const pf::window_frame_ptr& main_frame,
 	}
 
 	// A program or a folder on the command line, or the current directory so
-	// the user can look around from the prompt before starting anything.
-	if (!target.empty())
-		open_path(pf::file_path{pf::unquote(target)});
-	else
+	// the user can look around from the prompt before starting anything - which
+	// is also where one that cannot be opened leaves them, rather than at a
+	// blank window that ignores the keyboard.
+	if (target.empty() || !open_path(pf::file_path{pf::unquote(target)}))
 		mount(pf::current_directory());
 
 	app_init_result result;
@@ -633,5 +750,6 @@ void app_destroy()
 	stop_audio();
 	g_emulator.reset();
 	g_host.reset();
+	g_reactor.reset();
 	g_frame.reset();
 }

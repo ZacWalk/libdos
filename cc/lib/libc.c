@@ -210,7 +210,9 @@ static void __emit_text(const char *s)
 }
 
 // One routine prints every integer: the caller widens to 32 bits and says
-// whether the value was signed and what base to use.
+// whether the value was signed and what base to use. %X asks for capitals.
+static int __hex_letter = 'a';
+
 static void __emit_number(long value, int base, int is_signed)
 {
 	char digits[12];
@@ -231,7 +233,7 @@ static void __emit_number(long value, int base, int is_signed)
 	while (v != 0)
 	{
 		int digit = (int)(v % (unsigned long)base);
-		digits[at] = (char)(digit < 10 ? '0' + digit : 'a' + digit - 10);
+		digits[at] = (char)(digit < 10 ? '0' + digit : __hex_letter + digit - 10);
 		v = v / (unsigned long)base;
 		at++;
 	}
@@ -267,6 +269,7 @@ static int __format(const char *format, va_list ap)
 		}
 		else if (format[i] == 'x' || format[i] == 'X')
 		{
+			__hex_letter = format[i] == 'X' ? 'A' : 'a';
 			if (is_long) __emit_number(va_arg(ap, long), 16, 0);
 			else __emit_number((long)(unsigned int)va_arg(ap, int), 16, 0);
 		}
@@ -323,12 +326,24 @@ int snprintf(char *into, size_t limit, const char *format, ...)
 FILE *fopen(const char *name, const char *mode)
 {
 	int handle;
-	int access = 0;
-	if (mode[0] == 'w') access = 1;
+	// "r+", "w+" and "a+" read as well as write; AH=3Ch already opens both ways.
+	int access = mode[1] == '+' || (mode[1] != 0 && mode[2] == '+') ? 2 : 0;
 	if (mode[0] == 'w')
+	{
 		handle = __int21(0x3c00, 0, 0, (int)name); // create, truncating
+	}
+	else if (mode[0] == 'a')
+	{
+		// Append writes from the end, creating the file if there is none. The
+		// position is set once here rather than before every write.
+		handle = __int21(0x3d00 + (access == 2 ? 2 : 1), 0, 0, (int)name);
+		if (__cf != 0) handle = __int21(0x3c00, 0, 0, (int)name);
+		if (__cf == 0) __int21(0x4202, handle, 0, 0);
+	}
 	else
+	{
 		handle = __int21(0x3d00 + access, 0, 0, (int)name);
+	}
 	if (__cf != 0) return (FILE *)0;
 	// A handle of zero is stdin, so it can stand in for the null a caller tests.
 	return (FILE *)(handle + 1);
