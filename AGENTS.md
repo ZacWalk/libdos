@@ -71,11 +71,14 @@ Debug and Release unless one is named:
 .\dd.ps1 test --label ovrwin        # build + the CLI suite and the app's offscreen check
 .\dd.ps1 build release              # or debug
 .\dd.ps1 launch                     # build Release + start the app (for the human)
-.\dd.ps1 run cli -- --info GAME.EXE
-.\dd.ps1 run cli -- --cc .\shell\shell.c
+.\dd.ps1 run cli '--' --info GAME.EXE
+.\dd.ps1 run cli '--' --cc .\shell\shell.c
 .\dd.ps1 bench --yes                # compile the benchmark for this machine and run it
 .\dd.ps1 clean --dry-run
 ```
+
+The `'--'` is quoted because PowerShell removes a bare `--` from a script's
+arguments, and dd then rejects the CLI's own options as its own.
 
 Use `--label ovrwin`: an unfiltered `.\dd.ps1 test` also opens the app's window
 for a second as a smoke check. After a build the suite runs directly too:
@@ -146,23 +149,36 @@ whether a test already encodes the current behaviour:
   count advancing through the INT 8 stub.
 - Video: mode 13h linear memory and DAC output, the planar set/reset and bit
   mask path, and text-mode plane writes.
-- DOS: MCB allocate/free/reuse/resize, path resolution including `..`, both
-  loaders including relocation, and a program running to completion with its
+- DOS: MCB allocate/free/reuse/resize, path resolution including `..` and a
+  current directory below the root, both loaders including relocation,
+  buffered line input (AH=0Ah), and a program running to completion with its
   output on screen.
+- The keyboard: what the BIOS buffers for a key with Shift, Ctrl or Alt held,
+  and that the modifiers and locks alone put nothing there.
+- The shell: a program run from the prompt gets its command line, leaves its
+  output on screen and returns; one that will not load is reported once.
 - Sound: the AdLib detection sequence, and both the OPL and the speaker
   producing output.
 - The compiler: a C program using recursion, arrays, structures, `switch` and
   the preprocessor is compiled and then **run in the emulator**, and its output
   checked. The same is done for 32-bit arithmetic (multiply, both divides,
-  remainder, shifts and comparisons), for function pointers and `goto`, and for
-  variadic functions. A second pair of programs pins `EXEC`.
+  remainder, shifts and comparisons), for function pointers and `goto`, for
+  variadic functions and for the type and width of constants. A second pair of
+  programs pins `EXEC`. What it refuses is pinned too - structure assignment,
+  parameters and returns, assigning to an array, a second definition of a
+  function, an unterminated comment or `#if` - with the line an error at the
+  end of the file is reported on.
 - The disassembler, which the debugger depends on.
 
 A green build proves nothing on its own - run `.\dd.ps1 test --label ovrwin`.
-It runs the CLI suite and then the app's offscreen self-check, which pins the
-picture scaling and that the framebuffer reaches the screen, in both
-configurations. Do not launch the GUI to verify a change; `ovrwin.exe -test` is
-the headless form and `dd.ps1 launch` is for the human.
+It runs two CTest entries in each configuration: `ovrwin_cli_suite`, the CLI
+suite, and `ovrwin_app_selftest`, the app's offscreen self-check, which pins the
+picture scaling, that the framebuffer reaches the screen, that a repaint draws
+the picture rather than leaving the window black, that a key held when the
+window loses the focus is let go, and that a close message ends the session.
+There is no separate unit-test binary; a new check of
+`src/` or `cc/` goes in the CLI suite. Do not launch the GUI to verify a change;
+`ovrwin.exe -test` is the headless form and `dd.ps1 launch` is for the human.
 
 ## Known Gaps
 

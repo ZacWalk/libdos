@@ -116,8 +116,9 @@ namespace
 		{
 			char name[16] = {};
 			char extension[8] = {};
+			// "." and ".." are names, not an empty name with an extension.
 			const char* dot = std::strchr(info.name, '.');
-			if (dot != nullptr)
+			if (dot != nullptr && dot != info.name)
 			{
 				snprintf(name, sizeof(name), "%.*s", int(dot - info.name), info.name);
 				snprintf(extension, sizeof(extension), "%s", dot + 1);
@@ -420,6 +421,11 @@ bool shell_run(machine_state& s, const char* name, const char* command_line)
 	std::vector<uint8_t> image;
 	if (!read_program(s, path, image)) return false;
 
+	// Typed at the prompt, the command line is still in the shell's line
+	// buffer, which the reset below clears.
+	char tail[128] = {};
+	snprintf(tail, sizeof(tail), "%s", command_line);
+
 	// The program gets a machine of its own; only the current directory and
 	// the shell's own state survive.
 	const bool shell_was_active = s.shell.active;
@@ -427,11 +433,11 @@ bool shell_run(machine_state& s, const char* name, const char* command_line)
 	s.shell.active = shell_was_active;
 
 	char error[128] = {};
-	if (!dos_load_program(s, image.data(), uint32_t(image.size()), path, command_line, error, sizeof(error)))
+	if (!dos_load_program(s, image.data(), uint32_t(image.size()), path, tail, error, sizeof(error)))
 	{
-		shell_start(s);
+		// The reset has cleared the screen; say why, and leave the prompt to
+		// whoever asked, as for any other command.
 		write_line(s, error);
-		write_prompt(s);
 		return true;
 	}
 
@@ -449,12 +455,30 @@ void shell_program_finished(machine_state& s)
 	s.exited = false;
 	s.shell.length = 0;
 
-	// A program leaves the adapter in whatever mode it was using; the shell
-	// needs text back before it can say anything.
-	vga_set_mode(s, 3);
+	// A program leaves the adapter in whatever mode it was using, and the
+	// shell can only write to 80-column text on page 0. Anything else goes
+	// back to mode 3; a text program's output stays where it can be read.
+	vga_state& v = s.vga;
+	if ((v.mode != 2 && v.mode != 3) || v.page != 0 || v.display_start != 0)
+	{
+		vga_set_mode(s, 3);
+	}
+	else
+	{
+		v.cursor_visible = true;
+		v.cursor_start = 6;
+		v.cursor_end = 7;
+		if (v.cursor_x[0] != 0) write_text(s, "\n");
+	}
+
 	char text[80] = {};
 	snprintf(text, sizeof(text), "Program ended with exit code %u.", unsigned(s.exit_code));
 	write_line(s, text);
 	write_line(s, "");
+	write_prompt(s);
+}
+
+void shell_prompt(machine_state& s)
+{
 	write_prompt(s);
 }

@@ -167,8 +167,9 @@ namespace
 			const char* at = strchr(rows[row], c);
 			if (at != nullptr) return machine_key(int(first[row]) + int(at - rows[row]));
 		}
-		const char* digits = strchr("1234567890", c);
-		if (digits != nullptr) return machine_key(int(machine_key::num1) + int(digits - "1234567890"));
+		static const char digit_row[] = "1234567890";
+		const char* digits = strchr(digit_row, c);
+		if (digits != nullptr && c != 0) return machine_key(int(machine_key::num1) + int(digits - digit_row));
 		switch (c)
 		{
 		case ' ': return machine_key::space;
@@ -523,6 +524,21 @@ namespace
 		check(strcmp(resolved, "C:\\DATA\\FILE.DAT") == 0, "\"..\" collapses");
 		dos_resolve_path(s, "A:\\X\\Y.Z", resolved, sizeof(resolved));
 		check(strcmp(resolved, "A:\\X\\Y.Z") == 0, "an explicit drive is kept");
+
+		// What CD and INT 21h AH=3Bh leave behind once a program is not at the root.
+		snprintf(s.dos.cwd[2], sizeof(s.dos.cwd[2]), "%s", "\\GAMES");
+		dos_resolve_path(s, "wl.exe", resolved, sizeof(resolved));
+		check(strcmp(resolved, "C:\\GAMES\\WL.EXE") == 0, "a bare name resolves against the current directory");
+		dos_resolve_path(s, "*.*", resolved, sizeof(resolved));
+		check(strcmp(resolved, "C:\\GAMES\\*.*") == 0, "a wildcard resolves against the current directory");
+		dos_resolve_path(s, "..", resolved, sizeof(resolved));
+		check(strcmp(resolved, "C:\\") == 0, "\"..\" leaves the current directory");
+		dos_resolve_path(s, "\\X.DAT", resolved, sizeof(resolved));
+		check(strcmp(resolved, "C:\\X.DAT") == 0, "a rooted path ignores the current directory");
+		snprintf(s.dos.cwd[2], sizeof(s.dos.cwd[2]), "%s", "\\");
+		dos_resolve_path(s, "GAME.EXE", resolved, sizeof(resolved));
+		check(strcmp(resolved, "C:\\GAME.EXE") == 0, "CD \\ leaves the root as the current directory");
+		s.dos.cwd[2][0] = 0;
 	}
 
 	void test_loader()
@@ -591,6 +607,68 @@ namespace
 		char screen[4096] = {};
 		m.text_screen(screen, sizeof(screen));
 		check(strstr(screen, "HELLO") != nullptr, "INT 21h AH=09 reached the screen");
+	}
+
+	// INT 21h AH=0Ah spans one call per key. A second read into the same buffer
+	// starts empty rather than after the first, and Enter echoes only the
+	// carriage return, as DOS does.
+	void test_line_input()
+	{
+		// Reads a line into the buffer at 0123h twice, then writes the second with AH=40h.
+		std::vector<uint8_t> com = {
+			0xba, 0x23, 0x01, 0xb4, 0x0a, 0xcd, 0x21, 0xba, 0x23, 0x01, 0xb4, 0x0a, 0xcd, 0x21,
+			0xb4, 0x40, 0xbb, 0x01, 0x00, 0x8a, 0x0e, 0x24, 0x01, 0xb5, 0x00, 0xba, 0x25, 0x01,
+			0xcd, 0x21, 0xb8, 0x00, 0x4c, 0xcd, 0x21,
+		};
+		com.push_back(20); // capacity; the count and the text follow
+		com.resize(com.size() + 22, 0);
+
+		machine m;
+		check(m.load_program(com.data(), uint32_t(com.size()), "C:\\READ.COM", ""), "the line input program loads");
+		const machine_key typed[] = {
+			machine_key::a, machine_key::b, machine_key::c, machine_key::enter,
+			machine_key::x, machine_key::y, machine_key::enter,
+		};
+		for (const machine_key key : typed)
+		{
+			m.key_down(key);
+			m.key_up(key);
+			for (int frame = 0; frame < 2; ++frame) m.exec(m.cycles_per_frame());
+		}
+		for (int frame = 0; frame < 10 && !m.exited(); ++frame) m.exec(m.cycles_per_frame());
+		check(m.exited(), "both lines were read");
+
+		char screen[4096] = {};
+		m.text_screen(screen, sizeof(screen));
+		check(strncmp(screen, "xyc", 3) == 0, "Enter echoes a carriage return and no line feed");
+		check(strstr(screen, "abcxy") == nullptr, "a second read into the same buffer starts empty");
+	}
+
+	// DOS's character input hands over an extended key in two calls: 0, then
+	// the scancode. A C program's getch() reads arrows and F-keys that way.
+	void test_console_keys()
+	{
+		// Three reads with AH=08h, stored at 0200h, 0201h and 0202h.
+		const uint8_t com[] = {
+			0xb4, 0x08, 0xcd, 0x21, 0xa2, 0x00, 0x02,
+			0xb4, 0x08, 0xcd, 0x21, 0xa2, 0x01, 0x02,
+			0xb4, 0x08, 0xcd, 0x21, 0xa2, 0x02, 0x02,
+			0xb8, 0x00, 0x4c, 0xcd, 0x21,
+		};
+		machine m;
+		check(m.load_program(com, sizeof(com), "C:\\GETCH.COM", ""), "the getch program loads");
+		const uint16_t psp = m.state().dos.psp_segment;
+		for (const machine_key key : {machine_key::f1, machine_key::a})
+		{
+			m.key_down(key);
+			m.key_up(key);
+			for (int frame = 0; frame < 2; ++frame) m.exec(m.cycles_per_frame());
+		}
+		for (int frame = 0; frame < 4 && !m.exited(); ++frame) m.exec(m.cycles_per_frame());
+		check(m.exited(), "two keys answer three reads");
+		check_equal(read8(m.state(), psp, 0x200), 0x00, "an extended key reads as 0 first");
+		check_equal(read8(m.state(), psp, 0x201), 0x3b, "then as its scancode");
+		check_equal(read8(m.state(), psp, 0x202), 'a', "and the next key follows it");
 	}
 
 	void test_sound()
@@ -747,6 +825,49 @@ namespace
 		std::vector<uint8_t> contents_;
 		size_t position_ = 0;
 	};
+
+	// A program started from the prompt, and one that will not load.
+	void test_shell_programs()
+	{
+		const auto run_from_prompt = [](memory_host& host, const char* typed, char* screen, int screen_size)
+		{
+			machine m;
+			m.set_host(&host);
+			m.start_shell();
+			for (const char* p = typed; *p != 0; ++p) bios_push_key(m.state(), 0, uint8_t(*p));
+			for (int frame = 0; frame < 30; ++frame) m.exec(m.cycles_per_frame());
+			m.text_screen(screen, screen_size);
+			return m.shell_active() && !m.state().shell.program_running;
+		};
+
+		char screen[8192] = {};
+		{
+			// mov ah,9 / mov dx,010Ch / int 21h / mov ax,4C05h / int 21h / "HELLO$"
+			memory_host host;
+			host.add("C:\\HELLO.COM", {0xb4, 0x09, 0xba, 0x0c, 0x01, 0xcd, 0x21, 0xb8, 0x05, 0x4c, 0xcd, 0x21,
+			                           'H', 'E', 'L', 'L', 'O', '$'});
+			check(run_from_prompt(host, "hello\r", screen, sizeof(screen)), "a program run from the prompt returns to it");
+			check(strstr(screen, "HELLO") != nullptr, "a text program's output is still on screen when it ends");
+			check(strstr(screen, "exit code 5") != nullptr, "the exit code is reported");
+		}
+		{
+			memory_host host;
+			host.add("C:\\TINY.COM", {0x90});
+			check(run_from_prompt(host, "tiny\r", screen, sizeof(screen)), "a program that will not load leaves the prompt");
+			check(strstr(screen, "too small") != nullptr, "the reason it would not load is shown");
+			check(strstr(screen, "C:\\>C:\\>") == nullptr, "the prompt is shown once");
+			check(strstr(screen, "Type HELP") == nullptr, "the banner is not shown again");
+		}
+		{
+			// Writes its own command tail to stdout: mov ah,40h / mov bx,1 /
+			// mov cl,[0080h] / mov ch,0 / mov dx,0081h / int 21h / mov ax,4C00h / int 21h
+			memory_host host;
+			host.add("C:\\ARGS.COM", {0xb4, 0x40, 0xbb, 0x01, 0x00, 0x8a, 0x0e, 0x80, 0x00, 0xb5, 0x00, 0xba, 0x81,
+			                          0x00, 0xcd, 0x21, 0xb8, 0x00, 0x4c, 0xcd, 0x21});
+			run_from_prompt(host, "args one two\r", screen, sizeof(screen));
+			check(strstr(screen, "one two") != nullptr, "a program run from the prompt gets its command line");
+		}
+	}
 
 	// Sources held in memory, for compiler tests that include nothing.
 	struct no_sources
@@ -1291,6 +1412,72 @@ namespace
 			const std::string screen = run_image(image, &host);
 			check(screen.find("PXQ") != std::string::npos, "EXEC runs a child and returns to the parent");
 		}
+
+		// The type of a constant decides how much of it travels: a decimal
+		// literal with a U suffix that fits in 16 bits is an unsigned int, and
+		// a cast narrows a constant the way the register would hold it.
+		const char* constants =
+			"int __int21(int ax, int bx, int cx, int dx);\n"
+			"void say(int ok) { __int21(0x0200, 0, 0, ok ? 'Y' : 'N'); }\n"
+			"int main(void) {\n"
+			"  __int21(0x0200, 0, 0, '[');\n"
+			"  say(sizeof(65535u) == 2); say(sizeof(40000u) == 2); say(sizeof(40000) == 4);\n"
+			"  say(((unsigned)0x8000 >> 15) == 1); say((unsigned char)0x1ff == 255); say((char)0x80 < 0);\n"
+			"  __int21(0x0200, 0, 0, ']');\n"
+			"  return 0;\n"
+			"}\n";
+		check(compile_text(constants, image, "constants.c"), "the constant typing program compiles");
+		if (!image.empty())
+		{
+			const std::string screen = run_image(image, nullptr);
+			check(screen.find("[YYYYYY]") != std::string::npos, "constants keep the type and width C gives them");
+		}
+	}
+
+	// What the compiler says about a program it refuses, and on which line;
+	// empty if it compiled after all.
+	std::string compile_error(const char* source, int* line = nullptr)
+	{
+		cc_options options = default_options();
+		no_sources sources = make_no_sources();
+		cc_result result = cc_compile(source, "refused.c", &sources.base, nullptr, 0, &options);
+		std::string message = result.ok ? "" : (result.message != nullptr ? result.message : "?");
+		if (line != nullptr) *line = result.line;
+		cc_result_free(&result);
+		return message;
+	}
+
+	// Each of these used to compile without a word, into something that did
+	// not do what the source says, or to fail with a message about something
+	// else entirely.
+	void test_compiler_refusals()
+	{
+		const auto refused = [](const char* source, const char* says)
+		{
+			return compile_error(source).find(says) != std::string::npos;
+		};
+
+		check(refused("struct p { int x; };\n"
+		              "int main(void) { struct p a; struct p b; a.x = 1; b = a; return b.x; }\n",
+		              "structure assignment is not supported"), "structure assignment is refused");
+		check(refused("int a[3];\nint main(void) { a = 5; return 0; }\n", "cannot assign to an array"),
+		      "assigning to an array is refused");
+		check(refused("int main(void) { return 3; }\nint main(void) { return 4; }\n", "redefinition of function"),
+		      "a second definition of a function is refused");
+		check(refused("struct p { int x; };\nstruct p f(void) { struct p r; r.x = 1; return r; }\n"
+		              "int main(void) { return 0; }\n", "returning a structure"),
+		      "returning a structure is refused");
+		check(refused("struct p { int x; };\nint f(struct p v) { return v.x; }\nint main(void) { return 0; }\n",
+		              "passing a structure by value"), "a structure parameter is refused");
+
+		int line = 0;
+		const std::string comment = compile_error("int main(void) { return 0; }\n/* never closed\nint x;\n", &line);
+		check(comment.find("unterminated comment") != std::string::npos && line == 2,
+		      "an unterminated comment is reported where it opens");
+		check(refused("#if 1\nint main(void) { return 0; }\n", "unterminated #if"),
+		      "an #if with no #endif is refused");
+		const std::string body = compile_error("int main(void)\n{\n\tif (1) {\n\t\treturn 0;\n\t}\n", &line);
+		check(!body.empty() && line == 5, "an error at the end of the file is reported on its last line");
 	}
 
 	// What a hosted image gets instead of DOS. The services are the ones a
@@ -1557,6 +1744,56 @@ namespace
 			m.text_screen(screen, sizeof(screen));
 			check(strchr(screen, 'a') != nullptr, "a running program reads the key through INT 9 and INT 16h");
 		}
+
+		{
+			// What the BIOS buffers for a key pressed with modifiers held: the
+			// single word a program reads back, 0 for none, FFFFh for several.
+			machine m;
+			machine_state& s = m.state();
+			const auto press = [&](const std::vector<machine_key>& held, machine_key key)
+			{
+				for (const machine_key k : held) m.key_down(k);
+				m.key_down(key);
+				m.key_up(key);
+				for (const machine_key k : held) m.key_up(k);
+				while (s.kbd.queue_count > 0) bios_keyboard_interrupt(s);
+				uint16_t word = 0;
+				uint32_t found = 0;
+				int count = 0;
+				while (bios_pop_key(s, word))
+				{
+					found = word;
+					++count;
+				}
+				return count > 1 ? 0xffffu : found;
+			};
+
+			const machine_key shift = machine_key::left_shift;
+			const machine_key ctrl = machine_key::left_ctrl;
+			const machine_key alt = machine_key::left_alt;
+			check_equal(press({}, machine_key::left_shift), 0, "Shift alone puts nothing in the buffer");
+			check_equal(press({shift}, machine_key::a), 0x1e41, "Shift+A is one key, not two");
+			check_equal(press({ctrl}, machine_key::c), 0x2e03, "Ctrl+C");
+			check_equal(press({ctrl}, machine_key::enter), 0x1c0a, "Ctrl+Enter is a line feed");
+			check_equal(press({alt}, machine_key::x), 0x2d00, "Alt+X has no character");
+			check_equal(press({alt}, machine_key::num1), 0x7800, "Alt+1");
+			check_equal(press({}, machine_key::f1), 0x3b00, "F1");
+			check_equal(press({shift}, machine_key::f1), 0x5400, "Shift+F1");
+			check_equal(press({ctrl}, machine_key::f1), 0x5e00, "Ctrl+F1");
+			check_equal(press({alt}, machine_key::f10), 0x7100, "Alt+F10");
+			check_equal(press({}, machine_key::f12), 0x8600, "F12");
+			check_equal(press({ctrl}, machine_key::left), 0x7300, "Ctrl+Left");
+			check_equal(press({ctrl}, machine_key::page_down), 0x7600, "Ctrl+PgDn");
+			check_equal(press({}, machine_key::keypad_plus), 0x4e2b, "keypad + without NumLock");
+			check_equal(press({}, machine_key::keypad7), 0x4700, "keypad 7 without NumLock is Home");
+			check_equal(press({shift}, machine_key::left), 0x4b00, "Shift+Left is still an arrow");
+			check_equal(press({}, machine_key::caps_lock), 0, "Caps Lock puts nothing in the buffer");
+			check_equal(press({}, machine_key::q), 0x1051, "Caps Lock makes letters capitals");
+		}
+
+		// --keys types digits through the same table; the debug build once typed F-keys for them.
+		check_equal(uint32_t(key_from_char('1')), uint32_t(machine_key::num1), "--keys types 1");
+		check_equal(uint32_t(key_from_char('0')), uint32_t(machine_key::num0), "--keys types 0");
 	}
 
 	void test_disassembler()
@@ -1615,8 +1852,11 @@ namespace
 		test_dos_memory();
 		test_loader();
 		test_program_run();
+		test_line_input();
+		test_console_keys();
 		test_sound();
 		test_shell();
+		test_shell_programs();
 		test_support();
 		for (const cc_cpu cpu : {cc_cpu_i8086, cc_cpu_i80386})
 		{
@@ -1624,6 +1864,7 @@ namespace
 			test_compiler();
 		}
 		compiling_for = cc_cpu_i8086;
+		test_compiler_refusals();
 		test_native_backend();
 		test_keyboard();
 		test_disassembler();
@@ -1758,7 +1999,14 @@ namespace
 		}
 
 		printf("%s, %u bytes\n", path, size);
-		if (size > 0x40 && data[0] == 'M' && data[1] == 'Z')
+		// The loader takes any file that starts with MZ for an executable, so
+		// one too short to have a header is described as a broken one, not as
+		// a COM file it will never be run as.
+		if (size >= 2 && size < 0x20 && data[0] == 'M' && data[1] == 'Z')
+		{
+			printf("  format             MZ executable with a truncated header; it will not load\n");
+		}
+		else if (size >= 0x20 && data[0] == 'M' && data[1] == 'Z')
 		{
 			const auto word = [&](uint32_t offset) { return uint16_t(data[offset] | (data[offset + 1] << 8)); };
 			const uint32_t image_length = uint32_t(word(0x04)) * 512 -
@@ -1772,7 +2020,7 @@ namespace
 			printf("  initial stack      SS:SP %04X:%04X\n", word(0x0e), word(0x10));
 			printf("  memory needed      %u KiB\n",
 			       (image_length - unsigned(word(0x08)) * 16 + unsigned(word(0x0a)) * 16 + 1023) / 1024);
-			if (word(0x18) >= 0x40 && size > 0x3e)
+			if (word(0x18) >= 0x40 && size >= 0x40)
 			{
 				const uint32_t extended = uint32_t(data[0x3c] | (data[0x3d] << 8) |
 					(data[0x3e] << 16) | (data[0x3f] << 24));

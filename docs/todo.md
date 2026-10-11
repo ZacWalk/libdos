@@ -37,6 +37,16 @@ when a review turns one up, add it here rather than in AGENTS.md.
   there. Pre-3.0 programs will need them.
 - `EXEC` loads and runs a child (AL=0) but not an overlay (AL=3), and it always
   gives the child the parent's environment rather than a copy.
+- No Ctrl+C or Ctrl+Break. DOS never raises INT 23h and the BIOS never calls
+  INT 1Bh, so a ^C typed at a program reading the console arrives as
+  character 3 - into an AH=0Ah line as well - and nothing stops a program that
+  never asks for input; Machine > Reset is the only way out. The app maps
+  neither the Pause key nor Ctrl+Break.
+- AH=47h returns the current directory with its leading backslash (`\GAMES`)
+  where DOS gives `GAMES`. `shell/shell.c` builds its prompt on that backslash,
+  so the two have to change together.
+- The root of the drive lists `.` and `..`, which a real root directory does
+  not have: the host's `FindFirstFileA` returns them for the mounted folder.
 - No network redirector, no SHARE, no file locking.
 - Extended error information (AH=59h) always reports success.
 
@@ -104,14 +114,23 @@ when a review turns one up, add it here rather than in AGENTS.md.
     the generator cannot yet say that.
 - `sizeof` of an expression containing a call to a not-yet-defined function
   will leave a stale fixup behind.
+- A cast to an abstract function-pointer type, `(int (*)(int))p`, is a syntax
+  error; the same type through a `typedef` works.
+- A call is not checked against the prototype's parameter count, so `f(1)` for
+  `int f(int, int)` compiles and the callee reads whatever is on the stack.
+- Constant folding does not wrap to 16 bits: `1 << 15` folds to 32768, not
+  -32768, so `(1 << 15) == -32768` is false. Signed overflow is undefined in C,
+  but every 16-bit compiler wraps and programs rely on it.
 - A `switch` truncates its controlling expression to 16 bits.
 - Structures are packed to the byte, matching the `-zp1` a 16-bit DOS build
   normally uses. There is no way to ask for alignment.
 - The preprocessor has no `#` or `##` operator, and `#pragma` is ignored.
 - The C library in `cc/lib/libc.c` is a starting point, not a complete one:
-  `malloc` is a bump allocator that never reuses, `getenv` always fails, and
-  `printf` accepts width and precision but ignores them. The list of what a
-  real program still asks for is under the memory model below.
+  `malloc` is a bump allocator that never reuses, `getenv` always fails,
+  `printf` accepts width and precision but ignores them, and `fopen` in append
+  mode moves to the end once, when the file is opened, rather than before every
+  write. The list of what a real program still asks for is under the memory
+  model below.
 - The compiler is C++ and so cannot be its own input. Rewriting it in C and
   then feeding it to itself is planned in [docs/selfhost.md](selfhost.md). What
   stands in the way, in the compiler itself, is struct assignment, struct
@@ -252,6 +271,8 @@ and `shell/shell.c`, a DOS program built by `cc/`. Neither has:
 - `COPY`, wildcards for `DEL`, redirection or piping.
 - Command history or editing beyond backspace.
 - `/W` or `/P` for `DIR`, so a long listing scrolls past.
+- `CD..` and `CD\` written without a space: the whole word is taken as a
+  program name, where COMMAND.COM accepts them.
 
 The native one additionally cannot start a program and stay resident the way
 the DOS one does through `EXEC`; it resets the machine instead.
@@ -290,7 +311,21 @@ the DOS one does through `EXEC`; it resets the machine instead.
 
 - Extended keys reach the BIOS buffer through the keypad scancodes rather than
   the `E0` prefixed set, so a program reading raw scancodes from INT 9 cannot
-  tell the cursor pad from the numeric keypad.
+  tell the cursor pad from the numeric keypad. For the same reason the
+  emulated NumLock starts off, so the keypad's digits arrive as cursor keys
+  whatever the host's NumLock says.
+- Alt, Alt+key and F10 never reach a program in the app: platform-h does not
+  forward `WM_SYSKEYDOWN`/`WM_SYSKEYUP`, so Windows uses them for the menu bar
+  instead. The BIOS translates Alt combinations for when they do arrive.
+- The right mouse button stays down once pressed in the app, and the middle
+  button is never seen: the platform-h revision ovrwin pins (`894afaf`) reports
+  the right button's press but not its release, and nothing of the middle
+  button. platform-h now reports both (`right_button_up`, `middle_button_down`,
+  `middle_button_up`), and ovrwin adopts them once its pin moves past that
+  change: `handle_mouse` in `app/main.cpp` passes `right_button_up` to
+  `mouse_button(1, false)`, and the middle pair as button 2. Not before - a
+  local build against a sibling `../platform-h` compiles it, but CI builds the
+  pin.
 - No joystick. Port 201h reports nothing attached.
 
 ## Host and app
@@ -310,7 +345,8 @@ run, sound, the compiler and the disassembler. It does not yet pin:
 - The planar read modes and the colour-compare path.
 - The MCB chain layout a program would walk.
 - CGA mode rendering.
-- Anything about `--trace` or the debug capture output.
+- Anything about `--trace` or the debug capture output, or what `--info` says
+  about a file - which once called an MZ file too short to load a COM file.
 - The C library in `cc/lib/libc.c`. Every compiler test is self-contained, so
   the library is only exercised by hand; it needs a test that compiles a
   program including it and checks the output.

@@ -26,8 +26,13 @@ void shell_start(machine_state& s);
 // shell is idle.
 void shell_tick(machine_state& s);
 
-// Loads and starts a program, as typing its name would.
+// Loads and starts a program, as typing its name would. A program that is found
+// but will not load is reported on the screen, and the shell stays at its
+// prompt without showing it again; that is left to the caller.
 bool shell_run(machine_state& s, const char* dos_path, const char* command_line);
 
 // Called when the program the shell started has terminated.
 void shell_program_finished(machine_state& s);
+
+// Shows the prompt for the current directory.
+void shell_prompt(machine_state& s);
