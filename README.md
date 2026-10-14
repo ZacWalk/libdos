@@ -11,6 +11,10 @@ software interfaces, INT 21h and the BIOS, onto the host the way Wine maps the
 Win32 API onto Linux. There is no DOS kernel in memory and no disk image: the
 folder you open is the emulated C: drive.
 
+![ovrwin running a DOS demonstration in its Windows host](docs/screenshot.png)
+
+*An original demo built with the included 16-bit C compiler.*
+
 Repository: <https://github.com/ZacWalk/ovrwin>
 
 ## What is emulated
