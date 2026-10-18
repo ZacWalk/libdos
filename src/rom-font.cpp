@@ -1,4 +1,4 @@
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // The 8x8 character generator the text modes render from. Codes 0-127 are the
 // IBM PC BIOS font; the shading blocks and the line-drawing set above 127 are

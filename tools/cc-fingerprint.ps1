@@ -1,4 +1,4 @@
-# ovrwin by Zac Walker
+# libdos by Zac Walker
 #
 # What the compiler produces today, so a rewrite of the compiler can be shown
 # not to have changed what it means. The port from C++ to C is meant to be
@@ -19,7 +19,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 # dd builds the CLI into exe\, with a -d suffix for Debug.
-$name = 'ovrwincli' + $(if ($Release) { '' } else { '-d' }) + '.exe'
+$name = 'demu' + $(if ($Release) { '' } else { '-d' }) + '.exe'
 $cli = Join-Path $root "exe\$name"
 if (-not (Test-Path $cli)) { throw "$cli is not built. Run .\dd.ps1 build first." }
 
@@ -33,7 +33,7 @@ $corpus = @(
 	@{ Name = 'hello'; Source = 'shell\hello.c'; Args = @() }
 )
 
-$temp = Join-Path ([System.IO.Path]::GetTempPath()) 'ovrwin-fingerprint'
+$temp = Join-Path ([System.IO.Path]::GetTempPath()) 'libdos-fingerprint'
 New-Item -ItemType Directory -Force -Path $temp | Out-Null
 
 $lines = @()

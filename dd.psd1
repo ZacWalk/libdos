@@ -1,7 +1,7 @@
 @{
     schema = 1
     project = @{
-        name = 'ovrwin'
+        name = 'libdos'
         type = 'gui'
         'default-target' = 'app'
     }
@@ -16,25 +16,25 @@
         @{
             id = 'app'
             kind = 'gui'
-            'cmake-target' = 'ovrwin_app'
-            'test-label' = 'ovrwin'
-            'debug-path' = 'exe/ovrwin-d{exe}'
-            'release-path' = 'exe/ovrwin{exe}'
+            'cmake-target' = 'dui'
+            'test-label' = 'libdos'
+            'debug-path' = 'exe/dui-d{exe}'
+            'release-path' = 'exe/dui{exe}'
             platforms = @('x64-windows')
         },
         @{
             id = 'cli'
             kind = 'cli'
-            'cmake-target' = 'ovrwin_cli'
-            'test-label' = 'ovrwin'
-            'debug-path' = 'exe/ovrwincli-d{exe}'
-            'release-path' = 'exe/ovrwincli{exe}'
+            'cmake-target' = 'demu'
+            'test-label' = 'libdos'
+            'debug-path' = 'exe/demu-d{exe}'
+            'release-path' = 'exe/demu{exe}'
             platforms = @('x64-windows')
         }
     )
     commands = @{
         bench = @{
-            description = "Compile a C source with ovrwin's own compiler and run it. Defaults to cc/bench/bench.c run natively; --exe emits an executable first."
+            description = "Compile a C source with libdos's own compiler and run it. Defaults to cc/bench/bench.c run natively; --exe emits an executable first."
             script = 'cmake/project-command.ps1'
             effects = 'write'
             'supports-dry-run' = $true

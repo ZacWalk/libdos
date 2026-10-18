@@ -1,21 +1,27 @@
-# ovrwin
+# libdos
 
-[![Build](https://github.com/ZacWalk/ovrwin/actions/workflows/build.yml/badge.svg)](https://github.com/ZacWalk/ovrwin/actions/workflows/build.yml)
+[![Build](https://github.com/ZacWalk/libdos/actions/workflows/build.yml/badge.svg)](https://github.com/ZacWalk/libdos/actions/workflows/build.yml)
 
-Runs DOS games on modern Windows. Point it at a folder with a DOS executable
-and play.
+An embeddable DOS emulator library, and the tools built on it:
 
-ovrwin is not a PC emulator with DOS installed on it. It emulates the hardware
-a game talks to - the CPU, the VGA, the timer, the AdLib - and *maps* the
+- **demu** runs a DOS program from the command line - headlessly, with its
+  console on stdout and its exit code returned - and is also the debugger, the
+  front end of the C compiler and the test suite. It is what builds
+  [dos4z](https://github.com/ZacWalk/dos4z), MS-DOS 4.00 from source, with the
+  original 1988 toolchain.
+- **dui** is the windowed app: point it at a folder with a DOS game and play.
+
+libdos is not a PC emulator with DOS installed on it. It emulates the hardware
+a program talks to - the CPU, the VGA, the timer, the AdLib - and *maps* the
 software interfaces, INT 21h and the BIOS, onto the host the way Wine maps the
 Win32 API onto Linux. There is no DOS kernel in memory and no disk image: the
 folder you open is the emulated C: drive.
 
-![ovrwin running a DOS demonstration in its Windows host](docs/screenshot.png)
+![dui running a DOS demonstration in its Windows host](docs/screenshot.png)
 
 *An original demo built with the included 16-bit C compiler.*
 
-Repository: <https://github.com/ZacWalk/ovrwin>
+Repository: <https://github.com/ZacWalk/libdos>
 
 ## What is emulated
 
@@ -43,10 +49,10 @@ a DOS extender will not run).
 
 | Path | Contents |
 |------|----------|
-| `src/` | The emulator. Platform independent - no Windows headers, no file system. Builds `ovrwin_core`. |
-| `host/` | The Windows implementation of the host interface: one directory presented as the emulated drive, plus the pages the JIT executes from. Shared by the app and the CLI, and the last Windows-specific code in the repository. |
-| `app/` | The app, written against the shared [platform-h](https://github.com/ZacWalk/platform-h) layer: window, menu, picture, sound and the key mapping, with no operating system named. |
-| `cli/` | Command line driver: the test suite, plus tools to inspect, disassemble, trace and headlessly run a program. |
+| `src/` | The emulator. Platform independent - no Windows headers, no file system. Builds `libdos`. |
+| `host/` | The Windows implementation of the host interface: one directory presented as the emulated drive, plus the pages the JIT executes from. Shared by demu and dui, and the last Windows-specific code in the repository. |
+| `app/` | dui, written against the shared [platform-h](https://github.com/ZacWalk/platform-h) layer: window, menu, picture, sound and the key mapping, with no operating system named. |
+| `cli/` | demu: the test suite, plus tools to inspect, disassemble, trace and headlessly run a program. |
 | `cc/` | A C compiler for 16-bit DOS. Platform independent, and it opens no files either. `cc/include` and `cc/lib` are the C library it compiles against. |
 | `shell/` | `dos.h` and a DOS command interpreter written in C, built by `cc/`. |
 | `tools/` | `make-font.ps1`, which regenerates the character generator in `src/rom-font.cpp`. |
@@ -57,7 +63,7 @@ a DOS extender will not run).
 ```powershell
 .\dd.ps1 build              # both configurations
 .\dd.ps1 test               # build and run the suite
-.\dd.ps1 launch             # build Release, then start the app
+.\dd.ps1 launch             # build Release, then start dui
 .\dd.ps1 bench --yes        # compile the benchmark for this machine and run it
 .\dd.ps1 bench --exe true --yes   # the same, but as a standalone exe\bench.exe
 ```
@@ -69,12 +75,12 @@ cmake --preset release
 cmake --build --preset release
 ```
 
-Binaries land in `exe/` as `ovrwin.exe` and `ovrwincli.exe`, with a `-d` suffix
+Binaries land in `exe/` as `dui.exe` and `demu.exe`, with a `-d` suffix
 for Debug. Build trees go under `build/<preset>/`. The platform layer is pulled
 in by `FetchContent` at the revision pinned in `CMakeLists.txt`, except that a
 sibling `../platform-h` checkout is used instead when one exists.
 
-## The app
+## dui
 
 Drop a program or a folder onto the window, open one through **File**, or pass
 one on the command line. Whichever you do, the folder becomes the emulated C:
@@ -121,15 +127,15 @@ and because a program compiled here and run there exercises the whole emulator
 from one end to the other.
 
 ```powershell
-.\exe\ovrwincli.exe --cc .\shell\hello.c        # writes hello.COM
-.\exe\ovrwincli.exe --run .\shell\hello.COM --screen
+.\exe\demu.exe --cc .\shell\hello.c        # writes hello.COM
+.\exe\demu.exe --run .\shell\hello.COM --screen
 ```
 
 A program that wants the C library includes it, because there is nothing to
 link with:
 
 ```powershell
-.\exe\ovrwincli.exe --cc prog.c -I cc\include -I cc\lib -D NDEBUG
+.\exe\demu.exe --cc prog.c -I cc\include -I cc\lib -D NDEBUG
 ```
 
 It is one pass with no syntax tree, in the shape of Fabrice Bellard's Tiny C
@@ -147,46 +153,57 @@ COMMAND.COM's command set. It runs as a real DOS program inside the emulator
 and launches others through INT 21h `EXEC`:
 
 ```powershell
-.\exe\ovrwincli.exe --cc .\shell\shell.c
+.\exe\demu.exe --cc .\shell\shell.c
 copy .\shell\shell.COM .\GAME\
-.\exe\ovrwincli.exe --run .\GAME\SHELL.COM --args "dir" --screen
+.\exe\demu.exe --run .\GAME\SHELL.COM --args "dir" --screen
 ```
 
-The prompt the app comes up with is a separate, native one: it has to work
+The prompt dui comes up with is a separate, native one: it has to work
 before any drive is mounted, and it is there whether or not you have built
 anything.
 
-## The command line
+## demu
 
-`ovrwincli.exe --test` runs the behavioural test suite and returns non-zero on
+`demu.exe --test` runs the behavioural test suite and returns non-zero on
 failure. The same binary is the debugger:
 
 ```powershell
-.\exe\ovrwincli.exe --info GAME.EXE                  # MZ header, memory needed
-.\exe\ovrwincli.exe --cc program.c [-I dir] [-D name=value]  # compile C to a DOS .COM
-.\exe\ovrwincli.exe --disasm GAME.EXE 40             # disassemble from the entry point
-.\exe\ovrwincli.exe --run GAME.EXE --frames 400 --bmp shot.bmp
-.\exe\ovrwincli.exe --run GAME.EXE --trace           # every DOS and BIOS call
-.\exe\ovrwincli.exe --run GAME.EXE --trace-tail 200  # the last instructions executed
-.\exe\ovrwincli.exe --run GAME.EXE --screen --state  # text screen, registers, memory
-.\exe\ovrwincli.exe --run GAME.EXE --keys " \n" --key-delay 240 --bmp shot.bmp
-.\exe\ovrwincli.exe --run GAME.EXE --wav sound.wav    # what came out of the speaker
-.\exe\ovrwincli.exe --run .\GAME --args "dir" --screen  # mount a folder, use the shell
-.\exe\ovrwincli.exe --bench GAME.EXE --seconds 3     # guest instructions a second
+.\exe\demu.exe --info GAME.EXE                  # MZ header, memory needed
+.\exe\demu.exe --cc program.c [-I dir] [-D name=value]  # compile C to a DOS .COM
+.\exe\demu.exe --disasm GAME.EXE 40             # disassemble from the entry point
+.\exe\demu.exe --run GAME.EXE --frames 400 --bmp shot.bmp
+.\exe\demu.exe --run GAME.EXE --trace           # every DOS and BIOS call
+.\exe\demu.exe --run GAME.EXE --trace-tail 200  # the last instructions executed
+.\exe\demu.exe --run GAME.EXE --screen --state  # text screen, registers, memory
+.\exe\demu.exe --run GAME.EXE --keys " \n" --key-delay 240 --bmp shot.bmp
+.\exe\demu.exe --run GAME.EXE --wav sound.wav    # what came out of the speaker
+.\exe\demu.exe --run .\GAME --args "dir" --screen  # mount a folder, use the shell
+.\exe\demu.exe --bench GAME.EXE --seconds 3     # guest instructions a second
 ```
 
 `--trace` and `--trace-tail` are how you find out why a program gave up: the
 first shows which service it asked for and what it got back, the second shows
 the instructions it ran on the way there. `--keys` types on the emulated
 keyboard as the program runs, which is what gets a game past its title screen
-without the app.
+without dui.
 
 ## Embedding
 
-Link the `ovrwin_core` CMake target and include `src/machine.h`. Implement
+Link the `libdos` CMake target and include `src/machine.h`. Implement
 `host_services` from `src/host.h` to decide what the emulated drive is, then
 feed the machine an image (`load_program`), step it with `exec(cycles)`, and
 read `framebuffer()` and `generate_audio()`. `app/main.cpp` is a complete
 worked host.
+
+Pulled into another CMake project - with `add_subdirectory` or `FetchContent` -
+libdos builds only its libraries: `libdos`, `libdos_cc` (the compiler) and
+`libdos_host` (the Windows host). `LIBDOS_BUILD_TOOLS` and `LIBDOS_BUILD_APP`
+turn demu and dui on; they default to on only when libdos is the top-level
+project, and only dui fetches the platform layer.
+
+## Licence
+
+MIT - see [LICENSE](LICENSE). Where parts of it came from, including the CPU
+core's descent from the reenigne project, is in [NOTICE.md](NOTICE.md).
 
 Contributing, or working on this with an AI agent? See [AGENTS.md](AGENTS.md).

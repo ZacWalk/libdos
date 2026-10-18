@@ -1,5 +1,5 @@
-#ifndef __OVRWIN_STDLIB_H__
-#define __OVRWIN_STDLIB_H__
+#ifndef __LIBDOS_STDLIB_H__
+#define __LIBDOS_STDLIB_H__
 
 #include <stddef.h>
 

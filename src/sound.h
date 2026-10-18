@@ -1,6 +1,6 @@
 #pragma once
 
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // Audio: a YM3812 (AdLib / OPL2) synthesiser and the PC speaker driven from
 // timer channel 2. Register writes are timestamped with the machine's cycle

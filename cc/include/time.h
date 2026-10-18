@@ -1,5 +1,5 @@
-#ifndef __OVRWIN_TIME_H__
-#define __OVRWIN_TIME_H__
+#ifndef __LIBDOS_TIME_H__
+#define __LIBDOS_TIME_H__
 
 typedef long time_t;
 typedef long clock_t;

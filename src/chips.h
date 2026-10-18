@@ -1,6 +1,6 @@
 #pragma once
 
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // The support chips a DOS program can see: the 8253 timer, the 8259 interrupt
 // controllers and the 8042 keyboard controller. Only the behaviour programs

@@ -1,6 +1,6 @@
 #pragma once
 
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // Windows implementation of host_services: a single directory is presented to
 // the emulated program as its whole drive. Shared by the GUI app and the CLI.

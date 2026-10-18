@@ -1,5 +1,5 @@
-#ifndef __OVRWIN_SIGNAL_H__
-#define __OVRWIN_SIGNAL_H__
+#ifndef __LIBDOS_SIGNAL_H__
+#define __LIBDOS_SIGNAL_H__
 
 #define SIGINT 2
 #define SIGABRT 6

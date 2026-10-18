@@ -1,6 +1,6 @@
 #pragma once
 
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // The DOS personality: the MZ/COM loader, the PSP and MCB memory chain, and
 // the INT 21h service layer. This is the "Wine" part of the emulator - there

@@ -1,6 +1,6 @@
 #pragma once
 
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // 8086/80186 real-mode CPU state and interpreter. The CPU is a plain-data
 // struct so the whole machine can be copied, saved or inspected; every entry

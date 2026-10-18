@@ -1,4 +1,4 @@
-# ovrwin gaps
+# libdos gaps
 
 Ranked roughly by value per unit of work. When you close an item, delete it;
 when a review turns one up, add it here rather than in AGENTS.md.
@@ -40,7 +40,7 @@ when a review turns one up, add it here rather than in AGENTS.md.
 - No Ctrl+C or Ctrl+Break. DOS never raises INT 23h and the BIOS never calls
   INT 1Bh, so a ^C typed at a program reading the console arrives as
   character 3 - into an AH=0Ah line as well - and nothing stops a program that
-  never asks for input; Machine > Reset is the only way out. The app maps
+  never asks for input; Machine > Reset is the only way out. dui maps
   neither the Pause key nor Ctrl+Break.
 - AH=47h returns the current directory with its leading backslash (`\GAMES`)
   where DOS gives `GAMES`. `shell/shell.c` builds its prompt on that backslash,
@@ -66,7 +66,7 @@ when a review turns one up, add it here rather than in AGENTS.md.
 - The generated code is no longer naive, but it is still a long way from a real
   8086 compiler's. `cc/bench/bench.c` is the yardstick - the shapes a game's
   inner loops are made of, with a checksum in the exit code - and
-  `ovrwincli --ccbench cc\bench\bench.c` reports its size and what it costs to
+  `demu --ccbench cc\bench\bench.c` reports its size and what it costs to
   run. What is there now, statement by statement: an operand that generates no
   code of its own is placed rather than pushed, so a constant folds into the
   instruction; a comparison stays in the flags instead of becoming a 0 or a 1
@@ -137,13 +137,13 @@ when a review turns one up, add it here rather than in AGENTS.md.
   parameters and struct returns, and a front end that honours the target's int
   and pointer widths instead of assuming two bytes.
 - A program compiled for this machine runs in a 64 KiB block the host hands it,
-  so it is the tiny model natively as well: `ovrwincli --ccnative cc\bench\bench.c`
+  so it is the tiny model natively as well: `demu --ccnative cc\bench\bench.c`
   compiles the benchmark for x64, runs it in process and gets the same checksum
   and exit code the emulated build gives - about 195x faster, 0.8 ms against
   157 ms. `cc\bench\roundtrip.c` does the same for the file services. What is
   missing there is the rest of DOS: no find-first, no keyboard, no EXEC, so the
   shell does not run this way yet.
-- `ovrwincli --ccexe <file.c>` writes the same image out as a Windows
+- `demu --ccexe <file.c>` writes the same image out as a Windows
   executable: one section holding the block, a startup that hands the program
   its own base, and a service routine that turns INT 21h into `WriteFile` and
   `ExitProcess`. It is not relocatable - there is no relocation table, so the
@@ -164,7 +164,7 @@ segment limit. Reproducing it:
 
 ```powershell
 # one file that includes the other 51, then the library it expects
-ovrwincli --cc doomall.c -I cc\include -DC_ONLY -DFLAT_SPAN -DVIEWWINDOWWIDTH=120
+demu --cc doomall.c -I cc\include -DC_ONLY -DFLAT_SPAN -DVIEWWINDOWWIDTH=120
 ```
 
 What that says today:
@@ -264,7 +264,7 @@ the WAD cache - though `C_ONLY` avoids it.
 
 ## Shell
 
-There are two: the native prompt in `src/shell.cpp` that the app comes up with,
+There are two: the native prompt in `src/shell.cpp` that dui comes up with,
 and `shell/shell.c`, a DOS program built by `cc/`. Neither has:
 
 - Batch files, so a game's `RUN.BAT` has to be read and typed by hand.
@@ -314,17 +314,17 @@ the DOS one does through `EXEC`; it resets the machine instead.
   tell the cursor pad from the numeric keypad. For the same reason the
   emulated NumLock starts off, so the keypad's digits arrive as cursor keys
   whatever the host's NumLock says.
-- Alt, Alt+key and F10 never reach a program in the app: platform-h does not
+- Alt, Alt+key and F10 never reach a program in dui: platform-h does not
   forward `WM_SYSKEYDOWN`/`WM_SYSKEYUP`, so Windows uses them for the menu bar
   instead. The BIOS translates Alt combinations for when they do arrive.
 - No joystick. Port 201h reports nothing attached.
 
 ## Host and app
 
-- The app has no settings file: window size, sound and aspect are not
+- dui has no settings file: window size, sound and aspect are not
   remembered between runs.
 - No save states.
-- The app draws the whole frame every iteration whether or not anything
+- dui draws the whole frame every iteration whether or not anything
   changed; `vga_state::dirty` is maintained but not used.
 
 ## Tests

@@ -1,7 +1,7 @@
-#ifndef __OVRWIN_DOS_H__
-#define __OVRWIN_DOS_H__
+#ifndef __LIBDOS_DOS_H__
+#define __LIBDOS_DOS_H__
 
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // The register-block interface to the BIOS and DOS that 16-bit sources use.
 

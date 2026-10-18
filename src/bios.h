@@ -1,6 +1,6 @@
 #pragma once
 
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // PC BIOS services (INT 10h video, 11h/12h equipment, 13h disk, 15h system,
 // 16h keyboard, 1Ah clock) plus the INT 33h mouse driver, and the input state

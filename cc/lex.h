@@ -1,7 +1,7 @@
-#ifndef OVRWIN_CC_LEX_H
-#define OVRWIN_CC_LEX_H
+#ifndef LIBDOS_CC_LEX_H
+#define LIBDOS_CC_LEX_H
 
-/* ovrwin by Zac Walker
+/* libdos by Zac Walker
  *
  * Tokeniser and preprocessor. The whole translation unit is turned into one
  * token list with includes inlined and macros expanded, which the parser then

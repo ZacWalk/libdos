@@ -1,4 +1,4 @@
-/* ovrwin by Zac Walker
+/* libdos by Zac Walker
  *
  * The 8086 back end: it turns the instruction list into bytes, and it is the
  * only part of the compiler that knows an opcode from a hole in the ground.
