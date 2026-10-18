@@ -90,7 +90,7 @@ if(LIBDOS_BUILD_TOOLS)
     # demu: the command line runner, debugger and test suite. Runs a DOS
     # program headlessly, inspects, disassembles and traces one. Deliberately
     # uses no platform layer.
-    add_executable(demu cli/main.cpp cli/runner.cpp cli/lib-omf.c)
+    add_executable(demu cli/main.cpp cli/runner.cpp cli/boot.cpp cli/lib-omf.c)
     target_link_libraries(demu PRIVATE libdos libdos_cc libdos_disk libdos_host)
 
     # dimg: makes bootable floppy and hard disk images, lists what is on one

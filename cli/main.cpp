@@ -185,7 +185,8 @@ namespace
 	}
 
 	// Loads a block of machine code at 2000:0000 and points the CPU at it.
-	void load_code(machine& m, const uint8_t* code, uint32_t length)	{
+	void load_code(machine& m, const uint8_t* code, uint32_t length)
+	{
 		machine_state& s = m.state();
 		for (uint32_t i = 0; i < length; ++i) s.memory[0x20000 + i] = code[i];
 		s.cpu.set_cs(0x2000);
@@ -195,6 +196,7 @@ namespace
 		s.cpu.set_ss(0x3000);
 		s.cpu.set_sp(0xfffe);
 		s.cpu.flags = 0x0202;
+		s.cpu.halted = false;
 	}
 
 	void step(machine& m, int count)
@@ -2018,6 +2020,9 @@ namespace
 			return found->second;
 		}
 
+		std::string video; // what INT 10h wrote, in order
+		void video_text(uint8_t character) override { video.push_back(char(character)); }
+
 	private:
 		struct open_file
 		{
@@ -2687,6 +2692,144 @@ namespace
 		      "a disk under two cylinders is refused");
 	}
 
+	// A drive in memory for boot mode.
+	class ram_drive final : public block_device
+	{
+	public:
+		std::vector<uint8_t> bytes;
+
+		explicit ram_drive(size_t sectors) : bytes(sectors * 512)
+		{
+		}
+
+		uint64_t sectors() override
+		{
+			return bytes.size() / 512;
+		}
+
+		bool read(uint64_t lba, uint8_t* data, uint32_t count) override
+		{
+			if ((lba + count) * 512 > bytes.size()) return false;
+			memcpy(data, &bytes[size_t(lba) * 512], size_t(count) * 512);
+			return true;
+		}
+
+		bool write(uint64_t lba, const uint8_t* data, uint32_t count) override
+		{
+			if ((lba + count) * 512 > bytes.size()) return false;
+			memcpy(&bytes[size_t(lba) * 512], data, size_t(count) * 512);
+			return true;
+		}
+	};
+
+	// Boot mode: the machine loads a boot sector and runs it on the BIOS, with
+	// no DOS of its own.
+	void test_boot_mode()
+	{
+		// Prints 'B', reads sector 2 by CHS and prints its first byte, asks
+		// for the LBA calls and prints BH (AAh if they are there), reads LBA 3
+		// through the packet at 7C80h and prints its first byte, then halts.
+		const uint8_t program[] = {
+			0x31, 0xc0, 0x8e, 0xd8, 0x8e, 0xc0,             // xor ax,ax / mov ds,ax / mov es,ax
+			0xb8, 0x42, 0x0e, 0xcd, 0x10,                   // mov ax,0E42h / int 10h
+			0xb8, 0x01, 0x02, 0xbb, 0x00, 0x06,             // mov ax,0201h / mov bx,0600h
+			0xb9, 0x02, 0x00, 0xb6, 0x00, 0xcd, 0x13,       // mov cx,2 / mov dh,0 / int 13h
+			0xa0, 0x00, 0x06, 0xb4, 0x0e, 0xcd, 0x10,       // mov al,[0600h] / mov ah,0Eh / int 10h
+			0xb4, 0x41, 0xbb, 0xaa, 0x55, 0xcd, 0x13,       // mov ah,41h / mov bx,55AAh / int 13h
+			0x88, 0xf8, 0xb4, 0x0e, 0xcd, 0x10,             // mov al,bh / mov ah,0Eh / int 10h
+			0xbe, 0x80, 0x7c, 0xb4, 0x42, 0xcd, 0x13,       // mov si,7C80h / mov ah,42h / int 13h
+			0xa0, 0x00, 0x08, 0xb4, 0x0e, 0xcd, 0x10,       // mov al,[0800h] / mov ah,0Eh / int 10h
+			0xf4, 0xeb, 0xfd,                               // hlt / jmp $-1
+		};
+		const uint8_t packet[16] = {0x10, 0, 1, 0, 0x00, 0x08, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0};
+		const auto make_disk = [&](ram_drive& disk) {
+			memcpy(disk.bytes.data(), program, sizeof(program));
+			memcpy(&disk.bytes[0x80], packet, sizeof(packet));
+			disk.bytes[510] = 0x55;
+			disk.bytes[511] = 0xaa;
+			disk.bytes[512] = 'C';
+			disk.bytes[3 * 512] = 'D';
+		};
+		const auto run = [](machine& m, ram_host& host, size_t characters) {
+			for (int i = 0; i < 400 && host.video.size() < characters && !m.faulted(); ++i) m.exec(1000);
+		};
+
+		{
+			ram_host host;
+			ram_drive disk(20 * 16 * 63);
+			make_disk(disk);
+			machine m;
+			m.set_host(&host);
+			m.set_cpu_model(cpu_model::i8086);
+			check(m.attach_disk(0x80, &disk, {20, 16, 63}, true), "a hard disk is attached");
+			check(m.power_on(0x80), "the machine boots from it");
+			run(m, host, 4);
+			check(host.video == "BC\xaa" "D", "the boot sector reads by CHS, finds the LBA calls and reads by LBA");
+			machine_state& s = m.state();
+			check(read16(s, 0, 0x21 * 4) == 0 && read16(s, 0, 0x21 * 4 + 2) == 0 && read16(s, 0, 0x33 * 4 + 2) == 0,
+			      "booted, no DOS and no mouse driver are mapped in");
+			check(s.memory[0xffffe] == 0xff && memcmp(&s.memory[0xffff5], "10/27/82", 8) == 0,
+			      "the ROM is an IBM PC's");
+			check(read16(s, 0, 0x1e * 4 + 2) == 0xf000 && s.memory[0xfefc7 + 4] == 9,
+			      "INT 1Eh points at the diskette parameters");
+			check(read8(s, bda_segment, 0x75) == 1 && (read16(s, bda_segment, 0x10) & 0xc1) == 0x01,
+			      "the BIOS counts one hard disk and one floppy drive");
+
+			// mov ah,08h / mov dl,80h / int 13h / hlt
+			const uint8_t parameters[] = {0xb4, 0x08, 0xb2, 0x80, 0xcd, 0x13, 0xf4};
+			load_code(m, parameters, sizeof(parameters));
+			s.pic.master.irr = 0; // no timer tick in the middle of the steps
+			step(m, 8);
+			check(s.cpu.cx() == 0x133f && s.cpu.dx() == 0x0f01 && !s.cpu.cf(),
+			      "AH=08h gives the last cylinder, sector, head and the number of disks");
+
+			// jmp far FFFF:0000, which is how FDISK restarts the machine
+			const uint8_t restart[] = {0xea, 0x00, 0x00, 0xff, 0xff};
+			load_code(m, restart, sizeof(restart));
+			s.pic.master.irr = 0;
+			step(m, 2);
+			check(s.cpu.cs() == 0 && s.cpu.ip == 0x7c00 && s.memory[0x7c00] == 0x31,
+			      "a jump to FFFF:0000 starts the machine again from the disk");
+		}
+		{
+			ram_host host;
+			ram_drive disk(20 * 16 * 63);
+			make_disk(disk);
+			machine m;
+			m.set_host(&host);
+			m.attach_disk(0x80, &disk, {20, 16, 63}, false);
+			m.power_on(0x80);
+			run(m, host, 4);
+			check(host.video == std::string("BCU\0", 4), "with the LBA calls switched off, AH=41h and AH=42h fail");
+		}
+		{
+			ram_host host;
+			ram_drive floppy(2880);
+			make_disk(floppy);
+			floppy.bytes[510] = floppy.bytes[511] = 0;
+			machine m;
+			m.set_host(&host);
+			m.attach_disk(0x00, &floppy, {80, 2, 18}, true);
+			check(m.power_on(0x00), "a floppy boots without the 55AAh signature");
+			run(m, host, 4);
+			check(host.video == std::string("BCU\0", 4), "a floppy has CHS only");
+
+			// mov ah,08h / mov dl,00h / int 13h / hlt
+			const uint8_t parameters[] = {0xb4, 0x08, 0xb2, 0x00, 0xcd, 0x13, 0xf4};
+			load_code(m, parameters, sizeof(parameters));
+			m.state().pic.master.irr = 0;
+			step(m, 8);
+			const cpu_state& c = m.state().cpu;
+			check(c.bl() == 4 && c.cx() == 0x4f12 && c.dx() == 0x0101 && c.es() == 0xf000 && c.di() == 0xefc7,
+			      "AH=08h reports a 1.44 MB drive and its parameter table");
+		}
+		{
+			machine m;
+			check(!m.power_on(0x80) && strstr(m.error(), "nothing to boot") != nullptr,
+			      "with no disk there is nothing to boot");
+		}
+	}
+
 	int run_tests()
 	{
 		test_cpu();
@@ -2718,6 +2861,7 @@ namespace
 		test_dos_services();
 		test_cpu_models();
 		test_disk_images();
+		test_boot_mode();
 
 		printf("%d checks, %d failures\n", checks, failures);
 		return failures == 0 ? 0 : 1;
@@ -3668,6 +3812,7 @@ namespace
 			"  --cpu <n>       8086 or 386; a 386 still produces a 16-bit .COM\n"
 			"  --map           list what each function cost, largest first\n\n");
 		runner_usage();
+		boot_usage();
 	}
 }
 
@@ -3756,8 +3901,10 @@ int main(int argc, char** argv)
 		}
 		return cc_exe_command(argv[2], output, includes, defines);
 	}
-	if (strcmp(command, "--info") == 0 && argc > 2) return show_info(argv[2]);	if (strcmp(command, "--disasm") == 0 && argc > 2)
+	if (strcmp(command, "--info") == 0 && argc > 2) return show_info(argv[2]);
+	if (strcmp(command, "--disasm") == 0 && argc > 2)
 		return disassemble_file(argv[2], argc > 3 ? atoi(argv[3]) : 32);
+	if (strcmp(command, "--boot") == 0) return run_boot(argc - 2, argv + 2);
 	if (strcmp(command, "--bench") == 0 && argc > 2)
 	{
 		double seconds = 3.0;

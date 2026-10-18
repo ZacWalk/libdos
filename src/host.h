@@ -165,4 +165,9 @@ public:
 
 	// Diagnostics. The CLI prints these; the GUI drops them.
 	virtual void trace(const char* text) { (void)text; }
+
+	// Every character a program writes through INT 10h's teletype, character
+	// and string calls, in order: the console as a stream, which a test can
+	// wait on where the screen would have scrolled it away.
+	virtual void video_text(uint8_t character) { (void)character; }
 };

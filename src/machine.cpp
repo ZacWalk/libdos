@@ -105,6 +105,16 @@ void machine_callback(machine_state& s, uint8_t index)
 		pic_write(s, 0x20, 0x20);
 		return;
 	}
+	if (index == callback_power_on)
+	{
+		// The cycle count runs on through a reboot: the host's exec loop
+		// is still measuring against it.
+		const uint64_t cycles = s.cycles;
+		machine_reset(s);
+		s.cycles = cycles;
+		bios_bootstrap(s);
+		return;
+	}
 
 	// An interrupt-level trace is how you find out why a program gave up, so
 	// it reports the call before it is serviced.
@@ -119,7 +129,7 @@ void machine_callback(machine_state& s, uint8_t index)
 		s.host->trace(text);
 	}
 
-	if (dos_interrupt(s, index)) return;
+	if (!s.boot_mode && dos_interrupt(s, index)) return;
 	if (bios_interrupt(s, index)) return;
 	// Anything else falls through to the IRET in the stub.
 }
@@ -254,6 +264,7 @@ void machine_reset(machine_state& s)
 	const uint32_t cpu_hz = s.cpu_hz;
 	const cpu_model model = s.model;
 	const bool trace = s.trace;
+	const bool boot_mode = s.boot_mode;
 
 	// Audio is the host's setting, not the machine's. Losing it here silences
 	// every program started from the shell prompt.
@@ -277,6 +288,7 @@ void machine_reset(machine_state& s)
 	s.cpu_hz = cpu_hz;
 	s.model = model;
 	s.trace = trace;
+	s.boot_mode = boot_mode;
 	s.shell = shell_state();
 
 	// A far jump to the BIOS entry point at the reset vector, so a program
@@ -287,12 +299,24 @@ void machine_reset(machine_state& s)
 	s.memory[0xffff3] = 0x00;
 	s.memory[0xffff4] = 0xf0;
 
-	for (int vector = 0; vector < 0x80; ++vector) machine_install_vector(s, uint8_t(vector));
+	// Booted, the machine has the BIOS's vectors and nothing above them: the
+	// DOS it loads installs its own.
+	const int vectors = boot_mode ? 0x20 : 0x80;
+	for (int vector = 0; vector < vectors; ++vector) machine_install_vector(s, uint8_t(vector));
 
 	bios_reset(s);
 	vga_reset(s.vga);
 	vga_set_mode(s, 3);
-	dos_reset(s);
+	if (boot_mode)
+	{
+		bios_reset_pc(s);
+		s.cpu.set_cs(0xf000);
+		s.cpu.ip = 0xfff0;
+	}
+	else
+	{
+		dos_reset(s);
+	}
 
 	// Unmask the timer and keyboard interrupts, as the BIOS leaves them.
 	s.pic.master.imr = 0xfc;
@@ -310,6 +334,7 @@ void machine::reset()
 bool machine::load_program(const uint8_t* image, uint32_t size, const char* dos_path, const char* command_line)
 {
 	machine_state& s = *state_;
+	s.boot_mode = false;
 	reset();
 	if (!dos_load_program(s, image, size, dos_path, command_line, s.error, sizeof(s.error)))
 	{
@@ -353,7 +378,9 @@ uint64_t machine::exec(uint64_t budget)
 	const uint64_t retrace = frame_cycles - frame_cycles / 20;
 	const uint64_t end = s.cycles + budget;
 	uint64_t render_at = (end / frame_cycles) * frame_cycles + retrace;
-	while (render_at > end) render_at -= frame_cycles;
+	// A budget shorter than a frame may hold no retrace at all, before the
+	// first one especially; then the picture is taken at the end.
+	while (render_at > end && render_at >= frame_cycles) render_at -= frame_cycles;
 
 	while (spent < budget && !s.exited)
 	{
@@ -384,11 +411,36 @@ uint64_t machine::exec(uint64_t budget)
 
 void machine::start_shell()
 {
+	state_->boot_mode = false;
 	machine_reset(*state_);
 	shell_start(*state_);
 }
 
 bool machine::shell_active() const { return state_->shell.active; }
+
+bool machine::attach_disk(uint8_t drive, block_device* device, const disk_geometry& geometry, bool extensions)
+{
+	const int index = bios_drive_index(drive);
+	if (index < 0) return false;
+	if (device != nullptr && (geometry.cylinders == 0 || geometry.heads == 0 || geometry.heads > 256 ||
+	                          geometry.sectors_per_track == 0 || geometry.sectors_per_track > 63))
+		return false;
+	bios_drive& d = state_->bios.drives[index];
+	d = bios_drive();
+	d.device = device;
+	d.geometry = geometry;
+	d.extensions = extensions && (drive & 0x80) != 0;
+	return true;
+}
+
+bool machine::power_on(uint8_t drive)
+{
+	machine_state& s = *state_;
+	s.boot_mode = true;
+	s.bios.boot_drive = drive;
+	machine_reset(s);
+	return bios_bootstrap(s);
+}
 
 bool machine::run_program(const char* name, const char* command_line)
 {

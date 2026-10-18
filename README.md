@@ -21,6 +21,12 @@ software interfaces, INT 21h and the BIOS, onto the host the way Wine maps the
 Win32 API onto Linux. There is no DOS kernel in memory and no disk image: the
 folder you open is the emulated C: drive.
 
+Boot mode is the exception, for testing a DOS rather than running programs on
+one: the machine is an IBM PC with nothing mapped in, its BIOS serves disk
+images through INT 13h, and it boots whatever is on them. That is how
+[dos4z](https://github.com/ZacWalk/dos4z) checks that its MS-DOS 4.0 boots and
+works on an 8088 - see [Booting a disk](#booting-a-disk).
+
 ![dui running a DOS demonstration in its Windows host](docs/screenshot.png)
 
 *An original demo built with the included 16-bit C compiler.*
@@ -40,6 +46,7 @@ Repository: <https://github.com/ZacWalk/libdos>
 | Sound | AdLib / OPL2: nine channels, two operators each, four waveforms, envelopes, feedback and both connection modes. PC speaker driven from timer channel 2 |
 | Mouse | INT 33h driver with position, buttons, ranges, motion counters and an on-screen pointer |
 | DOS | INT 21h: console, handle-based file I/O with DOS's per-process handle tables and redirection, directory search, memory allocation, the DTA, interrupt vectors, dates and times, `EXEC` for child processes and overlays, COMMAND.COM /C carried out natively, and the MZ/COM loader with relocation |
+| Disks | In boot mode only: INT 13h over disk images - two floppies, and two hard disks with CHS and the LBA calls - and INT 19h booting from them, on an IBM PC 5150's ROM |
 
 It also comes with a C compiler that targets 16-bit DOS, and a shell written in
 C and built with it - see [Building DOS programs](#building-dos-programs).
@@ -206,6 +213,34 @@ demu -r C:\src\dos4z C:\src\dos4z\dos\TOOLS\NMAKE.EXE
 executable, and `-shell` reports DOS 4.00 rather than 3.20, for running
 COMMAND.COM itself.
 
+### Booting a disk
+
+```powershell
+demu --boot -a dos.img [-c hd.img] --expect "A>" --line "dir" --expect "bytes free" --screen
+```
+
+powers on an IBM PC 5150 - an 8088 at 4.77 MHz, 640 KB, the ROM's model byte
+and date - with disk images in its drives, `-a` and `-b` floppies and `-c` and
+`-d` hard disks, and boots from A: if there is a floppy and C: if not
+(`--from`). Nothing is mapped in: the DOS on the disk brings its own INT 21h,
+and the BIOS under it is libdos's, with INT 13h reading and writing the images.
+A hard disk has the geometry dimg gives it (`--chs` sets another) and the LBA
+calls, INT 13h AH=41h-48h, unless `--no-lba` takes them away - so both of a
+DOS's paths to a disk can be tried.
+
+The steps after it run in order against everything written through INT 10h:
+`--expect <text>` waits for text after the last match, `--type <text>` types
+it as it is, `--line <text>` types it and presses Enter, `--key <name>` presses
+Enter, Esc, an arrow or a function key, and `--reboot` restarts with the disks
+as they now are. Each key goes in once the console has been quiet for a
+moment, as a person types, so a program that flushes the keyboard after its
+prompt gets it.
+demu exits 0 when every step has happened, 1 when an `--expect` timed out
+(`--timeout`, in emulated seconds) and 2 when the machine stopped - which the
+8086 processor model does at any instruction an 8088 does not have. `--snapshot`
+keeps what is written in memory and leaves the images alone, `--log` writes
+the console's output, and `--trace` reports each BIOS call.
+
 ### The debugger and the test suite
 
 `demu.exe --test` runs the behavioural test suite and returns non-zero on
@@ -270,7 +305,9 @@ Link the `libdos` CMake target and include `src/machine.h`. Implement
 `host_services` from `src/host.h` to decide what the emulated drive is, then
 feed the machine an image (`load_program`), step it with `exec(cycles)`, and
 read `framebuffer()` and `generate_audio()`. `app/main.cpp` is a complete
-worked host.
+worked host. For boot mode, implement `block_device` from
+`src/block-device.h` over wherever the disk's sectors live, `attach_disk` it
+and `power_on`; `cli/boot.cpp` does that with image files.
 
 Pulled into another CMake project - with `add_subdirectory` or `FetchContent` -
 libdos builds only its libraries: `libdos`, `libdos_cc` (the compiler),
