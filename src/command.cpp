@@ -109,6 +109,11 @@ namespace
 			raw(text, int(std::strlen(text)), true);
 			raw("\r\n", 2, true);
 		}
+
+		bool confirm(const char* question) const
+		{
+			return out.confirm != nullptr && out.confirm(s, question, out.context);
+		}
 	};
 
 	bool has_wildcards(const char* path) { return std::strpbrk(path, "*?") != nullptr; }
@@ -142,13 +147,15 @@ namespace
 		return s.host != nullptr && s.host->file_info(path.c_str(), info) && !info.directory;
 	}
 
-	// Every file a pattern matches, as full DOS paths.
-	std::vector<std::string> matches(machine_state& s, const std::string& pattern)
+	// Every file a pattern matches, as full DOS paths. `attributes` are the
+	// search's, as for AH=4Eh: 0 for the files DEL, COPY and FOR see, without
+	// the hidden and system ones ATTRIB also wants.
+	std::vector<std::string> matches(machine_state& s, const std::string& pattern, uint8_t attributes)
 	{
 		std::vector<std::string> out;
 		if (s.host == nullptr) return out;
 		host_file_info info;
-		const int search = s.host->find_first(pattern.c_str(), 0x06, info);
+		const int search = s.host->find_first(pattern.c_str(), attributes, info);
 		if (search < 0) return out;
 		const std::string directory = directory_of(pattern.c_str());
 		do
@@ -246,7 +253,7 @@ namespace
 			{
 				const std::string path = resolve(s, piece);
 				if (has_wildcards(path.c_str()))
-					for (const std::string& match : matches(s, path)) sources.push_back(match);
+					for (const std::string& match : matches(s, path, 0)) sources.push_back(match);
 				else sources.push_back(path);
 			}
 			if (plus == std::string::npos) break;
@@ -315,8 +322,25 @@ namespace
 		return 0;
 	}
 
+	// Whether a file name matches every file, as *.* and ????????.??? do.
+	bool names_everything(const char* name)
+	{
+		const char* dot = std::strchr(name, '.');
+		const auto any = [](const char* from, const char* to, ptrdiff_t width)
+		{
+			for (const char* p = from; p < to; ++p)
+			{
+				if (*p == '*') return true;
+				if (*p != '?') return false;
+			}
+			return to - from >= width;
+		};
+		return dot != nullptr && any(name, dot, 8) && any(dot + 1, dot + std::strlen(dot), 3);
+	}
+
 	// DEL and ERASE. A file that is not there is reported, but not as a
 	// failure, since COMMAND.COM's own commands leave the errorlevel alone.
+	// Emptying a directory - DEL *.* or DEL of the directory - is asked first.
 	int command_del(machine_state& s, const char* argument, const printer& p)
 	{
 		std::string target;
@@ -329,9 +353,12 @@ namespace
 		}
 		std::string path = resolve(s, target);
 		if (is_directory(s, path)) path += (path.back() == '\\' ? "*.*" : "\\*.*");
+		if (names_everything(name_of(path.c_str())) &&
+		    !p.confirm("All files in directory will be deleted!\r\nAre you sure (Y/N)?"))
+			return 0;
 		if (has_wildcards(path.c_str()))
 		{
-			for (const std::string& match : matches(s, path)) s.host->file_delete(match.c_str());
+			for (const std::string& match : matches(s, path, 0)) s.host->file_delete(match.c_str());
 			return 0;
 		}
 		if (s.host == nullptr || !s.host->file_delete(path.c_str())) p.error("File not found");
@@ -387,7 +414,9 @@ namespace
 		return 0;
 	}
 
-	int command_echo(const char* argument, const printer& p)
+	// `blank` says a blank ended the word ECHO: "echo." and its relatives,
+	// with no blank, print what follows the delimiter, and "echo .done" all of it.
+	int command_echo(const char* argument, bool blank, const printer& p)
 	{
 		const std::string text = trimmed(argument);
 		if (text.empty())
@@ -396,8 +425,7 @@ namespace
 			return 0;
 		}
 		if (equals(text.c_str(), "on") || equals(text.c_str(), "off")) return 0;
-		// "echo." and its relatives print what follows the delimiter.
-		if (std::strchr(".:;,/+[]", text[0]) != nullptr && argument[0] == text[0])
+		if (!blank && std::strchr(".:;,/+[]", text[0]) != nullptr)
 		{
 			p.line(text.c_str() + 1);
 			return 0;
@@ -521,7 +549,7 @@ namespace
 
 		const std::string pattern = resolve(s, target.empty() ? "*.*" : target);
 		std::vector<std::string> files;
-		if (has_wildcards(pattern.c_str())) files = matches(s, pattern);
+		if (has_wildcards(pattern.c_str())) files = matches(s, pattern, 0x06);
 		else if (is_file(s, pattern)) files.push_back(pattern);
 		if (files.empty())
 		{
@@ -683,6 +711,22 @@ namespace
 		dos_write_handle(s, uint16_t(error ? 2 : 1), reinterpret_cast<const uint8_t*>(text), length);
 	}
 
+	// Asks on standard output and takes a line from standard input as the
+	// answer, as COMMAND.COM does; with nothing there to read, it is no.
+	bool handle_confirm(machine_state& s, const char* question, void*)
+	{
+		handle_output(s, question, int(std::strlen(question)), false, nullptr);
+		char answer = 0;
+		for (int i = 0; i < 128; ++i)
+		{
+			uint8_t ch = 0;
+			if (dos_read_handle(s, 0, &ch, 1) != 1 || ch == '\n' || ch == 0x1a) break;
+			if (answer == 0 && ch != ' ' && ch != '\t' && ch != '\r') answer = char(ch);
+		}
+		handle_output(s, "\r\n", 2, false, nullptr);
+		return answer == 'y' || answer == 'Y';
+	}
+
 	void handle_clear(machine_state& s, void*)
 	{
 		uint8_t probe = 0;
@@ -775,7 +819,7 @@ namespace
 			std::string name;
 			while (*q != 0 && !is_blank(*q)) name += *q++;
 			const std::string path = resolve(s, name);
-			holds = has_wildcards(path.c_str()) ? !matches(s, path).empty() : is_file(s, path);
+			holds = has_wildcards(path.c_str()) ? !matches(s, path, 0).empty() : is_file(s, path);
 		}
 		else
 		{
@@ -830,7 +874,7 @@ namespace
 				items.push_back(item);
 				continue;
 			}
-			for (const std::string& match : matches(s, resolve(s, item))) items.push_back(name_of(match.c_str()));
+			for (const std::string& match : matches(s, resolve(s, item), 0)) items.push_back(name_of(match.c_str()));
 		}
 
 		for (const std::string& item : items)
@@ -855,7 +899,7 @@ namespace
 
 	command_result run_line(machine_state& s, const char* line, uint16_t environment, uint8_t& error, int depth)
 	{
-		static const command_output standard = {handle_output, handle_clear, nullptr};
+		static const command_output standard = {handle_output, handle_clear, handle_confirm, nullptr};
 		const printer p{s, standard};
 		if (depth > 8)
 		{
@@ -1039,7 +1083,10 @@ bool command_builtin(machine_state& s, const char* name, const char* argument, c
 	else if (equals(name, "del") || equals(name, "erase")) exit_code = command_del(s, argument, p);
 	else if (equals(name, "ren") || equals(name, "rename")) exit_code = command_ren(s, argument, p);
 	else if (equals(name, "type")) exit_code = command_type(s, argument, p);
-	else if (equals(name, "echo")) exit_code = command_echo(argument, p);
+	else if (equals(name, "echo"))
+		// The argument comes from command_split, after the name in the same
+		// line, so the character before it is the one that ended the name.
+		exit_code = command_echo(argument, argument[0] != 0 && is_blank(argument[-1]), p);
 	else if (equals(name, "cd") || equals(name, "chdir")) exit_code = command_cd(s, argument, p);
 	else if (equals(name, "md") || equals(name, "mkdir")) exit_code = command_md(s, argument, p);
 	else if (equals(name, "rd") || equals(name, "rmdir")) exit_code = command_rd(s, argument, p);

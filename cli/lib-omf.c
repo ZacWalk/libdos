@@ -21,6 +21,21 @@
 #include "lib-omf.h"
 
 int omf_lib_verbose = 0;
+int (*omf_lib_map)(const char *name, char *host_path, int size) = NULL;
+
+/* What went wrong in this run: a file not read or written, or more modules
+ * or symbols than the tables hold. Any of them makes LIB's exit code 1. */
+static int failures = 0;
+
+/* Opens a file by the name LIB was given, through the host's mapping when
+ * there is one; a name it refuses is not opened. */
+static FILE *libOpen(const char *name, const char *mode)
+{
+    char host[MAX_PATH];
+    if (omf_lib_map == NULL) return fopen(name, mode);
+    if (!omf_lib_map(name, host, (int)sizeof(host))) return NULL;
+    return fopen(host, mode);
+}
 
 /* ── OMF constants ─────────────────────────────────────────────────── */
 #define LIB_HEADER  0xF0
@@ -60,6 +75,7 @@ static struct libModule modules[MAX_MODULES];
 static int moduleCount = 0;
 static struct libSymbol symbols[MAX_SYMBOLS];
 static int symbolCount = 0;
+static int symbolsDropped = 0; /* public symbols beyond MAX_SYMBOLS */
 
 /* Extract public symbols from a module's OMF records */
 static void extractPublics(const unsigned char *data, int size, int modulePage)
@@ -95,6 +111,8 @@ static void extractPublics(const unsigned char *data, int size, int modulePage)
                     symbols[symbolCount].name[copyLen] = '\0';
                     symbols[symbolCount].modulePage = modulePage;
                     symbolCount++;
+                } else {
+                    symbolsDropped++;
                 }
                 i += nameLen;
                 /* public offset: 2 bytes (or 4 for PUBDEF32) */
@@ -230,16 +248,16 @@ static int readObjFile(const char *path, unsigned char **outData, int *outSize)
         fullPath[sizeof(fullPath) - 1] = '\0';
     }
 
-    FILE *f = fopen(fullPath, "rb");
+    FILE *f = libOpen(fullPath, "rb");
     if (!f) {
         /* Try lowercase */
         _snprintf(fullPath, sizeof(fullPath), "%s.obj", path);
         fullPath[sizeof(fullPath) - 1] = '\0';
-        f = fopen(fullPath, "rb");
+        f = libOpen(fullPath, "rb");
     }
     if (!f) {
         /* Try original path exactly */
-        f = fopen(path, "rb");
+        f = libOpen(path, "rb");
     }
     if (!f) {
         fprintf(stderr, "lib: cannot open '%s'\n", path);
@@ -259,9 +277,10 @@ static int readObjFile(const char *path, unsigned char **outData, int *outSize)
 
 /* ── Read existing library ───────────────────────────────────────────── */
 
+/* A library that is not there yet is not an error: LIB creates it. */
 static int readExistingLib(const char *path)
 {
-    FILE *f = fopen(path, "rb");
+    FILE *f = libOpen(path, "rb");
     if (!f) return -1;
 
     fseek(f, 0, SEEK_END);
@@ -309,6 +328,10 @@ static int readExistingLib(const char *path)
                 modules[moduleCount].name[nameLen] = '\0';
             }
             moduleCount++;
+        } else {
+            fprintf(stderr, "lib: '%s' has more than %d modules\n", path, MAX_MODULES);
+            failures++;
+            break;
         }
 
         /* Advance to next page boundary */
@@ -323,9 +346,10 @@ static int readExistingLib(const char *path)
 
 static int writeLibrary(const char *path)
 {
-    FILE *fp = fopen(path, "wb");
+    FILE *fp = libOpen(path, "wb");
     if (!fp) {
         fprintf(stderr, "lib: cannot create '%s'\n", path);
+        failures++;
         return -1;
     }
 
@@ -333,12 +357,17 @@ static int writeLibrary(const char *path)
     int pageSize = PAGE_SIZE;
     int currentPage = 1; /* page 0 = header */
     symbolCount = 0;
+    symbolsDropped = 0;
 
     for (int m = 0; m < moduleCount; m++) {
         modules[m].page = currentPage;
         extractPublics(modules[m].data, modules[m].size, currentPage);
         int pagesNeeded = (modules[m].size + pageSize - 1) / pageSize;
         currentPage += pagesNeeded;
+    }
+    if (symbolsDropped) {
+        fprintf(stderr, "lib: more than %d public symbols\n", MAX_SYMBOLS);
+        failures++;
     }
 
     /* Calculate dictionary requirements */
@@ -418,12 +447,14 @@ static int writeLibrary(const char *path)
     }
 
     /* Try writing dictionary, retry with more blocks if needed */
-    for (int attempt = 0; attempt < 5; attempt++) {
+    int written = 0;
+    for (int attempt = 0; attempt < 5 && !written; attempt++) {
         long pos = ftell(fp);
-        if (writeDictionary(fp, numBlocks) == 0)
+        if (writeDictionary(fp, numBlocks) == 0) {
+            written = 1;
             break;
+        }
         /* Retry with more blocks */
-        fseek(fp, pos, SEEK_SET);
         numBlocks = numBlocks * 2 + 1;
         /* Update header with new dict size */
         dictSizeBlocks = numBlocks;
@@ -432,10 +463,14 @@ static int writeLibrary(const char *path)
         dsb[0] = (unsigned char)(dictSizeBlocks & 0xFF);
         dsb[1] = (unsigned char)((dictSizeBlocks >> 8) & 0xFF);
         fwrite(dsb, 1, 2, fp);
-        fseek(fp, 0, SEEK_END);
+        fseek(fp, pos, SEEK_SET);
     }
 
-    fclose(fp);
+    if (fclose(fp) != 0 || !written) {
+        fprintf(stderr, "lib: could not write '%s'\n", path);
+        failures++;
+        return -1;
+    }
 
     if (omf_lib_verbose)
         fprintf(stderr, "  lib: wrote '%s' (%d modules, %d symbols)\n",
@@ -483,6 +518,28 @@ static void removeModule(int idx)
     moduleCount--;
 }
 
+/* ── Add module ──────────────────────────────────────────────────────── */
+
+static void addModule(const char *name)
+{
+    if (moduleCount >= MAX_MODULES) {
+        fprintf(stderr, "lib: more than %d modules\n", MAX_MODULES);
+        failures++;
+        return;
+    }
+    unsigned char *data;
+    int size;
+    if (readObjFile(name, &data, &size) != 0) {
+        failures++;
+        return;
+    }
+    modules[moduleCount].data = data;
+    modules[moduleCount].size = size;
+    _snprintf(modules[moduleCount].name, MAX_PATH, "%s", name);
+    modules[moduleCount].name[MAX_PATH - 1] = '\0';
+    moduleCount++;
+}
+
 /* ── Reset state ─────────────────────────────────────────────────────── */
 
 static void resetLibState(void)
@@ -498,6 +555,7 @@ static void resetLibState(void)
 int omf_lib(const char *args)
 {
     resetLibState();
+    failures = 0;
 
     const char *p = args;
     while (*p == ' ' || *p == '\t') p++;
@@ -511,7 +569,7 @@ int omf_lib(const char *args)
             rspPath[ri++] = *p++;
         rspPath[ri] = '\0';
 
-        FILE *rsp = fopen(rspPath, "r");
+        FILE *rsp = libOpen(rspPath, "r");
         if (!rsp) {
             fprintf(stderr, "lib: cannot open response file '%s'\n", rspPath);
             return 1;
@@ -582,16 +640,8 @@ int omf_lib(const char *args)
                     while (mi > 0 && (unsigned char)modName[mi-1] <= ' ')
                         modName[--mi] = '\0';
 
-                    if (mi > 0) {
-                        unsigned char *data;
-                        int sz;
-                        if (readObjFile(modName, &data, &sz) == 0 && moduleCount < MAX_MODULES) {
-                            modules[moduleCount].data = data;
-                            modules[moduleCount].size = sz;
-                            _snprintf(modules[moduleCount].name, MAX_PATH, "%s", modName);
-                            moduleCount++;
-                        }
-                    }
+                    if (mi > 0)
+                        addModule(modName);
                 } else if (*op == '-') {
                     op++;
                     if (*op == '+') {
@@ -605,14 +655,7 @@ int omf_lib(const char *args)
                         modName[mi] = '\0';
                         int idx = findModule(modName);
                         if (idx >= 0) removeModule(idx);
-                        unsigned char *data;
-                        int sz;
-                        if (readObjFile(modName, &data, &sz) == 0 && moduleCount < MAX_MODULES) {
-                            modules[moduleCount].data = data;
-                            modules[moduleCount].size = sz;
-                            _snprintf(modules[moduleCount].name, MAX_PATH, "%s", modName);
-                            moduleCount++;
-                        }
+                        addModule(modName);
                     } else {
                         /* Delete */
                         char modName[MAX_PATH];
@@ -634,9 +677,12 @@ int omf_lib(const char *args)
 
         if (libName[0]) {
             writeLibrary(libName);
+        } else {
+            fprintf(stderr, "lib: '%s' names no library\n", rspPath);
+            failures++;
         }
         resetLibState();
-        return 0;
+        return failures ? 1 : 0;
     }
 
     /* Command-line mode: lib libname[+obj1+obj2...] [operations],listfile; */
@@ -671,16 +717,8 @@ int omf_lib(const char *args)
             while (mi > 0 && (unsigned char)modName[mi-1] <= ' ')
                 modName[--mi] = '\0';
 
-            if (mi > 0) {
-                unsigned char *data;
-                int sz;
-                if (readObjFile(modName, &data, &sz) == 0 && moduleCount < MAX_MODULES) {
-                    modules[moduleCount].data = data;
-                    modules[moduleCount].size = sz;
-                    _snprintf(modules[moduleCount].name, MAX_PATH, "%s", modName);
-                    moduleCount++;
-                }
-            }
+            if (mi > 0)
+                addModule(modName);
         } else if (*p == '-') {
             p++;
             while (*p == ' ' || *p == '\t') p++;
@@ -695,14 +733,7 @@ int omf_lib(const char *args)
                 modName[mi] = '\0';
                 int idx = findModule(modName);
                 if (idx >= 0) removeModule(idx);
-                unsigned char *data;
-                int sz;
-                if (readObjFile(modName, &data, &sz) == 0 && moduleCount < MAX_MODULES) {
-                    modules[moduleCount].data = data;
-                    modules[moduleCount].size = sz;
-                    _snprintf(modules[moduleCount].name, MAX_PATH, "%s", modName);
-                    moduleCount++;
-                }
+                addModule(modName);
             } else {
                 char modName[MAX_PATH];
                 int mi = 0;
@@ -727,5 +758,5 @@ int omf_lib(const char *args)
 
     writeLibrary(libName);
     resetLibState();
-    return 0;
+    return failures ? 1 : 0;
 }

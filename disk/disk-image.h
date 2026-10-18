@@ -55,6 +55,7 @@ struct disk_volume
 	uint64_t start = 0; // the sector holding its boot sector
 	uint64_t sectors = 0;
 	uint8_t type = 0; // its partition type; 0 on a floppy
+	char drive = 0; // the letter DOS 4.0 gives it, or 0 for a partition DOS does not use
 	bool formatted = false; // a FAT12 or FAT16 boot sector; the rest is unknown if not
 	bool fat16 = false;
 	std::string label;
@@ -97,8 +98,11 @@ bool disk_build_hard_disk(const disk_layout& layout, const uint8_t* master_boot,
                           const std::vector<disk_file>& files, const std::string& label,
                           const disk_stamp& stamp, disk_sink& sink, disk_report& report, std::string& error);
 
-// The volumes on an image: a floppy's one, or a hard disk's partitions in the
-// order DOS gives them letters - primary, then the extended partition's chain.
+// The volumes on an image: a floppy's one, or a hard disk's partitions - the
+// primary ones in table order, then the extended partition's chain. Each has
+// the letter DOS 4.0 would give it: a floppy's is A:, and on a hard disk C: is
+// the first primary partition of a DOS type (01h, 04h, 06h or 0Eh) and the
+// logical drives of a DOS type follow, formatted or not.
 bool disk_volumes(disk_source& source, std::vector<disk_volume>& volumes, std::string& error);
 
 struct disk_entry

@@ -140,12 +140,43 @@ namespace
 		return false;
 	}
 
-	// dimg's: 63 sectors a track, and 16 heads up to 504 MB, 255 above.
-	disk_geometry hard_disk_geometry(uint64_t sectors, uint32_t heads, uint32_t sectors_per_track)
+	// The geometry a hard disk was partitioned with. FDISK and dimg end every
+	// partition on a cylinder, so each one's last head and sector are the
+	// disk's heads and sectors per track; a volume with no partition table
+	// says in its boot sector. Anything else - a blank disk - gets dimg's
+	// choice for its size: 63 sectors a track, 16 heads up to 504 MB, 255 above.
+	disk_geometry hard_disk_geometry(block_device& disk, uint32_t heads, uint32_t sectors_per_track)
 	{
+		const uint64_t sectors = disk.sectors();
+		uint32_t found_heads = 0;
+		uint32_t found_sectors = 0;
+		uint8_t first[512];
+		if (disk.read(0, first, 1) && first[510] == 0x55 && first[511] == 0xaa)
+		{
+			bool table = true;
+			for (int i = 0; i < 4 && table; ++i)
+			{
+				const uint8_t* entry = first + 0x1be + 16 * i;
+				if (entry[4] == 0) continue;
+				const uint32_t h = entry[5] + 1u;
+				const uint32_t s = entry[6] & 0x3fu;
+				table = (entry[0] == 0x00 || entry[0] == 0x80) && s != 0 &&
+				        (found_heads == 0 || (h == found_heads && s == found_sectors));
+				found_heads = h;
+				found_sectors = s;
+			}
+			if (!table) found_heads = found_sectors = 0;
+			if (found_heads == 0 && (first[0] == 0xeb || first[0] == 0xe9) && (first[11] | first[12] << 8) == 512)
+			{
+				found_sectors = first[24] | first[25] << 8;
+				found_heads = first[26] | first[27] << 8;
+			}
+			if (found_heads == 0 || found_heads > 256 || found_sectors == 0 || found_sectors > 63)
+				found_heads = found_sectors = 0;
+		}
 		disk_geometry g;
-		g.heads = heads != 0 ? heads : sectors <= 1024ull * 16 * 63 ? 16 : 255;
-		g.sectors_per_track = sectors_per_track != 0 ? sectors_per_track : 63;
+		g.heads = heads != 0 ? heads : found_heads != 0 ? found_heads : sectors <= 1024ull * 16 * 63 ? 16 : 255;
+		g.sectors_per_track = sectors_per_track != 0 ? sectors_per_track : found_heads != 0 ? found_sectors : 63;
 		const uint64_t cylinders = sectors / (uint64_t(g.heads) * g.sectors_per_track);
 		g.cylinders = uint32_t(cylinders > 0 ? cylinders : 1);
 		return g;
@@ -235,8 +266,9 @@ void boot_usage()
 		"  -a <image>, -b <image>  floppies in A: and B: (160 KB to 2.88 MB)\n"
 		"  -c <image>, -d <image>  hard disks C: and D:\n"
 		"  --from a|c        drive to boot (default A: if it has a floppy, else C:)\n"
-		"  --chs <h>,<s>     hard disk heads and sectors per track (default 16 heads\n"
-		"                    up to 504 MB, else 255; 63 sectors)\n"
+		"  --chs <h>,<s>     hard disk heads (1-256) and sectors per track (1-63); by\n"
+		"                    default the partition table's, else 16 heads up to\n"
+		"                    504 MB and 255 above, with 63 sectors\n"
 		"  --no-lba          no INT 13h extensions (AH=41h-48h) on the hard disks\n"
 		"  --snapshot        keep what is written in memory; the images stay as they were\n"
 		"  --cpu <model>     8086 (default: an IBM PC's 8088), 8086-strict, 186 or 386\n"
@@ -284,10 +316,10 @@ int run_boot(int argc, char** argv)
 			from = char(argv[++i][0] | 0x20);
 		else if (strcmp(arg, "--chs") == 0 && value)
 		{
-			if (sscanf_s(argv[++i], "%u,%u", &heads, &sectors_per_track) != 2 || heads < 1 || heads > 255 ||
+			if (sscanf_s(argv[++i], "%u,%u", &heads, &sectors_per_track) != 2 || heads < 1 || heads > 256 ||
 			    sectors_per_track < 1 || sectors_per_track > 63)
 			{
-				fprintf(stderr, "--chs wants heads (1-255) and sectors per track (1-63), as 16,63\n");
+				fprintf(stderr, "--chs wants heads (1-256) and sectors per track (1-63), as 16,63\n");
 				return 2;
 			}
 		}
@@ -350,6 +382,7 @@ int run_boot(int argc, char** argv)
 		{
 			step reboot;
 			reboot.what = step::kind::reboot;
+			reboot.timeout = timeout;
 			steps.push_back(reboot);
 		}
 		else if (strcmp(arg, "--timeout") == 0 && value)
@@ -385,7 +418,7 @@ int run_boot(int argc, char** argv)
 		const bool hard = (option.number & 0x80) != 0;
 		disk_geometry geometry;
 		if (hard)
-			geometry = hard_disk_geometry(image->sectors(), heads, sectors_per_track);
+			geometry = hard_disk_geometry(*image, heads, sectors_per_track);
 		else if (!floppy_geometry(image->sectors(), geometry))
 		{
 			fprintf(stderr, "%s is not the size of a floppy\n", option.path);
@@ -442,6 +475,24 @@ int run_boot(int argc, char** argv)
 	};
 	const uint64_t slice = ibm_pc_hz / 100;
 
+	// Runs until the program has read every key typed so far, for up to
+	// `seconds` of emulated time; false if it has not.
+	const auto drain = [&](double seconds) {
+		const uint64_t limit = s.cycles + uint64_t(seconds * ibm_pc_hz);
+		while ((typed < keys.size() || !keyboard_empty(s)) && s.cycles < limit && !m.faulted())
+		{
+			feed();
+			m.exec(slice);
+		}
+		return typed >= keys.size() && keyboard_empty(s);
+	};
+	const auto unread = [&]() {
+		fprintf(stderr, "demu: %zu typed keys were never read; the screen:\n",
+		        keys.size() - typed + (keyboard_empty(s) ? 0 : 1));
+		print_screen(m, stderr);
+		return finish(1);
+	};
+
 	size_t matched = 0;
 	for (const step& st : steps)
 	{
@@ -452,7 +503,15 @@ int run_boot(int argc, char** argv)
 		}
 		if (st.what == step::kind::reboot)
 		{
+			// What was typed before the restart is read before it.
+			const bool read = drain(st.timeout);
+			if (m.faulted()) return stopped();
+			if (!read) return unread();
 			if (!m.power_on(boot_drive)) return stopped();
+			keys.clear();
+			typed = 0;
+			seen = host.console.size();
+			quiet_since = s.cycles;
 			continue;
 		}
 		const uint64_t limit = s.cycles + uint64_t(st.timeout * ibm_pc_hz);
@@ -470,17 +529,15 @@ int run_boot(int argc, char** argv)
 			feed();
 			m.exec(slice);
 		}
+		// The text may have come in the slice that stopped the machine.
+		if (m.faulted()) return stopped();
 		matched = found + st.text.size();
 	}
 
 	// Whatever was typed last is read before the machine is left.
-	const uint64_t limit = s.cycles + uint64_t(timeout * ibm_pc_hz);
-	while ((typed < keys.size() || !keyboard_empty(s)) && s.cycles < limit && !m.faulted())
-	{
-		feed();
-		m.exec(slice);
-	}
+	const bool read = drain(timeout);
 	if (m.faulted()) return stopped();
+	if (!read) return unread();
 	if (screen) print_screen(m, stdout);
 	return finish(0);
 }

@@ -85,6 +85,7 @@ namespace
 		uint32_t root_entries = 0;
 		uint8_t media = 0;
 		uint32_t next_cluster = 2;
+		uint32_t last_cluster = 0; // the highest a file may use
 		uint32_t entries = 0;
 		std::vector<uint8_t> fat;
 		std::vector<uint8_t> root;
@@ -113,6 +114,11 @@ namespace
 		b.root_entries = root_entries;
 		b.media = media;
 		b.next_cluster = 2;
+		// DOS's FAT size leaves the last cluster without an entry on some
+		// volumes - it counts the clusters but not the two entries before
+		// them - so a file never takes a cluster the FAT cannot hold.
+		const uint32_t fat_entries = fat16 ? sectors_per_fat * (sector / 2) : sectors_per_fat * sector * 2 / 3;
+		b.last_cluster = std::min(b.info.clusters + 1, fat_entries - 1);
 		b.entries = 0;
 		b.fat.assign(size_t(sectors_per_fat) * sector, 0);
 		b.fat[0] = media;
@@ -162,7 +168,7 @@ namespace
 	{
 		const uint32_t cluster_bytes = b.info.sectors_per_cluster * sector;
 		const uint64_t count = (file.data.size() + cluster_bytes - 1) / cluster_bytes;
-		if (b.next_cluster + count > uint64_t(b.info.clusters) + 2)
+		if (b.next_cluster + count > uint64_t(b.last_cluster) + 1)
 		{
 			error = "the volume is full: no room for " + file.name;
 			return false;
@@ -385,9 +391,18 @@ namespace
 		return false;
 	}
 
-	// The data of a chain of clusters, or of the root directory for cluster 0.
+	// The most clusters a directory can need: DOS stops one at 65536 entries.
+	uint32_t directory_clusters(const fat_layout& f)
+	{
+		const uint64_t cluster_bytes = uint64_t(f.sectors_per_cluster) * sector;
+		return uint32_t((65536ull * 32 + cluster_bytes - 1) / cluster_bytes);
+	}
+
+	// The data of a chain of clusters, no more than `most` of them, or of the
+	// root directory for cluster 0. An image can say anything, so a chain that
+	// leaves the volume or comes back to a cluster it has been through is broken.
 	bool read_chain(disk_source& source, const fat_layout& f, const std::vector<uint8_t>& fat, uint32_t first,
-	                std::vector<uint8_t>& data, std::string& error)
+	                uint32_t most, std::vector<uint8_t>& data, std::string& error)
 	{
 		if (first == 0)
 		{
@@ -399,13 +414,16 @@ namespace
 		data.clear();
 		const size_t cluster_bytes = size_t(f.sectors_per_cluster) * sector;
 		const uint32_t end_of_chain = f.fat16 ? 0xfff8 : 0xff8;
-		for (uint32_t cluster = first, count = 0; cluster < end_of_chain; cluster = fat_entry(f, fat, cluster), ++count)
+		std::vector<bool> seen(size_t(f.clusters) + 2);
+		for (uint32_t cluster = first, count = 0; cluster < end_of_chain && count < most;
+		     cluster = fat_entry(f, fat, cluster), ++count)
 		{
-			if (cluster < 2 || cluster >= f.clusters + 2 || count > f.clusters)
+			if (cluster < 2 || cluster >= f.clusters + 2 || seen[cluster])
 			{
 				error = "a broken cluster chain at cluster " + std::to_string(cluster);
 				return false;
 			}
+			seen[cluster] = true;
 			data.resize(data.size() + cluster_bytes);
 			if (!source.read((f.data_start + uint64_t(cluster - 2) * f.sectors_per_cluster) * sector,
 			                 data.data() + data.size() - cluster_bytes, cluster_bytes))
@@ -432,8 +450,12 @@ namespace
 		return entry[0] != 0xe5 && entry[11] != 0x0f && !(entry[11] & 0x08);
 	}
 
+	// A directory and everything under it. `listed` marks the directories done,
+	// so one that several entries point at - only a damaged or hostile image
+	// has such a thing - is listed once rather than once for every path to it.
 	bool list_directory(disk_source& source, const fat_layout& f, const std::vector<uint8_t>& fat, uint32_t first,
-	                    const std::string& parent, int depth, std::vector<disk_entry>& entries, std::string& error)
+	                    const std::string& parent, int depth, std::vector<bool>& listed,
+	                    std::vector<disk_entry>& entries, std::string& error)
 	{
 		if (depth > 32)
 		{
@@ -441,7 +463,7 @@ namespace
 			return false;
 		}
 		std::vector<uint8_t> data;
-		if (!read_chain(source, f, fat, first, data, error)) return false;
+		if (!read_chain(source, f, fat, first, directory_clusters(f), data, error)) return false;
 		for (size_t offset = 0; offset + 32 <= data.size() && data[offset] != 0; offset += 32)
 		{
 			const uint8_t* e = &data[offset];
@@ -454,9 +476,10 @@ namespace
 			entry.time = uint16_t(get16(e + 22));
 			entry.date = uint16_t(get16(e + 24));
 			entries.push_back(entry);
-			if ((e[11] & 0x10) && get16(e + 26) >= 2 &&
-			    !list_directory(source, f, fat, get16(e + 26), entry.path, depth + 1, entries, error))
-				return false;
+			const uint32_t cluster = get16(e + 26);
+			if (!(e[11] & 0x10) || cluster < 2 || cluster >= f.clusters + 2 || listed[cluster]) continue;
+			listed[cluster] = true;
+			if (!list_directory(source, f, fat, cluster, entry.path, depth + 1, listed, entries, error)) return false;
 		}
 		return true;
 	}
@@ -485,7 +508,7 @@ namespace
 		std::vector<uint8_t> fat;
 		std::vector<uint8_t> root;
 		std::string error;
-		if (!open_volume(source, volume, f, fat, error) || !read_chain(source, f, fat, 0, root, error)) return;
+		if (!open_volume(source, volume, f, fat, error) || !read_chain(source, f, fat, 0, 0, root, error)) return;
 		volume.formatted = true;
 		volume.fat16 = f.fat16;
 		volume.sectors_per_cluster = f.sectors_per_cluster;
@@ -550,6 +573,7 @@ bool disk_build_floppy(int kilobytes, const uint8_t* boot_sector, const std::vec
 	builder b{sink, stamp};
 	begin_volume(b, 0, sectors, format->sectors_per_cluster, format->sectors_per_fat, format->root_entries,
 	             format->media, false);
+	b.info.drive = 'A';
 	if (!fill_volume(b, files, label, error) ||
 	    !write_volume(b, boot_sector, 2, format->sectors_per_track, 0x00, error))
 		return false;
@@ -586,7 +610,10 @@ bool disk_build_hard_disk(const disk_layout& layout, const uint8_t* master_boot,
 		error = "cannot size the image";
 		return false;
 	}
-	const uint64_t largest = std::min<uint64_t>(uint64_t(layout.partition_megabytes) * 2048, largest_volume);
+	// A partition is at least a cylinder, as FDISK makes it: smaller, no
+	// partition would end on a cylinder after the track its table takes.
+	const uint64_t largest = std::max(
+		std::min<uint64_t>(uint64_t(layout.partition_megabytes) * 2048, largest_volume), cylinder - sectors_per_track);
 
 	report = {};
 	report.cylinders = uint32_t(cylinders);
@@ -636,6 +663,7 @@ bool disk_build_hard_disk(const disk_layout& layout, const uint8_t* master_boot,
 
 		begin_hard_disk_volume(b, start + sectors_per_track, size);
 		b.info.type = type;
+		b.info.drive = char('C' + n);
 		const std::string volume_label = n == 0 ? label : std::string("DRIVE ") + char('C' + n);
 		if (!fill_volume(b, n == 0 ? files : std::vector<disk_file>{}, volume_label, error) ||
 		    !write_volume(b, boot_sector, heads, sectors_per_track, 0x80, error))
@@ -665,6 +693,7 @@ bool disk_volumes(disk_source& source, std::vector<disk_volume>& volumes, std::s
 	if ((first[0] == 0xeb || first[0] == 0xe9) && parse_boot_sector(first, 0, f))
 	{
 		add_partition(source, 0, 0, f.sectors, volumes);
+		volumes[0].drive = 'A';
 		return true;
 	}
 	if (first[510] != 0x55 || first[511] != 0xaa)
@@ -686,8 +715,10 @@ bool disk_volumes(disk_source& source, std::vector<disk_volume>& volumes, std::s
 		}
 		add_partition(source, type, get32(entry + 8), get32(entry + 12), volumes);
 	}
+	const size_t primaries = volumes.size();
 	// Each EBR's first entry is a logical drive, starting relative to that
 	// EBR; its second links the next EBR, relative to the extended partition.
+	// A link that does not lead further on ends the chain, as it does for DOS.
 	for (uint64_t table_start = extended, links = 0; table_start && links < 64; ++links)
 	{
 		uint8_t table[sector];
@@ -700,7 +731,19 @@ bool disk_volumes(disk_source& source, std::vector<disk_volume>& volumes, std::s
 		if (entry[4] && get32(entry + 12))
 			add_partition(source, entry[4], table_start + get32(entry + 8), get32(entry + 12), volumes);
 		const uint8_t* next = table + 0x1ce;
-		table_start = (next[4] == 0x05 || next[4] == 0x0f) && get32(next + 12) ? extended + get32(next + 8) : 0;
+		const uint64_t following = extended + get32(next + 8);
+		table_start =
+			(next[4] == 0x05 || next[4] == 0x0f) && get32(next + 12) && following > table_start ? following : 0;
+	}
+
+	// DOS uses one primary partition a disk, the first of a DOS type, and
+	// every logical drive of one, whether it is formatted or not.
+	const auto dos_type = [](uint8_t type) { return type == 0x01 || type == 0x04 || type == 0x06 || type == 0x0e; };
+	char letter = 'C';
+	for (size_t i = 0; i < volumes.size() && letter <= 'Z'; ++i)
+	{
+		if (!dos_type(volumes[i].type) || (i < primaries && letter != 'C')) continue;
+		volumes[i].drive = letter++;
 	}
 	return true;
 }
@@ -710,7 +753,9 @@ bool disk_list(disk_source& source, const disk_volume& volume, std::vector<disk_
 	entries.clear();
 	fat_layout f;
 	std::vector<uint8_t> fat;
-	return open_volume(source, volume, f, fat, error) && list_directory(source, f, fat, 0, "", 0, entries, error);
+	if (!open_volume(source, volume, f, fat, error)) return false;
+	std::vector<bool> listed(size_t(f.clusters) + 2);
+	return list_directory(source, f, fat, 0, "", 0, listed, entries, error);
 }
 
 bool disk_read_file(disk_source& source, const disk_volume& volume, const std::string& path,
@@ -739,7 +784,7 @@ bool disk_read_file(disk_source& source, const disk_volume& volume, const std::s
 		uint8_t wanted[11];
 		disk_name_83(names[i], wanted);
 		std::vector<uint8_t> listing;
-		if (!read_chain(source, f, fat, directory, listing, error)) return false;
+		if (!read_chain(source, f, fat, directory, directory_clusters(f), listing, error)) return false;
 		const uint8_t* found = nullptr;
 		for (size_t offset = 0; !found && offset + 32 <= listing.size() && listing[offset] != 0; offset += 32)
 		{
@@ -771,7 +816,10 @@ bool disk_read_file(disk_source& source, const disk_volume& volume, const std::s
 		const uint32_t size = get32(found + 28);
 		data.clear();
 		if (size == 0) return true;
-		if (!read_chain(source, f, fat, get16(found + 26), data, error)) return false;
+		const uint64_t cluster_bytes = uint64_t(f.sectors_per_cluster) * sector;
+		if (!read_chain(source, f, fat, get16(found + 26), uint32_t((size + cluster_bytes - 1) / cluster_bytes), data,
+		                error))
+			return false;
 		if (data.size() < size)
 		{
 			error = path + " is shorter than its directory entry says";

@@ -29,7 +29,8 @@ covers at a glance.
 - `host/` and `cli/` (demu) own what is left of Windows: the file system and the
   console. `host/host-win32.cpp` is shared by dui and demu; demu's program
   runner (`cli/runner.cpp`) adds the terminal, the fixed date and LIB's
-  stand-in (`cli/lib-omf.c`) on top of it.
+  stand-in (`cli/lib-omf.c`) on top of it, and its boot mode (`cli/boot.cpp`)
+  the disk image files and the script of steps.
 - `cc/` is platform independent too, and opens no files: a caller supplies
   source text through `cc_sources`, the same way a host supplies the drive.
 - `disk/` is platform independent as well and opens no files either: a caller
@@ -127,9 +128,10 @@ build says nothing about the pin. After changing platform-h, push it and re-pin
 here.
 
 A tag `vX.Y.Z` on `main` releases: `.github/workflows/release.yml` builds and
-tests Release and publishes `libdos-vX.Y.Z-win-x64.zip` (demu, dimg and dui)
-with its SHA-256. dos4z pins both the version and that hash in `make-dos.ps1`,
-so moving it to a new release means changing the two together there.
+tests both configurations and publishes `libdos-vX.Y.Z-win-x64.zip` (demu,
+dimg and dui, Release) with its SHA-256. dos4z pins both the version and that
+hash in `make-dos.ps1`, so moving it to a new release means changing the two
+together there.
 
 ## Debugging A Program That Does Not Work
 
@@ -180,7 +182,9 @@ whether a test already encodes the current behaviour:
   checked. The same is done for 32-bit arithmetic (multiply, both divides,
   remainder, shifts and comparisons), for function pointers and `goto`, for
   variadic functions and for the type and width of constants. A second pair of
-  programs pins `EXEC`. What it refuses is pinned too - structure assignment,
+  programs pins `EXEC`, and a third that `__int13` reaches the BIOS and puts
+  DI back. What it
+  refuses is pinned too - structure assignment,
   parameters and returns, assigning to an array, a second definition of a
   function, an unterminated comment or `#if` - with the line an error at the
   end of the file is reported on.
@@ -188,17 +192,22 @@ whether a test already encodes the current behaviour:
 - DOS for the build tools: PSP:0002 covering the whole program block, the
   handle tables (a duplicated or forced handle sharing its position, files
   closed when a program ends), devices by name, names cut to 8.3, a child's
-  own copy of the environment with its path, AH=47h, AH=29h, and searches a
-  program abandons; COMMAND.COM /C's built-in commands, redirection, PATH
-  search, exit codes and a host's own program; and the processor models.
+  own copy of the environment with its path, AH=47h, AH=29h as DOS's MakeFcb
+  parses, the input status calls at the end of redirected input, and searches
+  a program abandons around one it is still walking; COMMAND.COM /C's built-in
+  commands (ECHO's delimiters, `>>` over a ^Z, DEL asking before it empties a
+  directory), redirection, PATH search, exit codes and a host's own program;
+  and the processor models.
 - Disk images: a floppy's parameter block, FATs and root directory order
   (IO.SYS, MSDOS.SYS, then the label); a hard disk's cylinder-aligned
   partitions, EBR chain, partition types and CHS addresses past cylinder 1023;
-  and the reader listing and reading back files, a subdirectory's included.
+  the reader listing and reading back files, a subdirectory's included, and
+  lettering the drives as DOS does; and damaged images - a directory two
+  entries share, clusters that loop and an EBR that links back.
 - Boot mode: a boot sector reading by CHS and by LBA, the LBA calls switched
-  off, a floppy booting without 55AAh, INT 13h AH=08h for both kinds of drive,
-  the IBM PC ROM with nothing mapped above INT 1Fh, a restart through
-  FFFF:0000, and nothing to boot.
+  off and EDD's 127-sector limit, a floppy booting without 55AAh, INT 13h
+  AH=08h for both kinds of drive, the IBM PC ROM with nothing mapped above
+  INT 1Fh, a restart through FFFF:0000, and nothing to boot.
 
 The suite cannot see the biggest consumer: demu builds MS-DOS 4.00 in
 [dos4z](https://github.com/ZacWalk/dos4z) with the original 1988 toolchain,

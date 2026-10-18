@@ -8,7 +8,7 @@ An embeddable DOS emulator library, and the tools built on it:
   console on stdout and its exit code returned - and is also the debugger, the
   front end of the C compiler and the test suite. It is what builds
   [dos4z](https://github.com/ZacWalk/dos4z), MS-DOS 4.00 from source, with the
-  original 1988 toolchain.
+  original 1988 toolchain, and what boots the result to test it (`--boot`).
 - **dui** is the windowed app: point it at a folder with a DOS game and play.
 - **dimg** makes bootable DOS disk images - a floppy, or a hard disk
   partitioned and formatted the way DOS 4.0's FDISK and FORMAT leave one - and
@@ -53,8 +53,8 @@ C and built with it - see [Building DOS programs](#building-dos-programs).
 
 How it all fits together is in [docs/design.md](docs/design.md). What is missing
 or approximate is in [docs/todo.md](docs/todo.md) - headline gaps are Sound
-Blaster digital audio, `EXEC` overlay loading, and the 386 instruction set (so
-a DOS extender will not run).
+Blaster digital audio and the 386 instruction set (so a DOS extender will not
+run).
 
 ## Layout
 
@@ -63,13 +63,13 @@ a DOS extender will not run).
 | `src/` | The emulator. Platform independent - no Windows headers, no file system. Builds `libdos`. |
 | `host/` | The Windows implementation of the host interface: one directory presented as the emulated drive, plus the pages the JIT executes from. Shared by demu and dui, and the last Windows-specific code in the repository. |
 | `app/` | dui, written against the shared [platform-h](https://github.com/ZacWalk/platform-h) layer: window, menu, picture, sound and the key mapping, with no operating system named. |
-| `cli/` | demu: the test suite, plus tools to inspect, disassemble, trace and headlessly run a program. |
+| `cli/` | demu: the test suite and the debugger, the runner that builds dos4z with its 1988 toolchain (`runner.cpp`, with LIB's stand-in in `lib-omf.c`), and boot mode's headless runner (`boot.cpp`). |
 | `cc/` | A C compiler for 16-bit DOS. Platform independent, and it opens no files either. `cc/include` and `cc/lib` are the C library it compiles against. |
 | `disk/` | Bootable DOS disk images - FAT12 floppies and partitioned FAT12/FAT16 hard disks - and the reader that finds the files on one again. Platform independent and opens no files: a caller supplies the bytes and a sink or a source for the sectors. Builds `libdos_disk`. |
 | `dimg/` | dimg, the command line for `disk/`: the files, the sparse image file and the options. |
 | `shell/` | `dos.h` and a DOS command interpreter written in C, built by `cc/`. |
-| `tools/` | `make-font.ps1`, which regenerates the character generator in `src/rom-font.cpp`. |
-| `docs/` | [design.md](docs/design.md) (architecture) and [todo.md](docs/todo.md) (gaps). |
+| `tools/` | `make-font.ps1`, which regenerates the character generator in `src/rom-font.cpp`; `cc-fingerprint.ps1`, which pins what the compiler emits; and `port-gen.py`, from moving the compiler to C. |
+| `docs/` | [design.md](docs/design.md) (architecture), [todo.md](docs/todo.md) (gaps), [jit.md](docs/jit.md) (an x64 JIT, designed and measured) and [selfhost.md](docs/selfhost.md) (the compiler compiling itself). |
 
 ## Build and run
 
@@ -200,7 +200,9 @@ from its source, with the original MASM 5.10, CL 5.10, LINK 3.65 and NMAKE -
 and every binary comes out byte for byte as it did under the demu that grew
 into libdos. NMAKE starting COMMAND.COM /C is carried out natively, built-in
 commands, redirection and all; LIB.EXE, an OS/2 bound executable, is stood in
-for by an OMF library manager. The processor is a strict 8086 unless `-cpu`
+for by an OMF library manager, which reaches files only under `-r` as a
+program would and fails as LIB does when one cannot be read or written. The
+processor is a strict 8086 unless `-cpu`
 says otherwise (`8086`, `186`, `386`), so a tool doing something an 8088
 cannot stops with the reason, rather than quietly doing it.
 
@@ -224,9 +226,12 @@ and date - with disk images in its drives, `-a` and `-b` floppies and `-c` and
 `-d` hard disks, and boots from A: if there is a floppy and C: if not
 (`--from`). Nothing is mapped in: the DOS on the disk brings its own INT 21h,
 and the BIOS under it is libdos's, with INT 13h reading and writing the images.
-A hard disk has the geometry dimg gives it (`--chs` sets another) and the LBA
+A hard disk has the geometry its partition table was made for - each
+partition ends on a cylinder, so its last head and sector say - or, blank,
+dimg's for its size; `--chs` sets another, up to 256 heads. It has the LBA
 calls, INT 13h AH=41h-48h, unless `--no-lba` takes them away - so both of a
-DOS's paths to a disk can be tried.
+DOS's paths to a disk can be tried - and like the XT-IDE Universal BIOS it
+moves at most 127 sectors a call.
 
 The steps after it run in order against everything written through INT 10h:
 `--expect <text>` waits for text after the last match, `--type <text>` types
@@ -235,9 +240,10 @@ Enter, Esc, an arrow or a function key, and `--reboot` restarts with the disks
 as they now are. Each key goes in once the console has been quiet for a
 moment, as a person types, so a program that flushes the keyboard after its
 prompt gets it.
-demu exits 0 when every step has happened, 1 when an `--expect` timed out
-(`--timeout`, in emulated seconds) and 2 when the machine stopped - which the
-8086 processor model does at any instruction an 8088 does not have. `--snapshot`
+demu exits 0 when every step has happened and every key typed has been read, 1
+when an `--expect` timed out (`--timeout`, in emulated seconds) or keys were
+left unread, and 2 when the machine stopped - which the 8086 processor model
+does at any instruction an 8088 does not have. `--snapshot`
 keeps what is written in memory and leaves the images alone, `--log` writes
 the console's output, and `--trace` reports each BIOS call.
 
@@ -296,8 +302,11 @@ build that comes out the same every time, from `-t <seconds since 1970>` or
 `SOURCE_DATE_EPOCH`, read as UTC.
 
 `-dir` and `-extract` read any FAT12 or FAT16 image, from dimg or not: a floppy,
-or a hard disk's primary partitions then its logical drives, lettered as DOS
-letters them.
+or a hard disk's partitions, lettered as DOS 4.0 letters them - the first
+primary partition of a DOS type is C:, then each logical drive of one, whether
+it is formatted or not. A partition DOS gives no letter is listed but has no
+drive to extract from. A damaged image - a chain of clusters or partitions that
+loops - is reported rather than followed.
 
 ## Embedding
 

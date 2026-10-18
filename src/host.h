@@ -118,6 +118,11 @@ public:
 		return -1;
 	}
 
+	// For a host that has the console: whether a read would return a
+	// character now, without waiting - which DOS's input status calls ask.
+	// At the end of the input there is none.
+	virtual bool console_ready() { return false; }
+
 	// What AX=4400h reports for standard handle 0, 1 or 2: a character device
 	// unless the host's own stream has been redirected to a file.
 	virtual bool console_is_device(int handle)

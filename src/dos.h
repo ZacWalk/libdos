@@ -43,6 +43,7 @@ struct dos_search
 	bool used = false;
 	int host_search = -1;
 	uint32_t stamp = 0; // also kept in the DTA, so a search that was closed is not mistaken for its successor
+	uint32_t last_used = 0; // when the program last stepped it: the longest idle makes way for a new one
 };
 
 // What a parent process needs back when the program it started through
@@ -93,7 +94,7 @@ struct dos_state
 
 	dos_file files[dos_max_files];
 	dos_search searches[dos_max_searches];
-	uint32_t search_stamp = 0;
+	uint32_t search_stamp = 0; // counts find-firsts and find-nexts, so stamps never repeat
 
 	char program_path[128] = {};
 	uint32_t entry_cs_ip = 0;

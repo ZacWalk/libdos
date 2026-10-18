@@ -2240,6 +2240,60 @@ namespace
 		check(host.native_tail == " x", "a host's own program gets the command tail");
 		check(host.console.find("Bad command or file name") != std::string::npos, "a bad command is reported");
 
+		// ECHO's delimiter, >> after the ^Z COPY leaves, and DEL asking
+		// before it empties a directory - with no answer to read, it does not.
+		const char* more =
+			"int __int21(int ax, int bx, int cx, int dx);\n"
+			"unsigned __seg(void);\n"
+			"extern int __cf;\n"
+			"char tail[130];\n"
+			"unsigned block[7];\n"
+			"int run(char *line) {\n"
+			"  int n = 0;\n"
+			"  while (line[n] != 0) { tail[n + 1] = line[n]; ++n; }\n"
+			"  tail[0] = n; tail[n + 1] = 13;\n"
+			"  block[0] = 0; block[1] = (unsigned)tail; block[2] = __seg();\n"
+			"  block[3] = 0x5c; block[4] = __seg(); block[5] = 0x6c; block[6] = __seg();\n"
+			"  __int21(0x4b00, (int)block, 0, (int)\"C:\\\\COMMAND.COM\");\n"
+			"  return 0;\n"
+			"}\n"
+			"int main(void) {\n"
+			"  run(\" /C echo .done> DOT.TXT\");\n"
+			"  run(\" /C echo.> BLANK.TXT\");\n"
+			"  run(\" /C echo y.obj >> X.RSP\");\n"
+			"  run(\" /C del KEEP\\\\*.*\");\n"
+			"  run(\" /C del GONE < YES.TXT\");\n"
+			"  run(\" /C del *.LOG\");\n"
+			"  return 0;\n"
+			"}\n";
+		check(compile_text(more, image, "command2.c"), "the second COMMAND.COM /C program compiles");
+		if (!image.empty())
+		{
+			ram_host second;
+			second.files["C:\\X.RSP"] = std::string("a.obj\r\n\x1a", 8);
+			second.directories.insert("C:\\KEEP");
+			second.directories.insert("C:\\GONE");
+			second.files["C:\\KEEP\\A.TXT"] = "a";
+			second.files["C:\\GONE\\B.TXT"] = "b";
+			second.files["C:\\YES.TXT"] = "y\r\n";
+			second.files["C:\\A.LOG"] = "1";
+			second.files["C:\\B.LOG"] = "2";
+			second.takes_console = true;
+			machine again;
+			const char* environment[] = {"COMSPEC=C:\\COMMAND.COM"};
+			again.set_environment(environment, 1);
+			run_on(again, image, second);
+			check(second.files["C:\\DOT.TXT"] == ".done\r\n", "ECHO keeps a delimiter after a blank");
+			check(second.files["C:\\BLANK.TXT"] == "\r\n", "ECHO. prints an empty line");
+			check(second.files["C:\\X.RSP"] == "a.obj\r\ny.obj\r\n", ">> appends over a ^Z that ends the file");
+			check(second.files.count("C:\\KEEP\\A.TXT") == 1 &&
+			          second.console.find("All files in directory will be deleted!") != std::string::npos,
+			      "DEL *.* asks first, and does nothing without a yes");
+			check(second.files.count("C:\\GONE\\B.TXT") == 0, "DEL of a directory empties it after a yes");
+			check(second.files.count("C:\\A.LOG") == 0 && second.files.count("C:\\B.LOG") == 0,
+			      "DEL of some files does not ask");
+		}
+
 		// Without a host that has taken it, the console is the screen again.
 		machine screen;
 		const char* hello =
@@ -2334,19 +2388,108 @@ namespace
 			const uint8_t com[] = {0xcd, 0x20};
 			m.load_program(com, sizeof(com), "C:\\T.COM", "");
 			machine_state& s = m.state();
-			const char* name = " a:file.t*";
-			for (int i = 0; name[i] != 0 || i == 0; ++i) write8(s, 0x2000, uint16_t(i), uint8_t(name[i]));
-			write8(s, 0x2000, uint16_t(std::strlen(name)), 0);
-			s.cpu.set_ax(0x2901);
-			s.cpu.set_ds(0x2000);
-			s.cpu.set_si(0);
-			s.cpu.set_es(0x2000);
-			s.cpu.set_di(0x100);
-			dos_interrupt(s, 0x21);
-			char fcb[13] = {};
-			for (int i = 0; i < 12; ++i) fcb[i] = char(read8(s, 0x2000, uint16_t(0x100 + i)));
-			check(fcb[0] == 1 && std::memcmp(fcb + 1, "FILE    T??", 11) == 0, "AH=29h parses a drive, a name and a wildcard");
-			check_equal(s.cpu.al(), 1, "AH=29h reports the wildcard");
+			// Parses `name` with `flags` into an FCB that starts out holding
+			// drive 3, FOO.BAK and FFh in bytes 0Ch-0Fh; gives what the FCB
+			// then holds and how far the parse went.
+			const auto parse = [&](const char* name, uint8_t flags, std::string& fcb, int& used)
+			{
+				const size_t length = std::strlen(name);
+				for (size_t i = 0; i <= length; ++i) write8(s, 0x2000, uint16_t(i), uint8_t(name[i]));
+				const uint8_t before[16] = {3, 'F', 'O', 'O', ' ', ' ', ' ', ' ', ' ', 'B', 'A', 'K', 0xff, 0xff, 0xff, 0xff};
+				for (int i = 0; i < 16; ++i) write8(s, 0x2000, uint16_t(0x100 + i), before[i]);
+				s.cpu.set_ax(uint16_t(0x2900 | flags));
+				s.cpu.set_ds(0x2000);
+				s.cpu.set_si(0);
+				s.cpu.set_es(0x2000);
+				s.cpu.set_di(0x100);
+				dos_interrupt(s, 0x21);
+				fcb.clear();
+				for (int i = 0; i < 16; ++i) fcb += char(read8(s, 0x2000, uint16_t(0x100 + i)));
+				used = s.cpu.si();
+				return s.cpu.al();
+			};
+			std::string fcb;
+			int used = 0;
+			check(parse(" a:file.t*", 1, fcb, used) == 1 && fcb[0] == 1 && fcb.compare(1, 11, "FILE    T??") == 0,
+			      "AH=29h parses a drive, a name and a wildcard, and reports the wildcard");
+			check(fcb.compare(12, 4, std::string(4, '\0')) == 0, "AH=29h clears the four bytes after the extension");
+			check(parse(" \tfoo.txt", 0, fcb, used) == 0 && fcb.compare(1, 11, "FOO     TXT") == 0 && used == 9,
+			      "AH=29h passes blanks and tabs even without AL bit 0");
+			check(parse("foo.c", 0x0e, fcb, used) == 0 && fcb[0] == 3 && fcb.compare(1, 11, "FOO     C  ") == 0,
+			      "a given extension is padded with blanks, not merged with the default");
+			check(parse("bar", 0x0e, fcb, used) == 0 && fcb.compare(1, 11, "BAR     BAK") == 0,
+			      "with no extension given, the default stays");
+			check(parse("bar.", 0x0e, fcb, used) == 0 && fcb.compare(1, 11, "BAR        ") == 0,
+			      "a dot with nothing after it blanks the extension");
+			check(parse(" ; x.y", 1, fcb, used) == 0 && fcb.compare(1, 11, "X       Y  ") == 0,
+			      "AL bit 0 passes one separator among the blanks");
+			check(parse("1:x", 0, fcb, used) == 0xff && used == 3 && fcb.compare(1, 11, "X          ") == 0,
+			      "a bad drive is reported and passed over");
+			check(parse("verylongname.text", 0, fcb, used) == 0 && fcb.compare(1, 11, "VERYLONGTEX") == 0 && used == 17,
+			      "a long name and extension are cut, and the rest passed over");
+		}
+
+		// Standard input redirected to a file: the input status calls say
+		// there is nothing more at its end, so emptying the keyboard with
+		// while (kbhit()) getch() stops there.
+		{
+			const char* drain =
+				"int __int21(int ax, int bx, int cx, int dx);\n"
+				"int main(void) {\n"
+				"  int h;\n"
+				"  int n;\n"
+				"  int ok;\n"
+				"  h = __int21(0x3d00, 0, 0, (int)\"C:\\\\IN.TXT\");\n"
+				"  __int21(0x4600, h, 0, 0);\n"
+				"  ok = (__int21(0x4406, 0, 0, 0) & 0xff) == 0xff;\n"
+				"  for (n = 0; n < 100 && (__int21(0x0b00, 0, 0, 0) & 0xff) != 0; n = n + 1) __int21(0x0800, 0, 0, 0);\n"
+				"  ok = ok && n == 3 && (__int21(0x4406, 0, 0, 0) & 0xff) == 0;\n"
+				"  ok = ok && (__int21(0x0600, 0, 0, 0xff) & 0xff) == 0;\n"
+				"  __int21(0x0200, 0, 0, ok ? 'E' : 'N');\n"
+				"  return 0;\n"
+				"}\n";
+			check(compile_text(drain, image, "drain.c"), "the input status program compiles");
+			ram_host host;
+			host.files["C:\\IN.TXT"] = "abc";
+			host.takes_console = true;
+			machine m;
+			run_on(m, image, host);
+			check(host.console == "E", "AH=0Bh, AX=4406h and AH=06h find the end of redirected input");
+		}
+
+		// A program walking a directory, which for each name it finds also
+		// asks after other files and abandons the search: its own walk is
+		// stepped all along, so it is never the one given up.
+		{
+			const char* walk =
+				"int __int21(int ax, int bx, int cx, int dx);\n"
+				"extern int __cf;\n"
+				"char mine[64];\n"
+				"char other[64];\n"
+				"int main(void) {\n"
+				"  int i;\n"
+				"  int walked = 0;\n"
+				"  __int21(0x1a00, 0, 0, (int)mine);\n"
+				"  __int21(0x4e00, 0, 0, (int)\"*.TXT\");\n"
+				"  for (i = 0; i < 30; i = i + 1) {\n"
+				"    __int21(0x1a00, 0, 0, (int)other);\n"
+				"    __int21(0x4e00, 0, 0, (int)\"*.DAT\");\n"
+				"    __int21(0x1a00, 0, 0, (int)mine);\n"
+				"    __int21(0x4f00, 0, 0, 0);\n"
+				"    if (!__cf) walked = walked + 1;\n"
+				"  }\n"
+				"  __int21(0x0200, 0, 0, walked == 30 ? 'W' : 'N');\n"
+				"  return 0;\n"
+				"}\n";
+			check(compile_text(walk, image, "walk.c"), "the directory walk compiles");
+			ram_host host;
+			for (int i = 0; i < 31; ++i) host.files["C:\\F" + std::to_string(i) + ".TXT"] = "t";
+			host.files["C:\\ONE.DAT"] = "d";
+			host.files["C:\\TWO.DAT"] = "d";
+			host.takes_console = true;
+			machine m;
+			run_on(m, image, host);
+			check(host.console == "W", "a search in use outlives the ones abandoned around it");
 		}
 
 		// A program that only asks whether files exist never finishes its
@@ -2584,6 +2727,7 @@ namespace
 		image.write(0, floppy.data(), floppy.size());
 		std::vector<disk_volume> volumes;
 		check(disk_volumes(image, volumes, error) && volumes.size() == 1, "a floppy is one volume");
+		check(volumes[0].drive == 'A', "a floppy is A:");
 		check(volumes[0].formatted && !volumes[0].fat16 && volumes[0].type == 0 && volumes[0].label == "TEST DISK" &&
 		          volumes[0].clusters == 354 && volumes[0].free_clusters == 354 - 33,
 		      "the floppy's volume, label and free space are found");
@@ -2605,6 +2749,20 @@ namespace
 		check(!disk_read_file(image, volumes[0], "\\deleted.txt", data, error), "a deleted file is not found");
 		check(!disk_read_file(image, volumes[0], "\\sub", data, error) && error.find("directory") != std::string::npos,
 		      "a directory is not read as a file");
+
+		// A damaged image: a second entry for SUB is listed but SUB is walked
+		// once, and a directory whose clusters loop is an error, not an endless read.
+		uint8_t* twin = &floppy[5 * disk_sector_size + 7 * 32];
+		memcpy(twin, sub, 32);
+		memcpy(twin, "TWIN       ", 11);
+		image.write(0, floppy.data(), floppy.size());
+		check(disk_list(image, volumes[0], entries, error) && entries.size() == 8 && entries[7].path == "\\TWIN",
+		      "a directory two entries share is listed once");
+		set_fat12(33, 33);
+		image.write(0, floppy.data(), floppy.size());
+		check(!disk_list(image, volumes[0], entries, error) && error.find("broken") != std::string::npos,
+		      "a directory whose clusters loop is an error");
+		check(!disk_read_file(image, volumes[0], "sub/inner.txt", data, error), "nor is a file read through one");
 
 		std::vector<disk_file> too_many;
 		for (int i = 0; i < 120; ++i) too_many.push_back(test_file(("f" + std::to_string(i)).c_str(), 1, false));
@@ -2650,6 +2808,30 @@ namespace
 		      "the logical drives follow the EBR chain in order");
 		check(disk_read_file(image, volumes[0], "\\IO.SYS", data, error) && data == files[0].data, "C: holds IO.SYS");
 		check(disk_list(image, volumes[2], entries, error) && entries.empty(), "a logical drive is empty");
+		check(volumes[0].drive == 'C' && volumes[3].drive == 'F' && report.volumes[3].drive == 'F',
+		      "the volumes are C: to F:");
+
+		// DOS letters each partition of a DOS type, formatted or not, and no
+		// other: with C:'s made Linux's and E:'s boot sector wiped, D: is C:
+		// and E: is an unformatted D:.
+		std::vector<uint8_t> changed = image.sector(0);
+		changed[0x1c2] = 0x83;
+		image.write(0, changed.data(), disk_sector_size);
+		const uint8_t blank[disk_sector_size] = {};
+		image.write(volumes[2].start * disk_sector_size, blank, disk_sector_size);
+		check(disk_volumes(image, volumes, error) && volumes.size() == 4 && volumes[0].drive == 0 &&
+		          volumes[1].drive == 'C' && !volumes[2].formatted && volumes[2].drive == 'D' && volumes[3].drive == 'E',
+		      "only DOS partition types are lettered, formatted or not");
+
+		// An EBR that links back to itself ends the chain rather than giving
+		// the same volume another letter.
+		changed = image.sector(10080 + 10080);
+		changed[0x1d6] = 0;
+		changed[0x1d7] = 0;
+		changed[0x1d8] = 0;
+		changed[0x1d9] = 0;
+		image.write(uint64_t(10080 + 10080) * disk_sector_size, changed.data(), disk_sector_size);
+		check(disk_volumes(image, volumes, error) && volumes.size() == 3, "a link back up the chain ends it");
 
 		// FAT16 partition types: 04h up to 32 MB, 06h beyond, 0Eh and 0Fh with LBA.
 		layout.megabytes = 40;
@@ -2783,6 +2965,20 @@ namespace
 			check(s.cpu.cx() == 0x133f && s.cpu.dx() == 0x0f01 && !s.cpu.cf(),
 			      "AH=08h gives the last cylinder, sector, head and the number of disks");
 
+			// mov si,0100h / mov ah,42h / mov dl,80h / int 13h / hlt, with a
+			// packet asking for 128 sectors and then for none: EDD's limit is 127.
+			const uint8_t read_packet[] = {0xbe, 0x00, 0x01, 0xb4, 0x42, 0xb2, 0x80, 0xcd, 0x13, 0xf4};
+			for (const uint8_t count : {uint8_t(128), uint8_t(0)})
+			{
+				load_code(m, read_packet, sizeof(read_packet));
+				const uint8_t big[16] = {0x10, 0, count, 0, 0x00, 0x08, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0};
+				memcpy(&s.memory[0x20100], big, sizeof(big));
+				s.pic.master.irr = 0;
+				step(m, 10);
+				check(s.cpu.ah() == 0x01 && s.cpu.cf() && read16(s, 0x2000, 0x102) == 0,
+				      count ? "an LBA read of 128 sectors is refused" : "an LBA read of no sectors is refused");
+			}
+
 			// jmp far FFFF:0000, which is how FDISK restarts the machine
 			const uint8_t restart[] = {0xea, 0x00, 0x00, 0xff, 0xff};
 			load_code(m, restart, sizeof(restart));
@@ -2847,6 +3043,31 @@ namespace
 		check(compile_text(disk_program, image, "disk.c"), "a program calling __int13 compiles");
 		if (!image.empty())
 			check(run_image(image, nullptr).find("RF") != std::string::npos, "__int13 reaches INT 13h and reports the carry");
+
+		// A BIOS whose AH=08h changes DI, as one hands back a floppy's
+		// parameter table in ES:DI: the variables kept in SI and DI survive it.
+		const char* di_program =
+			"int __int13(int ax, int bx, int cx, int dx);\n"
+			"int __int21(int ax, int bx, int cx, int dx);\n"
+			"unsigned char clobber[4] = {0xbf, 0xef, 0xbe, 0xcf};\n" // mov di,0BEEFh / iret
+			"int main(void) {\n"
+			"  int i;\n"
+			"  int a;\n"
+			"  int b;\n"
+			"  __int21(0x2513, 0, 0, (int)clobber);\n"
+			"  a = 0;\n"
+			"  b = 0;\n"
+			"  for (i = 0; i < 5; i = i + 1) {\n"
+			"    __int13(0x0800, 0, 0, 0x80);\n"
+			"    a = a + i;\n"
+			"    b = b + 2;\n"
+			"  }\n"
+			"  __int21(0x0200, 0, 0, a == 10 && b == 10 && i == 5 ? 'D' : '!');\n"
+			"  return 0;\n"
+			"}\n";
+		check(compile_text(di_program, image, "di.c"), "a program keeping variables in registers across __int13 compiles");
+		if (!image.empty())
+			check(run_image(image, nullptr).find('D') != std::string::npos, "__int13 puts DI back");
 	}
 
 	int run_tests()
