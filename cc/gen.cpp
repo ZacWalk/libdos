@@ -4746,6 +4746,16 @@ namespace
 		emit_interrupt_call(0x21, cf, bx, cx, dx, true);
 		symbols_[size_t(int21si)].finish = emit_here(&e_);
 
+		// The BIOS disk services, for a program asking about its drives; the
+		// SI form is for AH=48h, which fills the buffer there.
+		const int int13 = thunk("__int13", t_int_);
+		emit_interrupt_call(0x13, cf, bx, cx, dx, false);
+		symbols_[size_t(int13)].finish = emit_here(&e_);
+
+		const int int13si = thunk("__int13si", t_int_);
+		emit_interrupt_call(0x13, cf, bx, cx, dx, true);
+		symbols_[size_t(int13si)].finish = emit_here(&e_);
+
 		// The segment everything lives in, which a program needs when it hands
 		// DOS a far pointer.
 		const int seg = thunk("__seg", t_uint_);
