@@ -1,5 +1,5 @@
-#ifndef __OVRWIN_UNISTD_H__
-#define __OVRWIN_UNISTD_H__
+#ifndef __LIBDOS_UNISTD_H__
+#define __LIBDOS_UNISTD_H__
 
 #include <stddef.h>
 

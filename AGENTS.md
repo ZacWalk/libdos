@@ -1,9 +1,10 @@
-# ovrwin Repository Guidance
+# libdos Repository Guidance
 
-ovrwin is a C++20 DOS program emulator: a platform-independent static library
-(`src/`), a Windows host implementation (`host/`), an app built on the shared
-[platform-h](https://github.com/ZacWalk/platform-h) layer (`app/`) and a
-command-line driver that is both the test suite and the debugger (`cli/`).
+libdos is a C++20 DOS program emulator: a platform-independent static library
+(`src/`), a Windows host implementation (`host/`), dui - the windowed app built
+on the shared [platform-h](https://github.com/ZacWalk/platform-h) layer
+(`app/`) - and demu, the command-line runner that is also the test suite and
+the debugger (`cli/`).
 Alongside it are a C compiler for 16-bit DOS (`cc/`) and a DOS shell written in
 C and built with it (`shell/`).
 
@@ -20,16 +21,16 @@ covers at a glance.
   file-system access, no threads.
 - The library takes bytes and returns bytes. Reading files is the host's job,
   through `host_services` in `src/host.h`.
-- `app/` talks to the outside world through `pf::` only - window, menu, input,
+- `app/` (dui) talks to the outside world through `pf::` only - window, menu, input,
   audio, dialogs and file paths. It names no operating system, and nothing
   Win32-shaped may go into platform-h to make it easier; see that repo's rules.
-- `host/` and `cli/` own what is left of Windows: the file system and the
-  console. `host/host-win32.cpp` is shared by the app and the CLI.
+- `host/` and `cli/` (demu) own what is left of Windows: the file system and the
+  console. `host/host-win32.cpp` is shared by dui and demu.
 - `cc/` is platform independent too, and opens no files: a caller supplies
   source text through `cc_sources`, the same way a host supplies the drive.
 - `shell/` is C for the emulated machine, not for the host. It is compiled by
   `cc/`, so it can only use the subset in [docs/todo.md](docs/todo.md).
-- When the app needs a new capability, expose a platform-neutral operation from
+- When dui or demu needs a new capability, expose a platform-neutral operation from
   `machine.h` rather than reaching into `machine_state`.
 
 ### Why `host/` is still Win32
@@ -39,7 +40,7 @@ Everything in `host-win32.cpp` but one call maps onto `<filesystem>`,
 `<fstream>` and `<chrono>`. The exception is `code_alloc` / `code_commit`,
 which wants pages that are writable and then executable and has no standard
 form - and routing that through `pf::` would drag the platform layer, and the
-`WinMain` that forces `app_init` stubs on a console program, into the CLI. If
+`WinMain` that forces `app_init` stubs on a console program, into demu. If
 it is ever done, the shape is standard C++ plus a small OS-specific file, not
 `pf::`.
 
@@ -68,9 +69,9 @@ environment itself, so no developer prompt is needed. `build` and `test` cover
 Debug and Release unless one is named:
 
 ```powershell
-.\dd.ps1 test --label ovrwin        # build + the CLI suite and the app's offscreen check
+.\dd.ps1 test --label libdos        # build + the demu suite and dui's offscreen check
 .\dd.ps1 build release              # or debug
-.\dd.ps1 launch                     # build Release + start the app (for the human)
+.\dd.ps1 launch                     # build Release + start dui (for the human)
 .\dd.ps1 run cli '--' --info GAME.EXE
 .\dd.ps1 run cli '--' --cc .\shell\shell.c
 .\dd.ps1 bench --yes                # compile the benchmark for this machine and run it
@@ -78,17 +79,19 @@ Debug and Release unless one is named:
 ```
 
 The `'--'` is quoted because PowerShell removes a bare `--` from a script's
-arguments, and dd then rejects the CLI's own options as its own.
+arguments, and dd then rejects demu's own options as its own.
 
-Use `--label ovrwin`: an unfiltered `.\dd.ps1 test` also opens the app's window
+Use `--label libdos`: an unfiltered `.\dd.ps1 test` also opens dui's window
 for a second as a smoke check. After a build the suite runs directly too:
 
 ```powershell
-.\exe\ovrwincli.exe --test    # returns non-zero on failure
+.\exe\demu.exe --test    # returns non-zero on failure
 ```
 
 Build trees are per preset under `build/`; binaries land in `exe/` as
-`ovrwin.exe` and `ovrwincli.exe`, with a `-d` suffix for Debug.
+`dui.exe` and `demu.exe`, with a `-d` suffix for Debug. Embedded in another
+CMake project, libdos builds only its libraries unless `LIBDOS_BUILD_TOOLS` or
+`LIBDOS_BUILD_APP` is on, and only `LIBDOS_BUILD_APP` fetches platform-h.
 
 The [dd](https://github.com/ZacWalk/dd) build driver is vendored unmodified as
 `dd.ps1` and `.dd/`, with file hashes recorded in
@@ -101,8 +104,8 @@ CLI, and MCP for an MCP client — and its
 [commands](https://github.com/ZacWalk/dd/blob/main/docs/cli.md#commands) are
 documented in its own repository.
 
-`dd bench` compiles a C source with ovrwin's own compiler and runs it (ported
-from the pre-dd driver). Build the CLI first with `dd build`:
+`dd bench` compiles a C source with libdos's own compiler and runs it (ported
+from the pre-dd driver). Build demu first with `dd build`:
 
 ```pwsh
 .\dd.ps1 bench --dry-run                 # default source cc/bench/bench.c, run natively
@@ -110,14 +113,14 @@ from the pre-dd driver). Build the CLI first with `dd build`:
 .\dd.ps1 bench --source cc/bench/other.c --yes
 ```
 
-The app builds against a sibling `../platform-h` checkout when one exists and
+dui builds against a sibling `../platform-h` checkout when one exists and
 against the pinned revision in `CMakeLists.txt` otherwise - so a green local
 build says nothing about the pin. After changing platform-h, push it and re-pin
 here.
 
 ## Debugging A Program That Does Not Work
 
-This is most of the work, and the CLI exists for it. In order:
+This is most of the work, and demu exists for it. In order:
 
 1. `--trace` prints every DOS and BIOS call with its arguments and the address
    it came from. Nearly every failure is visible here as a service returning
@@ -170,16 +173,16 @@ whether a test already encodes the current behaviour:
   end of the file is reported on.
 - The disassembler, which the debugger depends on.
 
-A green build proves nothing on its own - run `.\dd.ps1 test --label ovrwin`.
-It runs two CTest entries in each configuration: `ovrwin_cli_suite`, the CLI
-suite, and `ovrwin_app_selftest`, the app's offscreen self-check, which pins the
+A green build proves nothing on its own - run `.\dd.ps1 test --label libdos`.
+It runs two CTest entries in each configuration: `demu_suite`, the demu
+suite, and `dui_selftest`, dui's offscreen self-check, which pins the
 picture scaling, that the framebuffer reaches the screen, that a repaint draws
 the picture rather than leaving the window black, that a key held when the
 window loses the focus is let go, that the right and middle mouse buttons are
 let go, and that a close message ends the session.
 There is no separate unit-test binary; a new check of
-`src/` or `cc/` goes in the CLI suite. Do not launch the GUI to verify a change;
-`ovrwin.exe -test` is the headless form and `dd.ps1 launch` is for the human.
+`src/` or `cc/` goes in the demu suite. Do not launch the GUI to verify a change;
+`dui.exe -test` is the headless form and `dd.ps1 launch` is for the human.
 
 ## Known Gaps
 

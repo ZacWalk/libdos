@@ -1,4 +1,4 @@
-# ovrwin JIT plan
+# libdos JIT plan
 
 A plan for translating 8086/80186 real-mode code to x64 at run time. Read
 [design.md](design.md) first: everything below has to hold the invariants it
@@ -24,7 +24,7 @@ measure it.
 
 ## Phase 0: what the measurements say
 
-`ovrwincli --bench <file> [--seconds n] [--warmup n] [--cpu-hz n]` runs a
+`demu --bench <file> [--seconds n] [--warmup n] [--cpu-hz n]` runs a
 program headlessly with no 60 Hz pacing and reports guest instructions/second,
 guest cycles/second and the `cpu_hz` a 60 Hz frame could afford. It runs the
 same workload twice, once with `vga_render` on and once with it off, so the
@@ -64,7 +64,7 @@ emulator's own cycle model:
 | Pentium 90 | 70 MIPS | 0.5x |
 
 **Throughput is not what stops a more advanced game running here.** For
-everything ovrwin can execute at all - 8086 and 80186 real mode - the
+everything libdos can execute at all - 8086 and 80186 real mode - the
 interpreter has one to two orders of magnitude of margin, and at the plan's own
 target of 25-33 MHz it has six. What actually blocks the next tier of games is
 capability: 386 instructions, protected mode and DPMI, mode X, VESA and Sound

@@ -1,10 +1,10 @@
-/* ovrwin by Zac Walker
+/* libdos by Zac Walker
  *
  * The workload cc/ is judged on: the shapes a game's inner loops are made of,
  * with a checksum at the end so a codegen change that breaks something shows up
  * as a wrong answer rather than a faster one.
  *
- *   ovrwincli --ccbench cc\bench\bench.c
+ *   demu --ccbench cc\bench\bench.c
  */
 
 int __int21(int ax, int bx, int cx, int dx);

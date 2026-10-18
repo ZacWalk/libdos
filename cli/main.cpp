@@ -1,4 +1,4 @@
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // Command line driver: runs the behavioural test suite, and inspects,
 // disassembles and headlessly runs DOS executables.
@@ -2776,20 +2776,20 @@ namespace
 	void usage()
 	{
 		printf(
-			"ovrwin - DOS program emulator\n\n"
-			"  ovrwincli --test                       run the behavioural test suite\n"
-			"  ovrwincli --cc <file.c> [-o out.com] [-I dir] [-D name=value]\n"
+			"demu - DOS program runner, debugger and test suite (libdos)\n\n"
+			"  demu --test                       run the behavioural test suite\n"
+			"  demu --cc <file.c> [-o out.com] [-I dir] [-D name=value]\n"
 			"                                         compile C to a DOS program\n"
-			"  ovrwincli --ccbench <file.c> [-I dir] [-D name=value]\n"
+			"  demu --ccbench <file.c> [-I dir] [-D name=value]\n"
 			"                                         compile, run, and report size and work\n"
-			"  ovrwincli --ccnative <file.c> [--dump] compile for this machine and run it\n"
-			"  ovrwincli --ccexe <file.c> [-o out.exe] [-I dir] [-D name=value]\n"
+			"  demu --ccnative <file.c> [--dump] compile for this machine and run it\n"
+			"  demu --ccexe <file.c> [-o out.exe] [-I dir] [-D name=value]\n"
 			"                                         compile to a Windows executable\n"
-			"  ovrwincli --info <file>                describe a DOS executable\n"
-			"  ovrwincli --disasm <file> [count]      disassemble from the entry point\n"
-			"  ovrwincli --run <file> [options]       run headlessly\n"
-			"  ovrwincli --run <folder> --args \"dir\"  mount a folder and use the shell\n"
-			"  ovrwincli --bench <file> [options]     measure interpreter throughput\n\n"
+			"  demu --info <file>                describe a DOS executable\n"
+			"  demu --disasm <file> [count]      disassemble from the entry point\n"
+			"  demu --run <file> [options]       run headlessly\n"
+			"  demu --run <folder> --args \"dir\"  mount a folder and use the shell\n"
+			"  demu --bench <file> [options]     measure interpreter throughput\n\n"
 			"Run options:\n"
 			"  --frames <n>    how many 60 Hz frames to run (default 600)\n"
 			"  --screen        print the text screen afterwards\n"

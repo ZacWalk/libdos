@@ -1,4 +1,4 @@
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // The DOS personality. There is no DOS kernel in memory: the MCB chain, the
 // PSP and the INT 21h entry points are built by the emulator so that programs

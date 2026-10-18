@@ -1,4 +1,4 @@
-/* ovrwin by Zac Walker
+/* libdos by Zac Walker
  *
  * Tokeniser and preprocessor.
  *
@@ -1240,7 +1240,7 @@ static int run(cc_preprocessor* p, const char* text, const char* name,
 	first->file = cc_name_text(p->names, intern_word(p, name));
 	end_file = first->file;
 
-	macro_define(p, intern_word(p, "__OVRWIN__"));
+	macro_define(p, intern_word(p, "__LIBDOS__"));
 	macro_define(p, intern_word(p, "__DOS__"));
 	macro_define(p, intern_word(p, "_M_I86")); /* the identity a 16-bit real-mode source expects */
 

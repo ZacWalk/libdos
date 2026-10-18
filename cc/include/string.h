@@ -1,5 +1,5 @@
-#ifndef __OVRWIN_STRING_H__
-#define __OVRWIN_STRING_H__
+#ifndef __LIBDOS_STRING_H__
+#define __LIBDOS_STRING_H__
 
 #include <stddef.h>
 

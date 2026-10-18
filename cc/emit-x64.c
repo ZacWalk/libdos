@@ -1,4 +1,4 @@
-/* ovrwin by Zac Walker
+/* libdos by Zac Walker
  *
  * The x64 back end: the same instruction list as the 8086 one, encoded for the
  * machine this compiler is running on. It is deliberately a second file of the

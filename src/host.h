@@ -1,6 +1,6 @@
 #pragma once
 
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // The only way the emulator reaches the outside world. The library never opens
 // a file, allocates a window or reads a clock; a host implements these calls

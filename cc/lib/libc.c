@@ -1,4 +1,4 @@
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // The C library for programs built by cc/. There is no linker yet, so a
 // program includes this once rather than linking against it.
@@ -7,8 +7,8 @@
 // the code generator emits. DOS clobbers __bx, __cx, __dx and __cf on every
 // call, so a result has to be copied out before the next one.
 
-#ifndef __OVRWIN_LIBC_C__
-#define __OVRWIN_LIBC_C__
+#ifndef __LIBDOS_LIBC_C__
+#define __LIBDOS_LIBC_C__
 
 #include <stdarg.h>
 #include <stddef.h>

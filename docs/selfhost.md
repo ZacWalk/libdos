@@ -23,13 +23,13 @@ every commit in between.
 Three ways this can end. They differ enormously in cost.
 
 **A. Hosted x64, in process.** `cc` compiles its own source into an x64 image,
-the CLI `code_alloc`s it and calls it, and *that* compiles `bench.c` into the
+demu `code_alloc`s it and calls it, and *that* compiles `bench.c` into the
 same `.COM` bytes the MSVC-built compiler produced. No linker, no executable
 format, no C runtime: the driver hands the compiled compiler an arena and an
 array of `(name, text)` pairs and gets back an image.
 
 This is the cheapest honest proof, and it is the recommended target. **The back
-end half of it is done**: `ovrwincli --ccnative cc\bench\bench.c` compiles the
+end half of it is done**: `demu --ccnative cc\bench\bench.c` compiles the
 benchmark for this machine, runs it in process, prints its checksum and returns
 216 - the same answer the emulated 8086 build gives, from the same front end
 through a different encoder.
@@ -50,7 +50,7 @@ problem below: a compiler needs more than 64 KiB.
 **B. Hosted x64, a real `cc.exe`.** Everything in A plus a PE/COFF writer, an
 import table, and a decision about the C runtime. Nothing here is hard, but
 none of it teaches anything the project does not already know. Do it only if
-the compiler should escape the CLI.
+the compiler should escape demu.
 
 **C. 16-bit DOS, inside the emulator.** The trophy, and much the furthest away.
 The compiler holds the whole translation unit as tokens and seeks backwards
@@ -63,7 +63,7 @@ for the compiler's *own* code as well as for Doom. Keep it on the list; do not
 start with it.
 
 A 32-bit flat variant of A is worth remembering: the same width work aimed at
-`cc_machine::i386` would run in the Win32 build of the CLI, and 386 protected
+`cc_machine::i386` would run in the Win32 build of demu, and 386 protected
 mode is where the emulator is going anyway. It is the same job either way; x64
 is picked because the back end exists.
 
@@ -319,7 +319,7 @@ compiling the same source and must agree exactly. If they do not, the compiler
 miscompiles itself and the difference in the image says where.
 
 A weaker check that arrives much earlier, and is worth wiring into
-`ovrwincli --test` as soon as route A runs at all: compile `bench.c` with the
+`demu --test` as soon as route A runs at all: compile `bench.c` with the
 MSVC-built compiler and with the stage-2 compiler and compare the two `.COM`
 images. That exercises the whole front end and every back end path without
 needing the compiler to be able to read its own source yet.
@@ -342,6 +342,6 @@ no CMake. The emulator keeps its build; only the compiler gets a script.
   the instruction list and are where a port bug will hide. They already have the
   most specific failure mode in the project: every compiled program breaks.
 - Route A's compiled compiler runs with **no guard pages and no unwind data**,
-  so a fault kills the CLI outright (see `docs/design.md` and the SEH note in
+  so a fault kills demu outright (see `docs/design.md` and the SEH note in
   the repository notes). Keep it behind its own command so a broken stage 2 can
   be bisected without taking the test suite with it.

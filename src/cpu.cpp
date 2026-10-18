@@ -1,4 +1,4 @@
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // 8086/80186 interpreter, with the 80386's two-byte opcodes in their 16-bit
 // forms. One call to cpu_step executes one instruction, or one repetition of a

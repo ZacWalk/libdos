@@ -1,4 +1,4 @@
-/* ovrwin by Zac Walker
+/* libdos by Zac Walker
  *
  * Parser and code generator. One pass, no syntax tree: the parser emits 8086
  * code as it goes and carries a small `value` describing where the result of

@@ -1,7 +1,7 @@
 #requires -Version 7.4
-# dd project command backing script for ovrwin.
+# dd project command backing script for libdos.
 #
-# Ported from the pre-dd bespoke driver. Compiles a C source with ovrwin's own C
+# Ported from the pre-dd bespoke driver. Compiles a C source with libdos's own C
 # compiler and runs it, either natively in-process (--ccnative) or by emitting an
 # executable first (--ccexe). Build the CLI with `dd build` before invoking this.
 $ErrorActionPreference = 'Stop'
@@ -19,7 +19,7 @@ $p = $request.parameters
 $config = if ($p.config) { [string]$p.config } else { 'release' }
 $suffix = if ($config -eq 'debug') { '-d' } else { '' }
 $ext = if ($IsWindows) { '.exe' } else { '' }
-$cli = Join-Path $root "exe/ovrwincli$suffix$ext"
+$cli = Join-Path $root "exe/demu$suffix$ext"
 
 $source = if ($p.source) { [string]$p.source } else { 'cc/bench/bench.c' }
 $sourcePath = [IO.Path]::GetFullPath((Join-Path $root $source))
