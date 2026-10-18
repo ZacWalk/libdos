@@ -23,9 +23,9 @@ jobs:
         shell: pwsh
         run: ./dd.ps1 dep install --non-interactive
 
-      - name: Build and test Release
+      - name: Build and test Debug and Release
         shell: pwsh
-        run: ./dd.ps1 test release --non-interactive
+        run: ./dd.ps1 test --non-interactive
 
       - name: Package
         shell: pwsh
