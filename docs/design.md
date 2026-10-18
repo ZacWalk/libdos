@@ -12,7 +12,7 @@ The pieces, with a hard boundary between `src/` and the rest:
 | `src/` | The emulator. Platform independent: no Windows headers, no file system, no threads. Builds `libdos`. |
 | `host/` | The Windows side of `host_services`: one directory presented as the emulated drive. |
 | `app/` | dui, the platform-h host. Owns the window, picture, sound and menus through `pf::`. |
-| `cli/` | demu, a console harness that drives the library headlessly and doubles as the debugger, and the runner that builds MS-DOS with its 1988 toolchain (`runner.cpp`, with LIB's stand-in in `lib-omf.c`). |
+| `cli/` | demu, a console harness that drives the library headlessly and doubles as the debugger; the runner that builds MS-DOS with its 1988 toolchain (`runner.cpp`, with LIB's stand-in in `lib-omf.c`); and boot mode's headless runner (`boot.cpp`). |
 | `cc/` | A C compiler targeting 16-bit DOS. Platform independent, and like `src/` it opens no files. |
 | `shell/` | A DOS command interpreter written in C and built by `cc/`. |
 | `disk/` | Bootable DOS disk images and a reader for them. Platform independent, and it opens no files. |
@@ -24,6 +24,9 @@ plain data. `machine` owns exactly one `machine_state` and is non-copyable.
 The library never opens a file. `host_services` (in `src/host.h`) is the only
 way out: a host implements it and decides what `C:\` means. That is what makes
 the emulator embeddable and what stops a program reaching outside its folder.
+Boot mode adds one more door of the same kind: the disks are `block_device`s
+(`src/block-device.h`) that a host attaches, and where their sectors live is
+again the host's business.
 
 ## Mapping, not emulating
 
@@ -56,12 +59,15 @@ zero, as on the real machine.
 
 The BIOS is libdos's own and stays high-level. INT 13h serves drives a host
 attaches as `block_device`s - two floppies, as an XT has them, and two hard
-disks as an XT-IDE card's BIOS presents them: CHS, plus the LBA calls when the
-drive is given them - and INT 19h reads the boot drive's first sector to
-`0000:7C00` and jumps to it. Nothing is timed: a sector arrives the moment it
-is asked for, so a whole FORMAT runs in a second. A host that wants to watch
-the console has `video_text`, every character through INT 10h in order, which
-is what demu's `--expect` reads.
+disks as an XT-IDE card's BIOS presents them: CHS with up to 256 heads, plus
+the LBA calls when the drive is given them, 127 sectors at most a call as EDD
+and the XT-IDE Universal BIOS allow - and INT 19h reads the boot drive's first
+sector to `0000:7C00` and jumps to it. Nothing is timed: a sector arrives the
+moment it is asked for, so a whole FORMAT runs in a second. A host that wants
+to watch the console has `video_text`, every character through INT 10h in
+order, which is what demu's `--expect` reads. The power-on callback is only
+answered in boot mode: a program under the mapped DOS that runs into it does
+not get a machine without its DOS.
 
 ## The callback opcode
 
@@ -267,7 +273,11 @@ Its built-in commands are not its own: `command.cpp` has them - COPY, DEL,
 REN, TYPE, ECHO, CD, MD, RD, SET, PATH, ATTRIB, DIR, CLS, VER and the rest of
 COMMAND.COM's - writing through a `command_output` the caller supplies. The
 prompt's writes to the screen; the other caller's goes through a program's
-standard handles, which is the next section.
+standard handles, which is the next section. A command's question - DEL's
+"Are you sure (Y/N)?" before it empties a directory - goes through it too:
+COMMAND.COM /C reads the answer from standard input, and the prompt, which
+cannot stop to wait, keeps the question open and takes the next line typed
+as the answer.
 
 ## COMMAND.COM, mapped
 
@@ -286,7 +296,10 @@ pretended.
 
 A host can stand in for a program too. `host_services::run_native` is asked
 first on every EXEC, by the program's name; demu answers for LIB, whose real
-executable is an OS/2 bound one that cannot run here.
+executable is an OS/2 bound one that cannot run here. Its stand-in takes each
+file name the way DOS would - from the directory LIB was started in, on drive
+C: - so it reaches nothing outside demu's root, and it exits 1, as LIB does,
+when a file cannot be read or written or a table overflows.
 
 ## Files and handles
 
@@ -312,7 +325,15 @@ program creates, opens, renames or deletes - so LINK's `ramdrive.map -map` is
 RAMDRIVE.MAP. A directory search's state lives in the program's DTA, with a
 stamp that tells a search DOS has since closed from its successor: a program
 that only wants to know whether a file exists never finishes a search, so one
-for a single name is closed at once, and of the rest the oldest makes way.
+for a single name is closed at once, and of the rest the one stepped longest
+ago makes way - never one a program is still walking.
+
+The input status calls - AH=0Bh, AH=06h with DL=FFh and AX=4406h - say what
+DOS says: a redirected file has a character until its end, the emulated
+keyboard when a key is waiting. A host that has the console answers for it
+through `console_ready`, without waiting: demu says yes for a key pressed at
+the terminal, or for bytes still to come when its own standard input is a
+file or a pipe.
 
 ## Running another program
 
@@ -391,11 +412,12 @@ Five things are worth knowing:
 The emitted program starts by shrinking its own memory block through AH=4Ah,
 so that a program it starts has somewhere to load. The runtime is five
 interrupt thunks (`__int21`, `__int21si`, `__int10`, and `__int13` and
-`__int13si` for the BIOS disk services) and `__seg`, and a thunk the program
-never calls is not laid out; everything else is ordinary C. There is no
-linker, so a program that wants the C library in `cc/lib/libc.c` includes it
-rather than linking against it, and the headers in `cc/include` are
-declarations only.
+`__int13si` for the BIOS disk services, which put DI back, since AH=08h hands
+back ES:DI and a function may keep a variable there) and `__seg`, and a thunk
+the program never calls is not laid out; everything else is ordinary C. There
+is no linker, so a program that wants the C library in `cc/lib/libc.c`
+includes it rather than linking against it, and the headers in `cc/include`
+are declarations only.
 
 ## Disk images
 
@@ -413,15 +435,20 @@ cylinder - the first sector holds its partition table, FDISK's MBR for C: or an
 EBR for a logical drive - and ends on a cylinder; the types are FDISK's (01h up
 to 32680 sectors, 04h to 32 MB, 06h beyond, or 0Eh and 0Fh with LBA). Each
 volume gets the cluster size IO.SYS's DiskTable2 gives one of its size, and a
-FAT just big enough for the clusters left. Files are never deleted from an
+FAT the size FORMAT gives it. That FAT is an entry or two short of the clusters
+on some sizes - FORMAT's formula, like IO.SYS's, leaves out the two entries
+before the first cluster - so a file is never put in a cluster with no entry;
+DOS reads such a cluster's entry from the second FAT's media word and so never
+uses it either. Files are never deleted from an
 image being built, so each one is contiguous, which IO.SYS has to be. The date
 and serial number come from the caller in a `disk_stamp`, so a build that fixes
 them gets the same image every time.
 
 The reader goes the other way and assumes nothing it made: it takes the
 parameter block's word for the layout, finds the logical drives by walking the
-EBR chain, tells FAT12 from FAT16 by the cluster count as DOS does, and gives up
-on a chain that leaves the volume or loops.
+EBR chain - only forward - letters them as DOS 4.0 does, tells FAT12 from FAT16
+by the cluster count as DOS does, and gives up on a chain of clusters that
+leaves the volume or loops, listing a directory several entries share once.
 
 ## Introspection
 
@@ -437,8 +464,9 @@ The disassembler in `debug.cpp` is shared by demu and dui, and demu's
 
 1. `src/` stays platform independent. No `windows.h`, no file access, no
    `wchar_t` in new API.
-2. `mem_read8`/`mem_write8` are the only path to memory, and `host_services`
-   the only path to the outside world.
+2. `mem_read8`/`mem_write8` are the only path to memory, and `host_services` -
+   with, in boot mode, the `block_device`s a host attaches - the only path to
+   the outside world.
 3. Nothing in the emulator blocks. A service that cannot answer yet rewinds the
    caller and returns.
 4. State a program can observe lives in emulated memory, not in C++ fields.

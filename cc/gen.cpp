@@ -4408,6 +4408,8 @@ namespace
 
 	// The thunk a C program calls to reach a BIOS or DOS service: registers in,
 	// AX out, and whatever DOS left in the other registers readable afterwards.
+	// The disk services' AH=08h hands back a table's address in ES:DI, and a
+	// function keeps a variable in DI, so the BIOS disk thunks put DI back.
 	void generator::emit_interrupt_call(int number, int cf, int bx, int cx, int dx, bool with_si)
 	{
 		const auto from_frame = [&](int r, int displacement)
@@ -4428,6 +4430,7 @@ namespace
 		emit_push_bp(&e_);
 		emit_mov_bp_sp(&e_);
 		if (with_si) emit_op(&e_, op_push, 2, operand_in(reg_si), operand_none());
+		if (number == 0x13) emit_op(&e_, op_push, 2, operand_in(reg_di), operand_none());
 		from_frame(reg_a, target_.frame_base);
 		from_frame(reg_b, target_.frame_base + 2);
 		from_frame(reg_c, target_.frame_base + 4);
@@ -4443,6 +4446,7 @@ namespace
 		emit_jump_if(&e_, cond_above_equal, carry_clear);
 		set_global(cf, 1);
 		emit_bind(&e_, carry_clear);
+		if (number == 0x13) emit_op(&e_, op_pop, 2, operand_in(reg_di), operand_none());
 		if (with_si) emit_op(&e_, op_pop, 2, operand_in(reg_si), operand_none());
 		emit_pop_bp(&e_);
 		emit_ret(&e_);

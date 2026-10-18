@@ -403,6 +403,28 @@ namespace
 		return true;
 	}
 
+	// Whether reading the file a handle points at would give a character now,
+	// which is DOS's input status: a file has one until its end, the emulated
+	// keyboard when a key is waiting, and a host's console when the host says
+	// so. NUL, AUX and PRN never have one.
+	bool input_ready(machine_state& s, int file)
+	{
+		const dos_file& entry = s.dos.files[file];
+		if (entry.device == dos_device_none)
+		{
+			if (s.host == nullptr) return false;
+			const int32_t at = s.host->file_seek(entry.host_handle, 0, 1);
+			const int32_t end = s.host->file_seek(entry.host_handle, 0, 2);
+			s.host->file_seek(entry.host_handle, at, 0);
+			return at >= 0 && at < end;
+		}
+		if (entry.device != dos_device_con) return false;
+		uint8_t probe = 0;
+		if (s.host != nullptr && s.host->console_read(&probe, 0) >= 0) return s.host->console_ready();
+		uint16_t key = 0;
+		return s.dos.extended_pending || bios_peek_key(s, key);
+	}
+
 	uint32_t dta_address(machine_state& s)
 	{
 		return linear_address(uint16_t(s.dos.dta >> 16), uint16_t(s.dos.dta));
@@ -427,19 +449,20 @@ namespace
 	// A program never says it has finished with a directory search - one that
 	// only wants to know whether a file exists asks for the first match and
 	// moves on - so the host's searches would run out. A search for one name
-	// is closed at once; of the rest, the oldest makes way for a new one.
+	// is closed at once; of the rest, the one longest unused makes way for a
+	// new one.
 	int open_search_slot(machine_state& s)
 	{
 		dos_state& d = s.dos;
-		int oldest = 0;
+		int idle = 0;
 		for (int i = 0; i < dos_max_searches; ++i)
 		{
 			if (!d.searches[i].used) return i;
-			if (d.searches[i].stamp < d.searches[oldest].stamp) oldest = i;
+			if (d.searches[i].last_used < d.searches[idle].last_used) idle = i;
 		}
-		if (s.host != nullptr) s.host->find_close(d.searches[oldest].host_search);
-		d.searches[oldest] = dos_search();
-		return oldest;
+		if (s.host != nullptr) s.host->find_close(d.searches[idle].host_search);
+		d.searches[idle] = dos_search();
+		return idle;
 	}
 
 	// Every program gets its own copy of an environment, as on DOS: the
@@ -1242,7 +1265,6 @@ namespace
 				fail(s, error_file_not_found);
 				return;
 			}
-			const int slot = open_search_slot(s);
 			host_file_info info;
 			const int search = s.host->find_first(pattern, uint8_t(c.cx() & 0xff), info);
 			if (search < 0)
@@ -1257,9 +1279,12 @@ namespace
 			}
 			else
 			{
+				// Only a search that has more to find takes a slot.
+				const int slot = open_search_slot(s);
 				d.searches[slot].used = true;
 				d.searches[slot].host_search = search;
 				d.searches[slot].stamp = ++d.search_stamp;
+				d.searches[slot].last_used = d.search_stamp;
 				store_find_result(s, info, slot, d.searches[slot].stamp);
 			}
 			succeed(s);
@@ -1284,6 +1309,7 @@ namespace
 				fail(s, error_no_more_files);
 				return;
 			}
+			d.searches[slot].last_used = ++d.search_stamp;
 			store_find_result(s, info, slot, stamp);
 			succeed(s);
 			return;
@@ -1379,10 +1405,24 @@ int dos_open_file(machine_state& s, const char* path, int access, bool create, b
 	if (device == dos_device_none)
 	{
 		if (s.host == nullptr) return -1;
-		int handle = create ? s.host->file_create(path, attributes) : s.host->file_open(path, access);
+		// Appending reads the last byte, so the file is opened for both.
+		int handle = create ? s.host->file_create(path, attributes)
+		                    : s.host->file_open(path, append ? host_open_read_write : access);
+		if (handle < 0 && append) handle = s.host->file_open(path, access);
 		if (handle < 0 && append) handle = s.host->file_create(path, attributes);
 		if (handle < 0) return -1;
-		if (append) s.host->file_seek(handle, 0, 2);
+		if (append)
+		{
+			// As COMMAND.COM's >> does, the new text goes over a ^Z that
+			// ends the file - COPY leaves one - rather than after it.
+			const int32_t end = s.host->file_seek(handle, 0, 2);
+			uint8_t last = 0;
+			if (end > 0 && s.host->file_seek(handle, end - 1, 0) == end - 1 &&
+			    s.host->file_read(handle, &last, 1) == 1 && last == 0x1a)
+				s.host->file_seek(handle, end - 1, 0);
+			else
+				s.host->file_seek(handle, 0, 2);
+		}
 		entry.host_handle = handle;
 	}
 	entry.device = device;
@@ -1586,8 +1626,11 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 	case 0x06:
 		if (c.dl() == 0xff)
 		{
+			// Only a character already waiting is taken: at the end of a
+			// redirected file, or with none typed, there is nothing.
+			const int file = dos_handle_file(s, 0);
 			uint8_t ch = 0;
-			if (!console_char(s, ch, false))
+			if (file < 0 || !input_ready(s, file) || !console_char(s, ch, false))
 			{
 				cpu_set_iret_flag(s, flag_zf, true);
 				c.set_al(0);
@@ -1672,17 +1715,10 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 
 	case 0x0b:
 	{
-		if (!keyboard_input(s))
-		{
-			// A redirected file always has a character to read; a host's
-			// terminal is never reported as having one, so a program polling
-			// for Ctrl+C does not then block on it.
-			const int file = dos_handle_file(s, 0);
-			c.set_al(file >= 0 && d.files[file].device == dos_device_con ? 0x00 : 0xff);
-			return true;
-		}
-		uint16_t key = 0;
-		c.set_al(d.extended_pending || bios_peek_key(s, key) ? 0xff : 0x00);
+		// A program polling for Ctrl+C, or emptying the keyboard with
+		// while (kbhit()) getch(), stops at the end of a redirected file.
+		const int file = dos_handle_file(s, 0);
+		c.set_al(file >= 0 && input_ready(s, file) ? 0xff : 0x00);
 		return true;
 	}
 
@@ -1732,66 +1768,63 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 
 	case 0x29:
 	{
-		// Parse a filename into an FCB, as DOS does: AL bit 0 skips leading
-		// separators, bits 1-3 keep the drive, name or extension the FCB
-		// already holds unless the string gives one, and AL comes back 1 if
-		// there were wildcards, FFh for a bad drive letter.
+		// Parse a filename into an FCB, as DOS's MakeFcb does. Blanks and
+		// tabs before the name are always passed over, and with AL bit 0 one
+		// separator among them too. Bits 1-3 keep the drive, name or
+		// extension the FCB already holds when the string gives none; a name
+		// or extension that is given is padded with blanks. AL comes back 1
+		// if there were wildcards, FFh for a bad drive letter.
 		const uint8_t flags = c.al();
 		uint16_t source = c.si();
 		const uint16_t fcb = c.di();
 		uint8_t result = 0;
 		const auto at = [&](int ahead) { return read8(s, c.ds(), uint16_t(source + ahead)); };
-		const auto ends_name = [](uint8_t ch, bool all)
+		const auto put = [&](int offset, uint8_t value) { write8(s, c.es(), uint16_t(fcb + offset), value); };
+		const auto ends_name = [](uint8_t ch) { return ch <= ' ' || std::strchr(".\"/\\[]:<|>+=;,", ch) != nullptr; };
+		const auto blanks = [&]() { while (at(0) == ' ' || at(0) == '\t') ++source; };
+		// The characters up to the next that ends a name, into a field of
+		// `width`: '*' fills the rest with '?', and what does not fit is
+		// passed over. With nothing given, an optional field is left alone.
+		const auto field = [&](int offset, int width, bool optional)
 		{
-			if (ch == 0 || ch == '.' || ch == ' ' || ch == '/' || ch == '\\' || ch == ':' || ch == ';' || ch == ',' ||
-			    ch == '=' || ch == '\t' || ch == '\r' || ch == '\n')
-				return true;
-			return all && (ch == '+' || ch == '<' || ch == '>' || ch == '|' || ch == '[' || ch == ']' || ch == '"');
-		};
-		const auto field = [&](int offset, int width)
-		{
-			for (int position = 0; position < width; ++position)
+			if (optional && ends_name(at(0))) return;
+			int position = 0;
+			for (; !ends_name(at(0)); ++source)
 			{
 				const uint8_t ch = at(0);
-				if (ends_name(ch, true)) return;
+				if (position == width) continue;
+				if (ch == '*' || ch == '?') result |= 1;
 				if (ch == '*')
-				{
-					for (; position < width; ++position) write8(s, c.es(), uint16_t(fcb + offset + position), '?');
-					result = 1;
-					++source;
-					return;
-				}
-				if (ch == '?') result = 1;
-				write8(s, c.es(), uint16_t(fcb + offset + position), uint8_t(upper(char(ch))));
-				++source;
+					while (position < width) put(offset + position++, '?');
+				else
+					put(offset + position++, uint8_t(upper(char(ch))));
 			}
+			while (position < width) put(offset + position++, ' ');
 		};
 
-		if ((flags & 1) != 0)
-			while (at(0) == ' ' || at(0) == '\t' || at(0) == ';' || at(0) == ',' || at(0) == '=') ++source;
-		if ((flags & 2) == 0) write8(s, c.es(), fcb, 0);
-		if ((flags & 4) == 0) for (int i = 1; i <= 8; ++i) write8(s, c.es(), uint16_t(fcb + i), ' ');
-		if ((flags & 8) == 0) for (int i = 9; i <= 11; ++i) write8(s, c.es(), uint16_t(fcb + i), ' ');
+		if ((flags & 2) == 0) put(0, 0);
+		if ((flags & 4) == 0) for (int i = 1; i <= 8; ++i) put(i, ' ');
+		if ((flags & 8) == 0) for (int i = 9; i <= 11; ++i) put(i, ' ');
+		for (int i = 12; i < 16; ++i) put(i, 0);
 
-		if (at(1) == ':')
+		blanks();
+		if ((flags & 1) != 0 && std::strchr(":<|>+=;,", at(0)) != nullptr && at(0) != 0)
+		{
+			++source;
+			blanks();
+		}
+		if (!ends_name(at(0)) && at(1) == ':')
 		{
 			const uint8_t drive = uint8_t(upper(char(at(0))));
-			if (drive >= 'A' && drive <= 'Z')
-			{
-				write8(s, c.es(), fcb, uint8_t(drive - 'A' + 1));
-				source = uint16_t(source + 2);
-			}
-			else
-			{
-				result = 0xff;
-			}
+			if (drive < 'A' || drive > 'Z') result = 0xff;
+			put(0, uint8_t(drive - '@'));
+			source = uint16_t(source + 2);
 		}
-		field(1, 8);
-		while (!ends_name(at(0), false)) ++source; // a name longer than eight
+		field(1, 8, true);
 		if (at(0) == '.')
 		{
 			++source;
-			field(9, 3);
+			field(9, 3, false);
 		}
 		c.set_al(result);
 		c.set_si(source);
@@ -1960,14 +1993,17 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 			return true;
 		case 0x06: // input status
 		case 0x07: // output status
-			if (dos_handle_file(s, c.bx()) < 0)
+		{
+			const int file = dos_handle_file(s, c.bx());
+			if (file < 0)
 			{
 				fail(s, error_invalid_handle);
 				return true;
 			}
-			c.set_al(0xff);
+			c.set_al(c.al() == 0x07 || input_ready(s, file) ? 0xff : 0x00);
 			succeed(s);
 			return true;
+		}
 		case 0x08: // removable media
 			c.set_ax(1); // fixed disk
 			succeed(s);

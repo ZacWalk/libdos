@@ -16,6 +16,7 @@
 #include "../host/host-win32.h"
 #include "../src/machine.h"
 
+#include <conio.h>
 #include <direct.h>
 #include <fcntl.h>
 #include <io.h>
@@ -28,6 +29,15 @@
 
 namespace
 {
+	class runner_host;
+
+	// What omf_lib_map needs while LIB runs: the host whose root it may
+	// reach, and the DOS directory LIB was started in.
+	const runner_host* lib_host = nullptr;
+	std::string lib_directory;
+
+	int map_lib_name(const char* name, char* host_path, int size);
+
 	// The folder host, with the host's terminal as the DOS console and the
 	// tools that cannot run emulated standing in for themselves.
 	class runner_host final : public win32_host
@@ -49,6 +59,32 @@ namespace
 			return got > 0 ? got : 0;
 		}
 
+		// A key pressed at the terminal, or bytes still to come from the file
+		// or pipe standard input was redirected from.
+		bool console_ready() override
+		{
+			const HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
+			switch (GetFileType(input))
+			{
+			case FILE_TYPE_CHAR:
+				return _isatty(0) != 0 && _kbhit() != 0;
+			case FILE_TYPE_PIPE:
+			{
+				DWORD available = 0;
+				return PeekNamedPipe(input, nullptr, 0, nullptr, &available, nullptr) && available > 0;
+			}
+			case FILE_TYPE_DISK:
+			{
+				LARGE_INTEGER at = {};
+				LARGE_INTEGER size = {};
+				return SetFilePointerEx(input, LARGE_INTEGER{}, &at, FILE_CURRENT) && GetFileSizeEx(input, &size) &&
+				       at.QuadPart < size.QuadPart;
+			}
+			default:
+				return false;
+			}
+		}
+
 		bool console_is_device(int handle) override { return _isatty(handle) != 0; }
 
 		// A fixed date, so that a build comes out the same whenever it is run,
@@ -65,21 +101,20 @@ namespace
 		}
 
 		// LIB.EXE is an OS/2 bound executable; the library manager in
-		// lib-omf.c does its work, on host paths relative to the directory the
-		// program was in.
+		// lib-omf.c does its work, on the files LIB's names reach from the
+		// DOS directory the program was in.
 		int run_native(const char* name, const char* tail, const char* directory) override
 		{
 			if (std::strcmp(name, "LIB") != 0) return -1;
-			char host_directory[MAX_PATH] = {};
-			char saved[MAX_PATH] = {};
-			if (!to_windows_path(directory, host_directory, MAX_PATH) || _getcwd(saved, MAX_PATH) == nullptr ||
-			    _chdir(host_directory) != 0)
-				return 1;
+			lib_host = this;
+			lib_directory = directory;
+			omf_lib_map = map_lib_name;
 			omf_lib_verbose = verbose() ? 1 : 0;
 			const int code = omf_lib(tail);
+			omf_lib_map = nullptr;
+			lib_host = nullptr;
 			fflush(stdout);
 			fflush(stderr);
-			_chdir(saved);
 			return code;
 		}
 
@@ -88,6 +123,28 @@ namespace
 			if (verbose()) fprintf(stderr, "[demu] %s\n", text);
 		}
 	};
+
+	// A name as DOS takes it - on drive C:, from the root with a leading
+	// backslash and from LIB's directory without - then the host's file
+	// under the root. A name for another drive, or one that climbs out of
+	// the root, is refused.
+	int map_lib_name(const char* name, char* host_path, int size)
+	{
+		const char* rest = name;
+		if (rest[0] != 0 && rest[1] == ':')
+		{
+			if (std::toupper(static_cast<unsigned char>(rest[0])) != 'C') return 0;
+			rest += 2;
+		}
+		std::string dos;
+		if (rest[0] == '\\' || rest[0] == '/')
+			dos = std::string("C:") + rest;
+		else if (!lib_directory.empty() && lib_directory.back() == '\\')
+			dos = lib_directory + rest;
+		else
+			dos = lib_directory + "\\" + rest;
+		return lib_host != nullptr && lib_host->to_windows_path(dos.c_str(), host_path, size) ? 1 : 0;
+	}
 
 	// A path in the form a comparison can rely on: full, and with any 8.3
 	// short names (C:\USERS\ZACWAL~1) expanded.
@@ -350,7 +407,8 @@ int run_dos_program(int argc, char** argv)
 	}
 	if (!m.set_current_directory(dos_cwd.c_str()))
 	{
-		fprintf(stderr, "demu: cannot make %s the current directory\n", dos_cwd.c_str());
+		fprintf(stderr, "demu: cannot make %s the current directory%s\n", dos_cwd.c_str(),
+		        dos_cwd.size() >= 66 ? ", longer than DOS allows: give -r a folder nearer to it" : "");
 		return 1;
 	}
 	if (!m.load_program(image.data(), uint32_t(image.size()), dos_program.c_str(), tail.c_str()))

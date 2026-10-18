@@ -239,9 +239,8 @@ namespace
 			return 1;
 		}
 		for (const disk_volume& v : report.volumes)
-			printf("  %c: %5llu MB at sector %10llu, type %02Xh, %2u sectors/cluster\n",
-			       'C' + int(&v - report.volumes.data()), v.sectors / 2048, v.start, v.type,
-			       v.sectors_per_cluster);
+			printf("  %c: %5llu MB at sector %10llu, type %02Xh, %2u sectors/cluster\n", v.drive, v.sectors / 2048,
+			       v.start, v.type, v.sectors_per_cluster);
 		const uint64_t cylinder = uint64_t(report.heads) * report.sectors_per_track;
 		printf("Created %llu MB hard disk: %s\n", report.sectors / 2048, o.output.c_str());
 		printf("  Geometry: %u cylinders, %u heads, %u sectors/track (%llu sectors)\n", report.cylinders,
@@ -254,9 +253,8 @@ namespace
 		return 0;
 	}
 
-	// The image's FAT volumes, lettered as DOS letters them: A: for a floppy,
-	// C: onwards for a hard disk's.
-	bool open_image(const char* path, FILE*& file, std::vector<disk_volume>& volumes, char& first_letter)
+	// The image's volumes, each with the letter DOS would give it.
+	bool open_image(const char* path, FILE*& file, std::vector<disk_volume>& volumes)
 	{
 		if (fopen_s(&file, path, "rb") != 0 || file == nullptr)
 		{
@@ -271,7 +269,6 @@ namespace
 			fclose(file);
 			return false;
 		}
-		first_letter = !volumes.empty() && volumes[0].type == 0 ? 'A' : 'C';
 		return true;
 	}
 
@@ -285,22 +282,23 @@ namespace
 	{
 		FILE* file = nullptr;
 		std::vector<disk_volume> volumes;
-		char letter = 'C';
-		if (!open_image(path, file, volumes, letter)) return 1;
+		if (!open_image(path, file, volumes)) return 1;
 		file_source source(file);
 		int result = 0;
 		for (const disk_volume& v : volumes)
 		{
+			if (v.drive)
+				printf("Volume %c: ", v.drive);
+			else
+				printf("Partition type %02Xh, no DOS drive: ", v.type);
 			if (!v.formatted)
 			{
-				printf("Partition type %02Xh at sector %llu, %llu MB: not FAT12 or FAT16\n\n", v.type, v.start,
-				       v.sectors / 2048);
+				printf("not FAT12 or FAT16, %llu MB at sector %llu\n\n", v.sectors / 2048, v.start);
 				continue;
 			}
 			const uint64_t cluster_bytes = uint64_t(v.sectors_per_cluster) * disk_sector_size;
-			printf("Volume %c: %s, %s", letter++, v.label.empty() ? "no label" : v.label.c_str(),
-			       v.fat16 ? "FAT16" : "FAT12");
-			if (v.type) printf(" type %02Xh", v.type);
+			printf("%s, %s", v.label.empty() ? "no label" : v.label.c_str(), v.fat16 ? "FAT16" : "FAT12");
+			if (v.type && v.drive) printf(" type %02Xh", v.type);
 			printf(", %llu KB at sector %llu, %llu KB free\n", v.sectors / 2, v.start,
 			       v.free_clusters * cluster_bytes / 1024);
 			std::vector<disk_entry> entries;
@@ -332,32 +330,40 @@ namespace
 	{
 		FILE* file = nullptr;
 		std::vector<disk_volume> volumes;
-		char letter = 'C';
-		if (!open_image(path, file, volumes, letter)) return 1;
-		std::vector<const disk_volume*> lettered;
-		for (const disk_volume& v : volumes)
-			if (v.formatted) lettered.push_back(&v);
+		if (!open_image(path, file, volumes)) return 1;
 
+		// A path with no drive is on the first lettered volume: A: or C:.
 		std::string inside = name;
-		size_t index = 0;
+		char letter = 0;
 		if (inside.size() >= 2 && inside[1] == ':')
 		{
-			index = size_t((inside[0] | 0x20) - (letter | 0x20));
+			letter = char(inside[0] & ~0x20);
 			inside = inside.substr(2);
 		}
-		if (index >= lettered.size())
+		const disk_volume* volume = nullptr;
+		for (const disk_volume& v : volumes)
 		{
-			if (lettered.empty())
-				fprintf(stderr, "Error: '%s' has no FAT12 or FAT16 volume\n", path);
+			if (v.drive && (letter == 0 || v.drive == letter))
+			{
+				volume = &v;
+				break;
+			}
+		}
+		if (volume == nullptr || !volume->formatted)
+		{
+			if (volume != nullptr)
+				fprintf(stderr, "Error: drive %c: in '%s' is not formatted\n", volume->drive, path);
+			else if (letter)
+				fprintf(stderr, "Error: '%s' has no drive %c:\n", path, letter);
 			else
-				fprintf(stderr, "Error: '%s' has no drive %c:\n", path, name[0]);
+				fprintf(stderr, "Error: '%s' has no DOS drive\n", path);
 			fclose(file);
 			return 1;
 		}
 		file_source source(file);
 		std::vector<uint8_t> data;
 		std::string error;
-		const bool read = disk_read_file(source, *lettered[index], inside, data, error);
+		const bool read = disk_read_file(source, *volume, inside, data, error);
 		fclose(file);
 		if (!read)
 		{

@@ -107,6 +107,9 @@ void machine_callback(machine_state& s, uint8_t index)
 	}
 	if (index == callback_power_on)
 	{
+		// Only the boot ROM's reset entry holds this callback; a program
+		// under the mapped DOS that runs into it does not wipe that DOS.
+		if (!s.boot_mode) return;
 		// The cycle count runs on through a reboot: the host's exec loop
 		// is still measuring against it.
 		const uint64_t cycles = s.cycles;
@@ -245,7 +248,11 @@ bool machine::set_current_directory(const char* dos_path)
 	dos_resolve_path(s, dos_path, path, sizeof(path));
 	const int drive = path[0] - 'A';
 	if (drive < 0 || drive > 2 || s.host == nullptr || !s.host->directory_exists(path)) return false;
-	snprintf(s.dos.cwd[drive], sizeof(s.dos.cwd[drive]), "%s", path[3] != 0 ? path + 2 : "");
+	// DOS keeps 64 characters of a drive's current directory; a longer one
+	// is refused rather than cut to a directory that does not exist.
+	const char* directory = path[3] != 0 ? path + 2 : "";
+	if (std::strlen(directory) >= sizeof(s.dos.cwd[drive])) return false;
+	snprintf(s.dos.cwd[drive], sizeof(s.dos.cwd[drive]), "%s", directory);
 	s.dos.current_drive = uint8_t(drive);
 	return true;
 }
@@ -291,8 +298,9 @@ void machine_reset(machine_state& s)
 	s.boot_mode = boot_mode;
 	s.shell = shell_state();
 
-	// A far jump to the BIOS entry point at the reset vector, so a program
-	// that jumps to F000:FFF0 restarts rather than executing rubbish.
+	// A far jump to itself at the reset vector, so a program that jumps to
+	// F000:FFF0 waits there rather than executing rubbish. Boot mode puts the
+	// power-on callback in its place.
 	s.memory[0xffff0] = 0xea;
 	s.memory[0xffff1] = 0xf0;
 	s.memory[0xffff2] = 0xff;
