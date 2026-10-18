@@ -1,0 +1,48 @@
+name: Release
+
+# A tag v* builds Release, runs the suite, and publishes demu, dimg and dui as
+# a zip with its SHA-256 - the binaries dos4z's build downloads and pins.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-2025-vs2026
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate pinned dependency declarations
+        shell: pwsh
+        run: ./dd.ps1 dep install --non-interactive
+
+      - name: Build and test Release
+        shell: pwsh
+        run: ./dd.ps1 test release --non-interactive
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = "libdos-$env:GITHUB_REF_NAME-win-x64"
+          New-Item -ItemType Directory -Path $name | Out-Null
+          Copy-Item exe/demu.exe, exe/dimg.exe, exe/dui.exe, LICENSE, NOTICE.md, README.md -Destination $name
+          Compress-Archive -Path "$name/*" -DestinationPath "$name.zip"
+          $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $name.zip" | Set-Content -Path "$name.zip.sha256" -Encoding ascii
+          Write-Host "SHA-256 $hash"
+
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $name = "libdos-$env:GITHUB_REF_NAME-win-x64"
+          gh release create $env:GITHUB_REF_NAME "$name.zip" "$name.zip.sha256" --title "libdos $env:GITHUB_REF_NAME" --generate-notes

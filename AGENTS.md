@@ -125,6 +125,11 @@ against the pinned revision in `CMakeLists.txt` otherwise - so a green local
 build says nothing about the pin. After changing platform-h, push it and re-pin
 here.
 
+A tag `vX.Y.Z` on `main` releases: `.github/workflows/release.yml` builds and
+tests Release and publishes `libdos-vX.Y.Z-win-x64.zip` (demu, dimg and dui)
+with its SHA-256. dos4z pins both the version and that hash in `make-dos.ps1`,
+so moving it to a new release means changing the two together there.
+
 ## Debugging A Program That Does Not Work
 
 This is most of the work, and demu exists for it. In order:
