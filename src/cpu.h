@@ -33,6 +33,22 @@ constexpr uint8_t int_overflow = 4;
 constexpr uint8_t int_bound = 5;
 constexpr uint8_t int_invalid_opcode = 6;
 
+// Which processor the interpreter is. The default runs what late-80s games
+// assume: 8086 and 80186, and the 80386's two-byte opcodes in their 16-bit
+// forms. The 8086 models stop the machine at anything an 8088 does not have,
+// so a program meant for an IBM PC cannot quietly rely on a newer chip, and
+// behave like one where it differs: PUSH SP and shift counts. The strict model
+// also refuses the instructions a program on an XT without a coprocessor has
+// no business executing - x87 escapes, WAIT, LOCK and HLT - which is what the
+// original 1988 toolchain is run under.
+enum class cpu_model : uint8_t
+{
+	i386,
+	i80186,
+	i8086,
+	i8086_strict,
+};
+
 struct cpu_state
 {
 	uint16_t regs[14] = {};

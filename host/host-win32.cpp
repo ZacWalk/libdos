@@ -10,6 +10,11 @@
 
 namespace
 {
+	// DOS without SHARE lets a file be opened any number of times, and a
+	// program may delete or rename one another handle still has open - LINK
+	// creates its map file and then opens it again.
+	constexpr DWORD share_all = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+
 	void to_dos_name(const WIN32_FIND_DATAA& found, char* out)
 	{
 		const char* name = found.cAlternateFileName[0] != 0 ? found.cAlternateFileName : found.cFileName;
@@ -104,13 +109,13 @@ int win32_host::file_open(const char* path, int access)
 	if (access == host_open_write) desired = GENERIC_WRITE;
 	else if (access == host_open_read_write) desired = GENERIC_READ | GENERIC_WRITE;
 
-	HANDLE handle = CreateFileA(windows_path, desired, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+	HANDLE handle = CreateFileA(windows_path, desired, share_all, nullptr,
 	                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (handle == INVALID_HANDLE_VALUE && access != host_open_read)
 	{
 		// Some programs ask for write access to files that are read-only on
 		// the host; fall back rather than failing the open.
-		handle = CreateFileA(windows_path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+		handle = CreateFileA(windows_path, GENERIC_READ, share_all, nullptr,
 		                     OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 	}
 	if (handle == INVALID_HANDLE_VALUE) return -1;
@@ -120,7 +125,7 @@ int win32_host::file_open(const char* path, int access)
 		if (files_[i] == INVALID_HANDLE_VALUE)
 		{
 			files_[i] = handle;
-			if (verbose_) printf("[host] open %s -> %d\n", path, i);
+			if (verbose_) report("open", path, i);
 			return i;
 		}
 	}
@@ -133,7 +138,7 @@ int win32_host::file_create(const char* path, uint8_t attributes)
 	char windows_path[MAX_PATH] = {};
 	if (!to_windows_path(path, windows_path, MAX_PATH)) return -1;
 
-	const HANDLE handle = CreateFileA(windows_path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+	const HANDLE handle = CreateFileA(windows_path, GENERIC_READ | GENERIC_WRITE, share_all, nullptr,
 	                                  CREATE_ALWAYS,
 	                                  (attributes & 0x01) ? FILE_ATTRIBUTE_READONLY : FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (handle == INVALID_HANDLE_VALUE) return -1;
@@ -143,7 +148,7 @@ int win32_host::file_create(const char* path, uint8_t attributes)
 		if (files_[i] == INVALID_HANDLE_VALUE)
 		{
 			files_[i] = handle;
-			if (verbose_) printf("[host] create %s -> %d\n", path, i);
+			if (verbose_) report("create", path, i);
 			return i;
 		}
 	}
@@ -183,6 +188,12 @@ int32_t win32_host::file_seek(int handle, int32_t offset, int origin)
 	return int32_t(position);
 }
 
+bool win32_host::file_truncate(int handle)
+{
+	if (handle < 0 || handle >= max_files || files_[handle] == INVALID_HANDLE_VALUE) return false;
+	return SetEndOfFile(files_[handle]) != 0;
+}
+
 bool win32_host::file_delete(const char* path)
 {
 	char windows_path[MAX_PATH] = {};
@@ -196,6 +207,14 @@ bool win32_host::file_rename(const char* from, const char* to)
 	char destination[MAX_PATH] = {};
 	if (!to_windows_path(from, source, MAX_PATH) || !to_windows_path(to, destination, MAX_PATH)) return false;
 	return MoveFileA(source, destination) != 0;
+}
+
+bool win32_host::file_copy(const char* from, const char* to)
+{
+	char source[MAX_PATH] = {};
+	char destination[MAX_PATH] = {};
+	if (!to_windows_path(from, source, MAX_PATH) || !to_windows_path(to, destination, MAX_PATH)) return false;
+	return CopyFileA(source, destination, FALSE) != 0;
 }
 
 bool win32_host::file_info(const char* path, host_file_info& info)
@@ -220,9 +239,12 @@ bool win32_host::file_set_attributes(const char* path, uint8_t attributes)
 {
 	char windows_path[MAX_PATH] = {};
 	if (!to_windows_path(path, windows_path, MAX_PATH)) return false;
-	DWORD flags = FILE_ATTRIBUTE_NORMAL;
-	if (attributes & 0x01) flags = FILE_ATTRIBUTE_READONLY;
-	return SetFileAttributesA(windows_path, flags) != 0;
+	DWORD flags = 0;
+	if (attributes & 0x01) flags |= FILE_ATTRIBUTE_READONLY;
+	if (attributes & 0x02) flags |= FILE_ATTRIBUTE_HIDDEN;
+	if (attributes & 0x04) flags |= FILE_ATTRIBUTE_SYSTEM;
+	if (attributes & 0x20) flags |= FILE_ATTRIBUTE_ARCHIVE;
+	return SetFileAttributesA(windows_path, flags != 0 ? flags : FILE_ATTRIBUTE_NORMAL) != 0;
 }
 
 int win32_host::find_first(const char* pattern, uint8_t attributes, host_file_info& info)
@@ -366,4 +388,11 @@ void win32_host::code_commit(void* code, uint32_t size)
 void win32_host::trace(const char* text)
 {
 	if (verbose_) printf("[host] %s\n", text);
+}
+
+void win32_host::report(const char* what, const char* path, int handle)
+{
+	char line[320] = {};
+	snprintf(line, sizeof(line), "%s %s -> %d", what, path, handle);
+	trace(line);
 }

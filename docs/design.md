@@ -12,7 +12,7 @@ Four pieces, with a hard boundary between the first and the rest:
 | `src/` | The emulator. Platform independent: no Windows headers, no file system, no threads. Builds `libdos`. |
 | `host/` | The Windows side of `host_services`: one directory presented as the emulated drive. |
 | `app/` | dui, the platform-h host. Owns the window, picture, sound and menus through `pf::`. |
-| `cli/` | demu, a console harness that drives the library headlessly and doubles as the debugger. |
+| `cli/` | demu, a console harness that drives the library headlessly and doubles as the debugger, and the runner that builds MS-DOS with its 1988 toolchain (`runner.cpp`, with LIB's stand-in in `lib-omf.c`). |
 | `cc/` | A C compiler targeting 16-bit DOS. Platform independent, and like `src/` it opens no files. |
 | `shell/` | A DOS command interpreter written in C and built by `cc/`. |
 
@@ -117,6 +117,22 @@ Cycle counts are approximate: a base cost per opcode class plus the effective
 address and branch penalties. They are good enough to pace the timer and the
 retrace status, and they are not claimed to be more than that.
 
+### Processor models
+
+`machine::set_cpu_model` picks what the interpreter is, and `machine_reset`
+keeps it. The default, `i386`, is everything above. `i80186` drops the 386's
+two-byte opcodes. The two 8086 models are for software that has to run on an
+IBM PC: they **stop the machine** - `machine_fault`, with the opcode and its
+CS:IP in `error()` - at any instruction an 8088 does not have, rather than
+running it, because a program quietly relying on a newer chip is exactly what
+testing on one is meant to catch. Where an 8086 behaves differently they behave
+like one: `PUSH SP` pushes the decremented value, a shift by CL uses all of CL
+rather than CL mod 32, and segment register fields 4-7 repeat ES-DS. They also
+stop at an encoding that means nothing, where the default only notes it.
+`i8086_strict` additionally refuses the instructions an XT with no coprocessor
+has no business executing - x87 escapes, `WAIT`, `LOCK` and `HLT` - which is
+what the original 1988 build tools are run under, as demu always ran them.
+
 ## Video
 
 `vga_state` holds 256 KiB of display memory **plane-interleaved**: byte
@@ -174,10 +190,19 @@ IRQ 0 at whatever rate the program programmed is the whole point: DOS games
 reprogram it for music and animation, and hard-coding 18.2 Hz makes them run at
 the wrong speed.
 
+The counters are not moved on after every instruction, though: that cost a
+quarter of the time a compiler took to run. `exec` adds each instruction's
+cycles to `pit.pending` and calls `pit_sync` only when they reach `pit.due`,
+the number of cycles until channel 0 next reaches zero. That raises IRQ 0 on
+exactly the instruction stepping every time would, because stepping is
+additive; and since the counters are otherwise stale, anything that looks at
+them - a read or write of the timer's ports, or a change to channel 2's gate
+through port 61h - calls `pit_sync` first.
+
 The two 8259s model interrupt request, in-service and mask registers with real
 priority. `cpu_step` takes a pending interrupt at an instruction boundary when
-IF is set, and the vector goes through the IVT like any other - so if a program
-hooked INT 8, its handler runs.
+IF is set and a request is outstanding, and the vector goes through the IVT
+like any other - so if a program hooked INT 8, its handler runs.
 
 ## Sound
 
@@ -215,6 +240,57 @@ program resets the machine and loads it, keeping only the current directory;
 when the program terminates, `exec` sees `exited` and hands control back to the
 prompt instead of ending the session.
 
+Its built-in commands are not its own: `command.cpp` has them - COPY, DEL,
+REN, TYPE, ECHO, CD, MD, RD, SET, PATH, ATTRIB, DIR, CLS, VER and the rest of
+COMMAND.COM's - writing through a `command_output` the caller supplies. The
+prompt's writes to the screen; the other caller's goes through a program's
+standard handles, which is the next section.
+
+## COMMAND.COM, mapped
+
+A program that needs a shell - NMAKE does, for every command line that is not
+a plain program - EXECs COMMAND.COM with `/C` and the line. There is no
+COMMAND.COM to run, so `exec` hands the line to `command_exec`, which carries
+it out for the caller: a built-in command runs at once, with the caller's own
+handles 0 and 1 pointed at any `<`, `>` or `>>` file for as long as it takes;
+a program is found the way COMMAND.COM finds one - in the current directory,
+then along PATH from the environment the caller passed, `.COM` before `.EXE` -
+and started as the caller's own child through `dos_start_child`, with the
+redirections given to the child's handles instead. The return code of either
+is what AH=4Dh then reports, and IF, FOR and CALL take the rest of their line
+as a command of their own. Pipes and batch files are refused rather than
+pretended.
+
+A host can stand in for a program too. `host_services::run_native` is asked
+first on every EXEC, by the program's name; demu answers for LIB, whose real
+executable is an OS/2 bound one that cannot run here.
+
+## Files and handles
+
+DOS's own shape, because programs depend on it: a **system file table** of
+open files and devices (`dos_state::files`, each with a reference count), and
+in every PSP a **handle table** - 20 bytes at PSP:18h, or a bigger one AH=67h
+moves elsewhere - whose entries index it. A child inherits its parent's handles
+(those not opened with the no-inherit bit), so redirection set up by a parent
+reaches the child; AH=45h and AH=46h make a second handle on the same entry, so
+the two share a position; and a process that ends has its handles closed for
+it. The standard handles start as CON, AUX and PRN, and CON, NUL, AUX, PRN,
+COMn and LPTn are devices by name in any directory, as DOS reserves them.
+
+The console is where the host says it is. By default CON reads the emulated
+keyboard and writes the screen; a host that overrides `console_write` and
+`console_read` - demu - takes it over, and `console_is_device` decides what
+AH=4400h reports, which is how a C runtime knows its output is a file. The
+character functions (AH=01h-0Ch) go through handles 0 and 1, so they follow a
+redirection too.
+
+Names are cut to 8.3 where DOS cuts them - the last component of a file a
+program creates, opens, renames or deletes - so LINK's `ramdrive.map -map` is
+RAMDRIVE.MAP. A directory search's state lives in the program's DTA, with a
+stamp that tells a search DOS has since closed from its successor: a program
+that only wants to know whether a file exists never finishes a search, so one
+for a single name is closed at once, and of the rest the oldest makes way.
+
 ## Running another program
 
 INT 21h AH=4Bh is where the mapping approach earns its keep and where it is
@@ -233,9 +309,16 @@ Two details make it work:
   callback left it. That is what lets a service jump somewhere else entirely
   rather than return.
 
-A process ends through `terminate`, which frees every memory block the child
-owned - that is what the owner field in each MCB is for - and pops the parent
-back. Only when there is no parent left does the machine actually stop.
+A process ends through `terminate`, which closes its handles, puts back the
+INT 22h, 23h and 24h vectors its PSP saved when it started, frees every memory
+block it owned - that is what the owner field in each MCB is for - and pops the
+parent back. Only when there is no parent left does the machine actually stop.
+
+A child gets its own copy of the environment - the block the parent passed, or
+the parent's own - with a count of 1 and its full path after it, which is where
+a C runtime finds `argv[0]`; and PSP:0002 is the end of the block it was given,
+which is what a C runtime sizes its data segment and heap from. AL=03h loads an
+overlay at a segment the caller owns, relocated by the factor it gives.
 
 ## The C compiler
 

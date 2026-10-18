@@ -3,6 +3,8 @@
 // Command line driver: runs the behavioural test suite, and inspects,
 // disassembles and headlessly runs DOS executables.
 
+#include "cli.h"
+
 #include "../src/machine.h"
 #include "../src/debug.h"
 #include "../host/host-win32.h"
@@ -14,6 +16,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1842,6 +1846,574 @@ namespace
 		check(strcmp(line.text, "mov al,fs:[0010h]") == 0, "disassembles an fs override");
 	}
 
+	// A whole drive in memory, for the tests of handles, redirection and
+	// COMMAND.COM /C: files and directories, wildcard searches, a console the
+	// test can read back, and programs the host stands in for.
+	class ram_host final : public host_services
+	{
+	public:
+		std::map<std::string, std::string> files; // "C:\DIR\NAME.EXT" -> contents
+		std::set<std::string> directories = {"C:\\"};
+		bool takes_console = false;
+		bool console_is_terminal = true;
+		std::string console;
+		std::map<std::string, int> natives; // name -> exit code
+		std::string native_tail;
+
+		int file_open(const char* path, int) override { return files.count(path) != 0 ? open(path) : -1; }
+
+		int file_create(const char* path, uint8_t) override
+		{
+			files[path].clear();
+			return open(path);
+		}
+
+		void file_close(int handle) override
+		{
+			if (valid(handle)) open_[handle].used = false;
+		}
+
+		int file_read(int handle, uint8_t* buffer, int length) override
+		{
+			if (!valid(handle)) return -1;
+			const std::string& data = files[open_[handle].path];
+			int copied = 0;
+			while (copied < length && open_[handle].position < data.size())
+				buffer[copied++] = uint8_t(data[open_[handle].position++]);
+			return copied;
+		}
+
+		int file_write(int handle, const uint8_t* buffer, int length) override
+		{
+			if (!valid(handle)) return -1;
+			std::string& data = files[open_[handle].path];
+			for (int i = 0; i < length; ++i)
+			{
+				size_t& at = open_[handle].position;
+				if (at < data.size()) data[at] = char(buffer[i]);
+				else data += char(buffer[i]);
+				++at;
+			}
+			return length;
+		}
+
+		int32_t file_seek(int handle, int32_t offset, int origin) override
+		{
+			if (!valid(handle)) return -1;
+			const int32_t base = origin == 1 ? int32_t(open_[handle].position)
+			                                 : origin == 2 ? int32_t(files[open_[handle].path].size()) : 0;
+			open_[handle].position = size_t(base + offset);
+			return int32_t(open_[handle].position);
+		}
+
+		bool file_truncate(int handle) override
+		{
+			if (!valid(handle)) return false;
+			files[open_[handle].path].resize(open_[handle].position);
+			return true;
+		}
+
+		bool file_delete(const char* path) override { return files.erase(path) != 0; }
+
+		bool file_rename(const char* from, const char* to) override
+		{
+			if (files.count(from) == 0 || files.count(to) != 0) return false;
+			files[to] = files[from];
+			files.erase(from);
+			return true;
+		}
+
+		bool file_info(const char* path, host_file_info& info) override
+		{
+			const bool file = files.count(path) != 0;
+			if (!file && directories.count(path) == 0) return false;
+			fill(path, file, info);
+			return true;
+		}
+
+		bool file_set_attributes(const char* path, uint8_t) override { return files.count(path) != 0; }
+
+		int find_first(const char* pattern, uint8_t, host_file_info& info) override
+		{
+			const std::string text = pattern;
+			const size_t slash = text.rfind('\\');
+			const std::string directory = text.substr(0, slash + 1);
+			const std::string mask = text.substr(slash + 1);
+			for (int i = 0; i < 32; ++i)
+			{
+				if (searches_[i].used) continue;
+				searches_[i] = search();
+				for (const auto& [path, contents] : files)
+				{
+					(void)contents;
+					if (path.compare(0, directory.size(), directory) != 0) continue;
+					const std::string name = path.substr(directory.size());
+					if (name.find('\\') == std::string::npos && matches(mask, name)) searches_[i].names.push_back(path);
+				}
+				if (searches_[i].names.empty()) return -1;
+				searches_[i].used = true;
+				fill(searches_[i].names[0], true, info);
+				searches_[i].next = 1;
+				return i;
+			}
+			return -1;
+		}
+
+		bool find_next(int search, host_file_info& info) override
+		{
+			if (search < 0 || search >= 32 || !searches_[search].used) return false;
+			if (searches_[search].next >= searches_[search].names.size())
+			{
+				searches_[search].used = false;
+				return false;
+			}
+			fill(searches_[search].names[searches_[search].next++], true, info);
+			return true;
+		}
+
+		void find_close(int search) override
+		{
+			if (search >= 0 && search < 32) searches_[search].used = false;
+		}
+
+		int open_searches() const
+		{
+			int count = 0;
+			for (const search& s : searches_) count += s.used ? 1 : 0;
+			return count;
+		}
+
+		bool make_directory(const char* path) override { return directories.insert(path).second; }
+		bool remove_directory(const char* path) override { return directories.erase(path) != 0; }
+		bool directory_exists(const char* path) override { return directories.count(path) != 0; }
+		uint32_t free_space() override { return 0x100000; }
+
+		void clock(int& year, int& month, int& day, int& weekday, int& hour, int& minute, int& second,
+		           int& hundredths) override
+		{
+			year = 1988;
+			month = 6;
+			day = 15;
+			weekday = 3;
+			hour = 12;
+			minute = second = hundredths = 0;
+		}
+
+		bool console_write(int, const uint8_t* data, int length) override
+		{
+			if (!takes_console) return false;
+			console.append(reinterpret_cast<const char*>(data), size_t(length));
+			return true;
+		}
+
+		int console_read(uint8_t*, int) override { return takes_console ? 0 : -1; }
+		bool console_is_device(int) override { return console_is_terminal; }
+
+		int run_native(const char* name, const char* tail, const char*) override
+		{
+			const auto found = natives.find(name);
+			if (found == natives.end()) return -1;
+			native_tail = tail;
+			return found->second;
+		}
+
+	private:
+		struct open_file
+		{
+			std::string path;
+			size_t position = 0;
+			bool used = false;
+		};
+
+		struct search
+		{
+			std::vector<std::string> names;
+			size_t next = 0;
+			bool used = false;
+		};
+
+		open_file open_[32];
+		search searches_[32];
+
+		bool valid(int handle) const { return handle >= 0 && handle < 32 && open_[handle].used; }
+
+		int open(const char* path)
+		{
+			for (int i = 0; i < 32; ++i)
+			{
+				if (open_[i].used) continue;
+				open_[i] = open_file{path, 0, true};
+				return i;
+			}
+			return -1;
+		}
+
+		void fill(const std::string& path, bool file, host_file_info& info)
+		{
+			info = host_file_info();
+			snprintf(info.name, sizeof(info.name), "%s", path.substr(path.rfind('\\') + 1).c_str());
+			info.size = file ? uint32_t(files[path].size()) : 0;
+			info.directory = !file;
+			info.attributes = file ? 0x20 : 0x10;
+		}
+
+		// DOS wildcards: "*.*" is every name, and otherwise * and ? as usual.
+		static bool matches(const std::string& mask, const std::string& name)
+		{
+			if (mask == "*.*") return true;
+			size_t m = 0;
+			size_t n = 0;
+			size_t star = std::string::npos;
+			size_t resume = 0;
+			while (n < name.size())
+			{
+				if (m < mask.size() && (mask[m] == '?' || mask[m] == name[n]))
+				{
+					++m;
+					++n;
+				}
+				else if (m < mask.size() && mask[m] == '*')
+				{
+					star = m++;
+					resume = n;
+				}
+				else if (star != std::string::npos)
+				{
+					m = star + 1;
+					n = ++resume;
+				}
+				else return false;
+			}
+			while (m < mask.size() && mask[m] == '*') ++m;
+			return m == mask.size();
+		}
+	};
+
+	// Runs a compiled program as C:\TEST.COM on a host until it ends.
+	machine* run_on(machine& m, const std::vector<uint8_t>& image, host_services& host)
+	{
+		m.set_host(&host);
+		if (!m.load_program(image.data(), uint32_t(image.size()), "C:\\TEST.COM", "")) return nullptr;
+		for (int frame = 0; frame < 2000 && !m.exited(); ++frame) m.exec(m.cycles_per_frame());
+		return &m;
+	}
+
+	// The handle table in each PSP, the system file table behind it, devices
+	// by name, names cut to 8.3, and the top of memory a C runtime sizes its
+	// heap from.
+	void test_dos_handles()
+	{
+		{
+			// A COM program and an EXE both get all the memory there is, and
+			// PSP:0002 has to say so.
+			machine m;
+			const uint8_t com[] = {0xcd, 0x20};
+			m.load_program(com, sizeof(com), "C:\\T.COM", "");
+			machine_state& s = m.state();
+			uint16_t psp = s.dos.psp_segment;
+			check_equal(read16(s, psp, 2), uint16_t(psp + read16(s, uint16_t(psp - 1), 3)),
+			            "PSP:0002 is the end of a COM program's block");
+
+			uint8_t exe[0x22] = {'M', 'Z', 0x22, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0xff, 0xff};
+			exe[0x20] = 0xcd;
+			exe[0x21] = 0x20;
+			m.load_program(exe, sizeof(exe), "C:\\T.EXE", "");
+			psp = s.dos.psp_segment;
+			check_equal(read16(s, psp, 2), uint16_t(psp + read16(s, uint16_t(psp - 1), 3)),
+			            "PSP:0002 is the end of an EXE program's block");
+			check(read16(s, psp, 2) > 0x9000, "an EXE asking for everything gets everything");
+		}
+
+		const char* handles =
+			"int __int21(int ax, int bx, int cx, int dx);\n"
+			"int main(void) {\n"
+			"  int h = __int21(0x3c00, 0, 0, (int)\"OUT.TXT\");\n"
+			"  int d;\n"
+			"  __int21(0x4000, h, 2, (int)\"AB\");\n"
+			"  d = __int21(0x4500, h, 0, 0);\n"
+			"  __int21(0x4000, d, 1, (int)\"C\");\n"
+			"  __int21(0x3e00, d, 0, 0);\n"
+			"  __int21(0x4600, h, 1, 0);\n"
+			"  __int21(0x0900, 0, 0, (int)\"D$\");\n"
+			"  __int21(0x3e00, h, 0, 0);\n"
+			"  h = __int21(0x3c00, 0, 0, (int)\"LONGFILENAME.TEXT\");\n"
+			"  __int21(0x3e00, h, 0, 0);\n"
+			"  h = __int21(0x3d01, 0, 0, (int)\"NUL\");\n"
+			"  __int21(0x4000, h, 5, (int)\"lost!\");\n"
+			"  __int21(0x3e00, h, 0, 0);\n"
+			"  return 0;\n"
+			"}\n";
+		std::vector<uint8_t> image;
+		check(compile_text(handles, image, "handles.c"), "the handles program compiles");
+		if (!image.empty())
+		{
+			ram_host host;
+			machine m;
+			run_on(m, image, host);
+			check(host.files["C:\\OUT.TXT"] == "ABCD",
+			      "a duplicated handle and a forced one share the file and its position");
+			check(host.files.count("C:\\LONGFILE.TEX") != 0, "a created name is cut to 8.3");
+			check(host.files.count("C:\\NUL") == 0, "NUL is the device, in any directory");
+			int open = 0;
+			for (const dos_file& file : m.state().dos.files) open += file.references > 0 && !file.permanent ? 1 : 0;
+			check(open == 0, "a program's files are all closed when it ends");
+		}
+	}
+
+	// COMMAND.COM /C, carried out natively: built-in commands, redirection, a
+	// program found along PATH and its exit code, a host's own program, and
+	// the console a host takes over.
+	void test_command_line()
+	{
+		const char* kid =
+			"int __int21(int ax, int bx, int cx, int dx);\n"
+			"int main(void) {\n"
+			"  unsigned char *tail = (unsigned char *)0x80;\n"
+			"  __int21(0x4000, 1, tail[0], 0x81);\n"
+			"  return 3;\n"
+			"}\n";
+		const char* parent =
+			"int __int21(int ax, int bx, int cx, int dx);\n"
+			"unsigned __seg(void);\n"
+			"extern int __cf;\n"
+			"char tail[130];\n"
+			"unsigned block[7];\n"
+			"int run(char *line) {\n"
+			"  int n = 0;\n"
+			"  while (line[n] != 0) { tail[n + 1] = line[n]; ++n; }\n"
+			"  tail[0] = n; tail[n + 1] = 13;\n"
+			"  block[0] = 0; block[1] = (unsigned)tail; block[2] = __seg();\n"
+			"  block[3] = 0x5c; block[4] = __seg(); block[5] = 0x6c; block[6] = __seg();\n"
+			"  __int21(0x4b00, (int)block, 0, (int)\"C:\\\\COMMAND.COM\");\n"
+			"  if (__cf) return 9;\n"
+			"  return __int21(0x4d00, 0, 0, 0) & 0xff;\n"
+			"}\n"
+			"int main(void) {\n"
+			"  int code;\n"
+			"  run(\" /C echo hello > HELLO.TXT\");\n"
+			"  run(\" /C copy /b A.TXT+B.TXT C.TXT\");\n"
+			"  run(\" /C ren C.TXT D.TXT\");\n"
+			"  run(\" /C del A.TXT\");\n"
+			"  run(\" /C if exist D.TXT echo yes> E.TXT\");\n"
+			"  run(\" /C if not exist A.TXT type B.TXT > F.TXT\");\n"
+			"  code = run(\" /C kid one two>KID.TXT\");\n"
+			"  __int21(0x0200, 0, 0, '0' + code);\n"
+			"  code = run(\" /C tool x\");\n"
+			"  __int21(0x0200, 0, 0, '0' + code);\n"
+			"  code = run(\" /C nosuch\");\n"
+			"  __int21(0x0200, 0, 0, '0' + code);\n"
+			"  return 0;\n"
+			"}\n";
+
+		std::vector<uint8_t> kid_image;
+		std::vector<uint8_t> image;
+		check(compile_text(kid, kid_image, "kid.c"), "the child program compiles");
+		check(compile_text(parent, image, "command.c"), "the COMMAND.COM /C program compiles");
+		if (kid_image.empty() || image.empty()) return;
+
+		ram_host host;
+		host.files["C:\\A.TXT"] = "aa";
+		host.files["C:\\B.TXT"] = "bb";
+		host.directories.insert("C:\\BIN");
+		host.files["C:\\BIN\\KID.COM"].assign(kid_image.begin(), kid_image.end());
+		host.natives["TOOL"] = 7;
+		host.takes_console = true;
+
+		machine m;
+		const char* environment[] = {"COMSPEC=C:\\COMMAND.COM", "PATH=C:\\BIN"};
+		m.set_environment(environment, 2);
+		run_on(m, image, host);
+		check(host.files["C:\\HELLO.TXT"] == "hello\r\n", "ECHO with its output redirected to a file");
+		check(host.files["C:\\D.TXT"] == "aabb", "COPY /B joins files, and REN renames the result");
+		check(host.files.count("C:\\A.TXT") == 0 && host.files.count("C:\\C.TXT") == 0, "DEL deletes");
+		check(host.files["C:\\E.TXT"] == "yes\r\n", "IF EXIST runs the rest of the line");
+		check(host.files["C:\\F.TXT"] == "bb", "IF NOT EXIST, and TYPE redirected");
+		check(host.files["C:\\KID.TXT"] == " one two", "a program found along PATH gets its tail and its redirection");
+		check(host.console == "        1 File(s) copied\r\n37Bad command or file name\r\n1",
+		      "the exit codes of a program, a host's program and a bad command reach the caller");
+		check(host.native_tail == " x", "a host's own program gets the command tail");
+		check(host.console.find("Bad command or file name") != std::string::npos, "a bad command is reported");
+
+		// Without a host that has taken it, the console is the screen again.
+		machine screen;
+		const char* hello =
+			"int __int21(int ax, int bx, int cx, int dx);\n"
+			"int main(void) { __int21(0x0900, 0, 0, (int)\"on the screen$\"); return 0; }\n";
+		check(compile_text(hello, image, "screen.c"), "the screen program compiles");
+		ram_host plain;
+		run_on(screen, image, plain);
+		char text[4096] = {};
+		screen.text_screen(text, sizeof(text));
+		check(strstr(text, "on the screen") != nullptr, "the console stays on the screen by default");
+	}
+
+	// What a child is given: its own copy of the environment with its path at
+	// the end, AH=47h's directory as DOS returns it, AH=29h, and searches that
+	// are abandoned without running the host out of them.
+	void test_dos_services()
+	{
+		const char* waits = "int main(void) { for (;;) {} return 0; }\n";
+		const char* parent =
+			"int __int21(int ax, int bx, int cx, int dx);\n"
+			"unsigned __seg(void);\n"
+			"unsigned block[7];\n"
+			"char tail[2];\n"
+			"int main(void) {\n"
+			"  tail[0] = 0; tail[1] = 13;\n"
+			"  block[0] = 0; block[1] = (unsigned)tail; block[2] = __seg();\n"
+			"  block[3] = 0x5c; block[4] = __seg(); block[5] = 0x6c; block[6] = __seg();\n"
+			"  __int21(0x4b00, (int)block, 0, (int)\"C:\\\\SUB\\\\WAITS.COM\");\n"
+			"  return 0;\n"
+			"}\n";
+		std::vector<uint8_t> waits_image;
+		std::vector<uint8_t> image;
+		check(compile_text(waits, waits_image, "waits.c"), "the waiting child compiles");
+		check(compile_text(parent, image, "envparent.c"), "the environment parent compiles");
+		if (!waits_image.empty() && !image.empty())
+		{
+			ram_host host;
+			host.directories.insert("C:\\SUB");
+			host.files["C:\\SUB\\WAITS.COM"].assign(waits_image.begin(), waits_image.end());
+			machine m;
+			const char* environment[] = {"COMSPEC=C:\\COMMAND.COM", "TOOL=1"};
+			m.set_environment(environment, 2);
+			m.set_host(&host);
+			m.load_program(image.data(), uint32_t(image.size()), "C:\\TEST.COM", "");
+			for (int frame = 0; frame < 20; ++frame) m.exec(m.cycles_per_frame());
+
+			machine_state& s = m.state();
+			const uint16_t child = s.dos.psp_segment;
+			const uint16_t child_environment = read16(s, child, 0x2c);
+			const uint16_t parent_environment = read16(s, read16(s, child, 0x16), 0x2c);
+			std::string strings;
+			uint16_t offset = 0;
+			while (offset < 400 && !(read8(s, child_environment, offset) == 0 && strings.size() > 0 && strings.back() == '\n'))
+			{
+				const uint8_t ch = read8(s, child_environment, offset++);
+				strings += ch == 0 ? '\n' : char(ch);
+			}
+			char path[64] = {};
+			read_string(s, child_environment, uint16_t(offset + 3), path, sizeof(path));
+			check(child_environment != parent_environment, "a child gets its own copy of the environment");
+			check(strings.find("TOOL=1") != std::string::npos, "the copy has the parent's variables");
+			check(strcmp(path, "C:\\SUB\\WAITS.COM") == 0, "and the child's own path after them");
+		}
+
+		// AH=47h: no drive and no leading backslash.
+		{
+			ram_host host;
+			host.directories.insert("C:\\SUB");
+			machine m;
+			m.set_host(&host);
+			const uint8_t com[] = {0xcd, 0x20};
+			m.load_program(com, sizeof(com), "C:\\T.COM", "");
+			check(m.set_current_directory("C:\\SUB"), "the current directory can be set");
+			machine_state& s = m.state();
+			s.cpu.set_ah(0x47);
+			s.cpu.set_dl(0);
+			s.cpu.set_ds(0x2000);
+			s.cpu.set_si(0);
+			// The service writes its answer and the status into an IRET frame.
+			s.cpu.set_ss(0x3000);
+			s.cpu.set_sp(0x100);
+			dos_interrupt(s, 0x21);
+			char text[64] = {};
+			read_string(s, 0x2000, 0, text, sizeof(text));
+			check(strcmp(text, "SUB") == 0, "AH=47h gives the directory without a leading backslash");
+		}
+
+		// AH=29h: the drive, the name and the extension, padded with spaces.
+		{
+			machine m;
+			const uint8_t com[] = {0xcd, 0x20};
+			m.load_program(com, sizeof(com), "C:\\T.COM", "");
+			machine_state& s = m.state();
+			const char* name = " a:file.t*";
+			for (int i = 0; name[i] != 0 || i == 0; ++i) write8(s, 0x2000, uint16_t(i), uint8_t(name[i]));
+			write8(s, 0x2000, uint16_t(std::strlen(name)), 0);
+			s.cpu.set_ax(0x2901);
+			s.cpu.set_ds(0x2000);
+			s.cpu.set_si(0);
+			s.cpu.set_es(0x2000);
+			s.cpu.set_di(0x100);
+			dos_interrupt(s, 0x21);
+			char fcb[13] = {};
+			for (int i = 0; i < 12; ++i) fcb[i] = char(read8(s, 0x2000, uint16_t(0x100 + i)));
+			check(fcb[0] == 1 && std::memcmp(fcb + 1, "FILE    T??", 11) == 0, "AH=29h parses a drive, a name and a wildcard");
+			check_equal(s.cpu.al(), 1, "AH=29h reports the wildcard");
+		}
+
+		// A program that only asks whether files exist never finishes its
+		// searches; the host still does not run out of them.
+		{
+			const char* probe =
+				"int __int21(int ax, int bx, int cx, int dx);\n"
+				"extern int __cf;\n"
+				"int main(void) {\n"
+				"  int i;\n"
+				"  int found = 0;\n"
+				"  for (i = 0; i < 40; ++i) { __int21(0x4e00, 0, 0, (int)\"*.TXT\"); if (!__cf) ++found; }\n"
+				"  for (i = 0; i < 40; ++i) { __int21(0x4e00, 0, 0, (int)\"ONE.TXT\"); if (!__cf) ++found; }\n"
+				"  __int21(0x0200, 0, 0, found == 80 ? 'Y' : 'N');\n"
+				"  return 0;\n"
+				"}\n";
+			check(compile_text(probe, image, "probe.c"), "the search program compiles");
+			ram_host host;
+			host.files["C:\\ONE.TXT"] = "1";
+			host.files["C:\\TWO.TXT"] = "2";
+			host.takes_console = true;
+			machine m;
+			run_on(m, image, host);
+			check(host.console == "Y", "abandoned searches do not run the host out of searches");
+			check(host.open_searches() <= dos_max_searches, "no more searches are left open than DOS keeps");
+		}
+	}
+
+	// The processor models: the 8086 ones stop at an instruction an 8088
+	// does not have, and behave like an 8086 where it differs.
+	void test_cpu_models()
+	{
+		{
+			machine m;
+			m.set_cpu_model(cpu_model::i8086_strict);
+			const uint8_t pusha[] = {0x60};
+			load_code(m, pusha, sizeof(pusha));
+			step(m, 1);
+			check(m.faulted() && strstr(m.error(), "60h") != nullptr, "an 8086 stops at PUSHA");
+		}
+		{
+			machine m;
+			m.set_cpu_model(cpu_model::i8086_strict);
+			const uint8_t escape[] = {0xd9, 0xe8}; // fld1
+			load_code(m, escape, sizeof(escape));
+			step(m, 1);
+			check(m.faulted(), "the strict model stops at a coprocessor instruction");
+		}
+		{
+			machine m;
+			m.set_cpu_model(cpu_model::i8086);
+			const uint8_t escape[] = {0xd9, 0xe8, 0x90};
+			load_code(m, escape, sizeof(escape));
+			step(m, 2);
+			check(!m.faulted(), "a plain 8086 executes an escape as a no-op");
+		}
+		for (const cpu_model model : {cpu_model::i8086, cpu_model::i386})
+		{
+			machine m;
+			m.set_cpu_model(model);
+			// push sp / pop ax / mov cl,21h / mov bx,1 / shl bx,cl
+			const uint8_t code[] = {0x54, 0x58, 0xb1, 0x21, 0xbb, 0x01, 0x00, 0xd3, 0xe3};
+			load_code(m, code, sizeof(code));
+			step(m, 5);
+			const cpu_state& c = m.state().cpu;
+			const bool is_8086 = model == cpu_model::i8086;
+			check_equal(c.ax(), is_8086 ? 0xfffc : 0xfffe, is_8086 ? "an 8086 pushes SP after the decrement"
+			                                                     : "a 386 pushes SP as it was");
+			check_equal(c.bx(), is_8086 ? 0 : 2, is_8086 ? "an 8086 shifts by all of CL" : "a 386 shifts by CL mod 32");
+			check(!m.faulted(), "neither stops");
+		}
+	}
+
 	int run_tests()
 	{
 		test_cpu();
@@ -1868,6 +2440,10 @@ namespace
 		test_native_backend();
 		test_keyboard();
 		test_disassembler();
+		test_dos_handles();
+		test_command_line();
+		test_dos_services();
+		test_cpu_models();
 
 		printf("%d checks, %d failures\n", checks, failures);
 		return failures == 0 ? 0 : 1;
@@ -1988,54 +2564,58 @@ namespace
 		return 0;
 	}
 
-	int show_info(const char* path)
-	{
-		uint8_t* data = nullptr;
-		uint32_t size = 0;
-		if (!read_file(path, data, size))
-		{
-			printf("Cannot read %s\n", path);
-			return 1;
-		}
+}
 
-		printf("%s, %u bytes\n", path, size);
-		// The loader takes any file that starts with MZ for an executable, so
-		// one too short to have a header is described as a broken one, not as
-		// a COM file it will never be run as.
-		if (size >= 2 && size < 0x20 && data[0] == 'M' && data[1] == 'Z')
-		{
-			printf("  format             MZ executable with a truncated header; it will not load\n");
-		}
-		else if (size >= 0x20 && data[0] == 'M' && data[1] == 'Z')
-		{
-			const auto word = [&](uint32_t offset) { return uint16_t(data[offset] | (data[offset + 1] << 8)); };
-			const uint32_t image_length = uint32_t(word(0x04)) * 512 -
-				(word(0x02) != 0 ? (512 - word(0x02)) : 0);
-			printf("  format             MZ executable\n");
-			printf("  image size         %u bytes (%u header, %u body)\n", image_length,
-			       unsigned(word(0x08)) * 16, image_length - unsigned(word(0x08)) * 16);
-			printf("  relocations        %u at %04Xh\n", word(0x06), word(0x18));
-			printf("  extra paragraphs   min %u, max %u\n", word(0x0a), word(0x0c));
-			printf("  entry point        CS:IP %04X:%04X\n", word(0x16), word(0x14));
-			printf("  initial stack      SS:SP %04X:%04X\n", word(0x0e), word(0x10));
-			printf("  memory needed      %u KiB\n",
-			       (image_length - unsigned(word(0x08)) * 16 + unsigned(word(0x0a)) * 16 + 1023) / 1024);
-			if (word(0x18) >= 0x40 && size >= 0x40)
-			{
-				const uint32_t extended = uint32_t(data[0x3c] | (data[0x3d] << 8) |
-					(data[0x3e] << 16) | (data[0x3f] << 24));
-				if (extended + 2 < size && data[extended] == 'N' && data[extended + 1] == 'E')
-					printf("  note               contains a Windows NE image\n");
-			}
-		}
-		else
-		{
-			printf("  format             COM (loaded at PSP:0100)\n");
-		}
-		delete[] data;
-		return 0;
+int show_info(const char* path)
+{
+	uint8_t* data = nullptr;
+	uint32_t size = 0;
+	if (!read_file(path, data, size))
+	{
+		printf("Cannot read %s\n", path);
+		return 1;
 	}
 
+	printf("%s, %u bytes\n", path, size);
+	// The loader takes any file that starts with MZ for an executable, so
+	// one too short to have a header is described as a broken one, not as
+	// a COM file it will never be run as.
+	if (size >= 2 && size < 0x20 && data[0] == 'M' && data[1] == 'Z')
+	{
+		printf("  format             MZ executable with a truncated header; it will not load\n");
+	}
+	else if (size >= 0x20 && data[0] == 'M' && data[1] == 'Z')
+	{
+		const auto word = [&](uint32_t offset) { return uint16_t(data[offset] | (data[offset + 1] << 8)); };
+		const uint32_t image_length = uint32_t(word(0x04)) * 512 -
+			(word(0x02) != 0 ? (512 - word(0x02)) : 0);
+		printf("  format             MZ executable\n");
+		printf("  image size         %u bytes (%u header, %u body)\n", image_length,
+		       unsigned(word(0x08)) * 16, image_length - unsigned(word(0x08)) * 16);
+		printf("  relocations        %u at %04Xh\n", word(0x06), word(0x18));
+		printf("  extra paragraphs   min %u, max %u\n", word(0x0a), word(0x0c));
+		printf("  entry point        CS:IP %04X:%04X\n", word(0x16), word(0x14));
+		printf("  initial stack      SS:SP %04X:%04X\n", word(0x0e), word(0x10));
+		printf("  memory needed      %u KiB\n",
+		       (image_length - unsigned(word(0x08)) * 16 + unsigned(word(0x0a)) * 16 + 1023) / 1024);
+		if (word(0x18) >= 0x40 && size >= 0x40)
+		{
+			const uint32_t extended = uint32_t(data[0x3c] | (data[0x3d] << 8) |
+				(data[0x3e] << 16) | (data[0x3f] << 24));
+			if (extended + 2 < size && data[extended] == 'N' && data[extended + 1] == 'E')
+				printf("  note               contains a Windows NE image\n");
+		}
+	}
+	else
+	{
+		printf("  format             COM (loaded at PSP:0100)\n");
+	}
+	delete[] data;
+	return 0;
+}
+
+namespace
+{
 	int disassemble_file(const char* path, int count)
 	{
 		uint8_t* data = nullptr;
@@ -2596,7 +3176,8 @@ namespace
 				const int cost = cpu_step(s);
 				s.cycles += uint64_t(cost);
 				spent += uint64_t(cost);
-				pit_step(s, uint64_t(cost));
+				s.pit.pending += uint64_t(cost);
+				if (s.pit.pending >= s.pit.due) pit_sync(s);
 			}
 			const int64_t first = count > capacity ? count - capacity : 0;
 			printf("--- last %lld instructions of %lld ---\n",
@@ -2811,7 +3392,8 @@ namespace
 			"  --no-inline     never copy a body to its call site\n"
 			"  --keep-unused   keep the functions nothing can reach\n"
 			"  --cpu <n>       8086 or 386; a 386 still produces a 16-bit .COM\n"
-			"  --map           list what each function cost, largest first\n");
+			"  --map           list what each function cost, largest first\n\n");
+		runner_usage();
 	}
 }
 
@@ -2824,6 +3406,11 @@ int main(int argc, char** argv)
 	}
 
 	const char* command = argv[1];
+
+	// Anything but one of the -- commands is a program to run, the way the
+	// original demu ran the build tools: demu [options] program [arguments].
+	if (command[0] != '-' || command[1] != '-') return run_dos_program(argc - 1, argv + 1);
+
 	if (strcmp(command, "--test") == 0) return run_tests();
 	if (strcmp(command, "--cc") == 0 && argc > 2)
 	{
@@ -2915,7 +3502,6 @@ int main(int argc, char** argv)
 
 	const char* path = nullptr;
 	if (strcmp(command, "--run") == 0 && argc > 2) path = argv[2];
-	else if (command[0] != '-') path = command;
 	if (path == nullptr)
 	{
 		usage();

@@ -47,8 +47,10 @@ struct machine_state
 
 	uint64_t cycles = 0;
 	uint32_t cpu_hz = 8000000;
+	cpu_model model = cpu_model::i386;
 	bool exited = false;
 	uint8_t exit_code = 0;
+	bool faulted = false; // stopped by the emulator, not by the program; `error` says why
 	bool trace = false;
 	char error[256] = {};
 };
@@ -116,6 +118,10 @@ void io_write8(machine_state& s, uint16_t port, uint8_t value);
 // Called by the CPU when it meets the callback opcode inside one of our stubs.
 void machine_callback(machine_state& s, uint8_t index);
 
+// Stops the machine because of something the program cannot be allowed to do
+// or the emulator cannot do for it, keeping the first reason given.
+void machine_fault(machine_state& s, const char* reason);
+
 // Returns the machine to power-on state, keeping the host and the current
 // directory. `machine::reset` is this plus nothing else.
 void machine_reset(machine_state& s);
@@ -153,6 +159,17 @@ public:
 	void set_host(host_services* host);
 	void reset();
 
+	// Settings that outlive reset(): which processor runs the program, what
+	// INT 21h AH=30h reports, and the environment a program the host starts is
+	// given, as NAME=VALUE strings (none restores the default).
+	void set_cpu_model(cpu_model model);
+	void set_dos_version(uint8_t major, uint8_t minor);
+	bool set_environment(const char* const* variables, int count);
+
+	// Makes a DOS path such as "C:\SRC" the current directory, if the host
+	// has it.
+	bool set_current_directory(const char* dos_path);
+
 	// Loads an MZ or COM image and leaves the CPU at its entry point.
 	bool load_program(const uint8_t* image, uint32_t size, const char* dos_path, const char* command_line);
 
@@ -172,6 +189,7 @@ public:
 
 	bool exited() const;
 	uint8_t exit_code() const;
+	bool faulted() const;
 	const char* error() const;
 
 	const uint32_t* framebuffer() const;

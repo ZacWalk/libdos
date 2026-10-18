@@ -176,6 +176,7 @@ void io_write8(machine_state& s, uint16_t port, uint8_t value)
 		kbd_write(s, port, value);
 		return;
 	case 0x61:
+		pit_sync(s); // the gate decides whether channel 2 has been counting
 		s.kbd.port_61 = value;
 		s.pit.channel[2].gate = (value & 1) != 0;
 		sound_queue_write(s, 0x61, value);
@@ -201,10 +202,57 @@ void machine::set_host(host_services* host)
 	state_->host = host;
 }
 
+void machine::set_cpu_model(cpu_model model)
+{
+	state_->model = model;
+}
+
+void machine::set_dos_version(uint8_t major, uint8_t minor)
+{
+	state_->dos.config.version_major = major;
+	state_->dos.config.version_minor = minor;
+}
+
+bool machine::set_environment(const char* const* variables, int count)
+{
+	dos_config& config = state_->dos.config;
+	int length = 0;
+	for (int i = 0; i < count; ++i)
+	{
+		const int size = int(std::strlen(variables[i])) + 1;
+		if (length + size + 1 > int(sizeof(config.environment))) return false;
+		std::memcpy(config.environment + length, variables[i], size_t(size));
+		length += size;
+	}
+	config.environment_length = length;
+	return true;
+}
+
+bool machine::set_current_directory(const char* dos_path)
+{
+	machine_state& s = *state_;
+	char path[192] = {};
+	dos_resolve_path(s, dos_path, path, sizeof(path));
+	const int drive = path[0] - 'A';
+	if (drive < 0 || drive > 2 || s.host == nullptr || !s.host->directory_exists(path)) return false;
+	snprintf(s.dos.cwd[drive], sizeof(s.dos.cwd[drive]), "%s", path[3] != 0 ? path + 2 : "");
+	s.dos.current_drive = uint8_t(drive);
+	return true;
+}
+
+void machine_fault(machine_state& s, const char* reason)
+{
+	if (s.error[0] == 0) snprintf(s.error, sizeof(s.error), "%s", reason);
+	s.faulted = true;
+	s.exited = true;
+	s.exit_code = 255;
+}
+
 void machine_reset(machine_state& s)
 {
 	host_services* host = s.host;
 	const uint32_t cpu_hz = s.cpu_hz;
+	const cpu_model model = s.model;
 	const bool trace = s.trace;
 
 	// Audio is the host's setting, not the machine's. Losing it here silences
@@ -223,9 +271,11 @@ void machine_reset(machine_state& s)
 	s.cycles = 0;
 	s.exited = false;
 	s.exit_code = 0;
+	s.faulted = false;
 	s.error[0] = 0;
 	s.host = host;
 	s.cpu_hz = cpu_hz;
+	s.model = model;
 	s.trace = trace;
 	s.shell = shell_state();
 
@@ -310,7 +360,8 @@ uint64_t machine::exec(uint64_t budget)
 		const int cost = cpu_step(s);
 		s.cycles += uint64_t(cost);
 		spent += uint64_t(cost);
-		pit_step(s, uint64_t(cost));
+		s.pit.pending += uint64_t(cost);
+		if (s.pit.pending >= s.pit.due) pit_sync(s);
 
 		if (!rendered && s.cycles >= render_at)
 		{
@@ -352,6 +403,7 @@ bool machine::run_program(const char* name, const char* command_line)
 
 bool machine::exited() const { return state_->exited; }
 uint8_t machine::exit_code() const { return state_->exit_code; }
+bool machine::faulted() const { return state_->faulted; }
 const char* machine::error() const { return state_->error; }
 
 const uint32_t* machine::framebuffer() const { return state_->vga.framebuffer; }
