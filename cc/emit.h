@@ -1,7 +1,7 @@
-#ifndef OVRWIN_CC_EMIT_H
-#define OVRWIN_CC_EMIT_H
+#ifndef LIBDOS_CC_EMIT_H
+#define LIBDOS_CC_EMIT_H
 
-/* ovrwin by Zac Walker
+/* libdos by Zac Walker
  *
  * The intermediate structure the back ends share, and the encoder that turns it
  * into 8086 machine code.

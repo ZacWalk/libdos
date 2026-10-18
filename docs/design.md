@@ -1,4 +1,4 @@
-# ovrwin design
+# libdos design
 
 How the emulator is put together and why. For what is *not* built yet, see
 [todo.md](todo.md). For build and usage, see the [README](../README.md).
@@ -9,10 +9,10 @@ Four pieces, with a hard boundary between the first and the rest:
 
 | | |
 |---|---|
-| `src/` | The emulator. Platform independent: no Windows headers, no file system, no threads. Builds `ovrwin_core`. |
+| `src/` | The emulator. Platform independent: no Windows headers, no file system, no threads. Builds `libdos`. |
 | `host/` | The Windows side of `host_services`: one directory presented as the emulated drive. |
-| `app/` | The platform-h host. Owns the window, picture, sound and menus through `pf::`. |
-| `cli/` | A console harness that drives the library headlessly and doubles as the debugger. |
+| `app/` | dui, the platform-h host. Owns the window, picture, sound and menus through `pf::`. |
+| `cli/` | demu, a console harness that drives the library headlessly and doubles as the debugger. |
 | `cc/` | A C compiler targeting 16-bit DOS. Platform independent, and like `src/` it opens no files. |
 | `shell/` | A DOS command interpreter written in C and built by `cc/`. |
 
@@ -296,7 +296,7 @@ plus a disassembly window. It is strictly side-effect free: it reads emulated
 memory directly rather than through the bus, so looking at a machine can never
 acknowledge an interrupt out from under a program.
 
-The disassembler in `debug.cpp` is shared by the CLI, and the CLI's
+The disassembler in `debug.cpp` is shared by demu and dui, and demu's
 `--trace-tail` uses it to keep a ring of the last instructions executed.
 
 ## Rules that keep this working
@@ -309,4 +309,4 @@ The disassembler in `debug.cpp` is shared by the CLI, and the CLI's
    caller and returns.
 4. State a program can observe lives in emulated memory, not in C++ fields.
 5. `cli/main.cpp` is the contract. A green build proves nothing; run
-   `.\dd.ps1 test --label ovrwin`.
+   `.\dd.ps1 test --label libdos`.

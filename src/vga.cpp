@@ -1,4 +1,4 @@
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // VGA/EGA/CGA display adapter. Display memory is held plane-interleaved, the
 // CPU-side write logic implements the graphics controller's four write modes,

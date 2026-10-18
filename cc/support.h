@@ -1,7 +1,7 @@
-#ifndef OVRWIN_CC_SUPPORT_H
-#define OVRWIN_CC_SUPPORT_H
+#ifndef LIBDOS_CC_SUPPORT_H
+#define LIBDOS_CC_SUPPORT_H
 
-/* ovrwin by Zac Walker
+/* libdos by Zac Walker
  *
  * The four things the compiler needs from a standard library once it is C: a
  * bump allocator, a growable array, a sorted table of small integers, and a

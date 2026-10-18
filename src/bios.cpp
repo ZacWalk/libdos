@@ -1,4 +1,4 @@
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // PC BIOS services. Everything a DOS program can reach through INT 10h-1Ah,
 // plus the INT 33h mouse driver. State that programs are known to read behind

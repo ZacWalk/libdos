@@ -1,4 +1,4 @@
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // The machine: memory, the I/O port map, the interrupt stubs that make the
 // emulator's DOS and BIOS reachable through the vector table, and the exec

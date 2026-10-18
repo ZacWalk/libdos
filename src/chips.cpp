@@ -1,4 +1,4 @@
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // 8253 timer, 8259 interrupt controllers and the 8042 keyboard controller.
 // The timer is the important one: DOS games reprogram channel 0 to get a

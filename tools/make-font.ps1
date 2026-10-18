@@ -35,7 +35,7 @@ function Get-BiosGlyphs
 {
     param([string]$Url)
 
-    $issue = Invoke-RestMethod -Uri $Url -Headers @{ 'User-Agent' = 'ovrwin' }
+    $issue = Invoke-RestMethod -Uri $Url -Headers @{ 'User-Agent' = 'libdos' }
     $start = $issue.body.IndexOf('static var Font')
     $end = $issue.body.IndexOf('];', $start)
     if ($start -lt 0 -or $end -lt 0) { throw 'Could not find the font array in the issue body.' }
@@ -170,7 +170,7 @@ for ($code = 0; $code -lt 256; $code++)
 }
 
 $body = @"
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // The 8x8 character generator the text modes render from. Codes 0-127 are the
 // IBM PC BIOS font; the shading blocks and the line-drawing set above 127 are

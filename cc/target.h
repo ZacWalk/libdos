@@ -1,7 +1,7 @@
-#ifndef OVRWIN_CC_TARGET_H
-#define OVRWIN_CC_TARGET_H
+#ifndef LIBDOS_CC_TARGET_H
+#define LIBDOS_CC_TARGET_H
 
-/* ovrwin by Zac Walker
+/* libdos by Zac Walker
  *
  * What the front end has to know about the machine it is compiling for, and
  * nothing else. Everything here is a question the parser genuinely has to ask -

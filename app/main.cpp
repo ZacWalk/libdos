@@ -1,4 +1,4 @@
-// ovrwin by Zac Walker
+// dui by Zac Walker, built on libdos
 //
 // Binds the emulator to the shared platform layer: the window, the menu, the
 // key mapping, the audio stream that paces it and the frame loop. The emulator
@@ -159,7 +159,7 @@ namespace
 		if (s.shell.program[0] != 0) what = s.shell.program;
 		else if (s.shell.active) what = "command prompt";
 
-		g_frame->set_text(std::format("ovrwin - {} - mode {:02X}h {}x{}{}", what, s.vga.mode,
+		g_frame->set_text(std::format("dui - {} - mode {:02X}h {}x{}{}", what, s.vga.mode,
 		                              s.vga.width, s.vga.height, g_paused ? " - paused" : ""));
 	}
 
@@ -190,7 +190,7 @@ namespace
 
 	void report(const std::string_view message)
 	{
-		g_frame->message_box(message, "ovrwin", pf::msg_box_style::ok | pf::msg_box_style::icon_warning);
+		g_frame->message_box(message, "dui", pf::msg_box_style::ok | pf::msg_box_style::icon_warning);
 	}
 
 	// Mounts a folder as the emulated drive and brings the shell up in it.
@@ -313,13 +313,13 @@ namespace
 
 		menu_command help;
 		help.text = "&Help";
-		help.children.emplace_back("&About ovrwin", menu_about, []
+		help.children.emplace_back("&About dui", menu_about, []
 		{
 			g_frame->message_box(
-				"ovrwin\n\nA DOS program emulator: 8086/80186, VGA/EGA/CGA, AdLib and "
+				"dui\n\nA DOS program emulator built on libdos: 8086/80186, VGA/EGA/CGA, AdLib and "
 				"PC speaker, with DOS and BIOS services mapped rather than emulated.\n\n"
-				"https://github.com/ZacWalk/ovrwin",
-				"About ovrwin", pf::msg_box_style::ok);
+				"https://github.com/ZacWalk/libdos",
+				"About dui", pf::msg_box_style::ok);
 		});
 
 		return {std::move(file), std::move(machine_menu), std::move(view), std::move(help)};
@@ -708,7 +708,7 @@ namespace
 		check(!g_running, "a close message ends the session");
 		if (g_running) g_frame->close();
 
-		pf::write_stdout(std::format("ovrwin app: {} (client {}x{}, mode {}x{} at {}x{})\n",
+		pf::write_stdout(std::format("dui: {} (client {}x{}, mode {}x{} at {}x{})\n",
 		                             failures == 0 ? "PASS" : "FAIL", g_client.cx, g_client.cy,
 		                             g_layout.width, g_layout.height, g_layout.scale_x, g_layout.scale_y));
 
@@ -719,7 +719,7 @@ namespace
 app_init_result app_init(const pf::window_frame_ptr& main_frame,
                          const std::span<const std::string_view> params)
 {
-	pf::config_set_app_name("ovrwin");
+	pf::config_set_app_name("dui");
 
 	bool headless = false;
 	std::string_view target;
@@ -738,7 +738,7 @@ app_init_result app_init(const pf::window_frame_ptr& main_frame,
 	g_reactor = std::make_shared<app_reactor>();
 	main_frame->set_reactor(g_reactor);
 	main_frame->set_menu(build_menu());
-	main_frame->set_text("ovrwin");
+	main_frame->set_text("dui");
 
 	// A self-check is over in a moment; opening the sound device would only add
 	// a second of silence to it.

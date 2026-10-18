@@ -1,7 +1,7 @@
-#ifndef OVRWIN_CC_SOURCES_H
-#define OVRWIN_CC_SOURCES_H
+#ifndef LIBDOS_CC_SOURCES_H
+#define LIBDOS_CC_SOURCES_H
 
-/* ovrwin by Zac Walker
+/* libdos by Zac Walker
  *
  * The compiler never opens a file. A caller supplies source text the same way
  * a host supplies the emulated drive, and keeps every file it hands over alive

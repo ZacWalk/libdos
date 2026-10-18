@@ -1,6 +1,6 @@
 #pragma once
 
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // The whole emulated PC as one plain-data struct, plus the small class a host
 // embeds. `machine` owns exactly one `machine_state` and is non-copyable.

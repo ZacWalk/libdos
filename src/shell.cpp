@@ -1,4 +1,4 @@
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // The built-in command interpreter. It writes to the emulated text screen and
 // reads the emulated keyboard buffer, so it looks and behaves like a program
@@ -255,7 +255,7 @@ namespace
 		write_line(s, "  DIR [path]     list a directory        CLS    clear the screen");
 		write_line(s, "  CD [path]      change directory        VER    version");
 		write_line(s, "  MD / RD path   make/remove directory   MEM    free memory");
-		write_line(s, "  DEL file       delete a file           EXIT   close ovrwin");
+		write_line(s, "  DEL file       delete a file           EXIT   quit");
 		write_line(s, "  TYPE file      show a file");
 		write_line(s, "");
 		write_line(s, "  Type the name of an .EXE or .COM file to run it.");
@@ -335,7 +335,7 @@ namespace
 		}
 		else if (equals(command, "ver"))
 		{
-			write_line(s, "ovrwin - DOS 5.00 compatible");
+			write_line(s, "libdos - DOS 5.00 compatible");
 		}
 		else if (equals(command, "md") || equals(command, "mkdir"))
 		{
@@ -370,7 +370,7 @@ void shell_start(machine_state& s)
 	s.exited = false;
 
 	vga_set_mode(s, 3);
-	write_line(s, "ovrwin");
+	write_line(s, "libdos");
 	write_line(s, "");
 	write_line(s, "Type HELP for a list of commands, or the name of a program to run it.");
 	write_line(s, "You can also drop a program or a folder onto the window.");

@@ -1,4 +1,4 @@
-/* ovrwin by Zac Walker
+/* libdos by Zac Walker
  *
  * The support library described in support.h. Nothing here knows anything
  * about C, tokens or code generation; it is the memory model the rest of the

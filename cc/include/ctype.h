@@ -1,5 +1,5 @@
-#ifndef __OVRWIN_CTYPE_H__
-#define __OVRWIN_CTYPE_H__
+#ifndef __LIBDOS_CTYPE_H__
+#define __LIBDOS_CTYPE_H__
 
 int isalpha(int c);
 int isdigit(int c);

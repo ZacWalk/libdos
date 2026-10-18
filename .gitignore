@@ -20,7 +20,7 @@ debug_trace.log
 # Reference material and sample programs, kept locally only
 inspiration/
 
-# Programs built by ovrwincc
+# Programs built by libdos cc
 shell/*.COM
 *.bmp
 /.dd/state/

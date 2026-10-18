@@ -1,6 +1,6 @@
 #pragma once
 
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // A minimal command interpreter. It is not a DOS program - there is nowhere to
 // load one from before a drive is mounted - but it uses the same DOS services

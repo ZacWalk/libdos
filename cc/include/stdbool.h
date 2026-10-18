@@ -1,5 +1,5 @@
-#ifndef __OVRWIN_STDBOOL_H__
-#define __OVRWIN_STDBOOL_H__
+#ifndef __LIBDOS_STDBOOL_H__
+#define __LIBDOS_STDBOOL_H__
 
 #define bool int
 #define true 1

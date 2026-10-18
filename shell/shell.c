@@ -1,6 +1,6 @@
-/* ovrwin by Zac Walker
+/* libdos by Zac Walker
  *
- * A DOS command interpreter, compiled by ovrwincc and run as a real DOS
+ * A DOS command interpreter, compiled by libdos cc and run as a real DOS
  * program inside the emulator. The command set follows COMMAND.COM: the
  * internal commands are the ones in its COMTAB, and an external command is
  * looked for as .COM then .EXE, exactly as DOS does.
@@ -254,7 +254,7 @@ void execute(void)
 	}
 	if (match(command, "ver"))
 	{
-		putln("ovrwin shell, DOS 5.00 compatible");
+		putln("libdos shell, DOS 5.00 compatible");
 		return;
 	}
 	if (match(command, "echo"))
@@ -324,7 +324,7 @@ int main(void)
 	argument[at] = 0;
 
 	putln("");
-	putln("ovrwin shell - type HELP for a list of commands");
+	putln("libdos shell - type HELP for a list of commands");
 	putln("");
 
 	if (argument[0] != 0)

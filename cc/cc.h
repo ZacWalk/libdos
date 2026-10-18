@@ -1,7 +1,7 @@
-#ifndef OVRWIN_CC_H
-#define OVRWIN_CC_H
+#ifndef LIBDOS_CC_H
+#define LIBDOS_CC_H
 
-/* ovrwin by Zac Walker
+/* libdos by Zac Walker
  *
  * A small C compiler that targets 16-bit real mode and emits a DOS .COM. It
  * exists so the DOS side of this project can be written in C rather than in

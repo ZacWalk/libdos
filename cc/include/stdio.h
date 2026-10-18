@@ -1,5 +1,5 @@
-#ifndef __OVRWIN_STDIO_H__
-#define __OVRWIN_STDIO_H__
+#ifndef __LIBDOS_STDIO_H__
+#define __LIBDOS_STDIO_H__
 
 #include <stddef.h>
 

@@ -1,4 +1,4 @@
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // Disassembler and debug capture. Everything here reads emulated memory
 // directly rather than through the bus helpers, so looking at a machine can

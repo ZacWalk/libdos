@@ -1,4 +1,4 @@
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // Windows implementation of host_services. One directory is the emulated
 // drive; a program cannot see or reach anything outside it.

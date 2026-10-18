@@ -1,4 +1,4 @@
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // AdLib (YM3812 / OPL2) synthesis and the PC speaker. Register writes are
 // timestamped with the machine's cycle counter and replayed against the sample
