@@ -42,6 +42,27 @@ The line is drawn at what programs can observe:
 - Things only reachable through a documented call are held in C++ (the file
   handle table, the search contexts).
 
+### Boot mode
+
+The one exception, for testing a DOS rather than running programs on one.
+`power_on` sets `machine_state::boot_mode`, and a reset then builds an IBM PC
+5150 instead: the BIOS's vectors up to INT 1Fh and nothing above them, the
+ROM's model byte (`FF`) and date, the diskette parameter table at `F000:EFC7`,
+and the reset vector at `F000:FFF0` holding a callback that powers the machine
+off and on - which is where FDISK's restart, a far jump to `FFFF:0000`, lands.
+`dos_reset` is not run and `machine_callback` never reaches `dos_interrupt`:
+the DOS on the disk installs its own INT 21h, and a vector it has not set is
+zero, as on the real machine.
+
+The BIOS is libdos's own and stays high-level. INT 13h serves drives a host
+attaches as `block_device`s - two floppies, as an XT has them, and two hard
+disks as an XT-IDE card's BIOS presents them: CHS, plus the LBA calls when the
+drive is given them - and INT 19h reads the boot drive's first sector to
+`0000:7C00` and jumps to it. Nothing is timed: a sector arrives the moment it
+is asked for, so a whole FORMAT runs in a second. A host that wants to watch
+the console has `video_text`, every character through INT 10h in order, which
+is what demu's `--expect` reads.
+
 ## The callback opcode
 
 Every interrupt vector the emulator services points at a stub in a reserved

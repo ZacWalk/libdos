@@ -62,6 +62,20 @@ when a review turns one up, add it here rather than in AGENTS.md.
   than any program's, and doing it here would put a test on every access, so
   it was not carried over; `--trace-tail` and the suite cover that ground.
 
+## Boot mode
+
+- The BIOS is an XT's with an XT-IDE card's disks, not the 5150's own to the
+  letter: INT 13h answers AH=08h and 15h for a floppy, and there is no DMA
+  boundary error, no change line, and no AH=17h or 18h for formatting a
+  1.2 MB or 1.44 MB disk in its drive.
+- INT 14h and 17h, the serial and printer BIOS, are stubs, and there is no
+  Ctrl+Alt+Del: a test restarts with `--reboot`.
+- The display adapter is libdos's VGA, set to mode 3; there is no MDA or CGA
+  with its own quirks.
+- `--expect` sees only what goes through INT 10h. A program writing straight
+  to video memory is on `--screen` but not in what `--expect` searches.
+- dui has no boot mode.
+
 ## Disk images
 
 - dimg makes a new image; it cannot add a file to one that exists, make a
