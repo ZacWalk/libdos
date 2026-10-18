@@ -4561,6 +4561,16 @@ static void gen_emit_runtime(generator* g)
 		gen_emit_interrupt_call(g, 0x21, cf, bx, cx, dx, 1);
 		SYMBOL_AT(g, (int)(int21si)).finish = emit_here(&g->e_);
 
+		// The BIOS disk services, for a program asking about its drives; the
+		// SI form is for AH=48h, which fills the buffer there.
+		const int int13 = thunk("__int13", g->t_int_);
+		gen_emit_interrupt_call(g, 0x13, cf, bx, cx, dx, 0);
+		SYMBOL_AT(g, (int)(int13)).finish = emit_here(&g->e_);
+
+		const int int13si = thunk("__int13si", g->t_int_);
+		gen_emit_interrupt_call(g, 0x13, cf, bx, cx, dx, 1);
+		SYMBOL_AT(g, (int)(int13si)).finish = emit_here(&g->e_);
+
 		// The segment everything lives in, which a program needs when it hands
 		// DOS a far pointer.
 		const int seg = thunk("__seg", g->t_uint_);

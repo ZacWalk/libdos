@@ -389,11 +389,13 @@ Five things are worth knowing:
   and a structure read straight off disk has to match the file.
 
 The emitted program starts by shrinking its own memory block through AH=4Ah,
-so that a program it starts has somewhere to load. The runtime is three
-interrupt thunks (`__int21`, `__int21si`, `__int10`) and `__seg`; everything
-else is ordinary C. There is no linker, so a program that wants the C library
-in `cc/lib/libc.c` includes it rather than linking against it, and the headers
-in `cc/include` are declarations only.
+so that a program it starts has somewhere to load. The runtime is five
+interrupt thunks (`__int21`, `__int21si`, `__int10`, and `__int13` and
+`__int13si` for the BIOS disk services) and `__seg`, and a thunk the program
+never calls is not laid out; everything else is ordinary C. There is no
+linker, so a program that wants the C library in `cc/lib/libc.c` includes it
+rather than linking against it, and the headers in `cc/include` are
+declarations only.
 
 ## Disk images
 
