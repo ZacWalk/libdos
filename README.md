@@ -86,6 +86,9 @@ for Debug. Build trees go under `build/<preset>/`. The platform layer is pulled
 in by `FetchContent` at the revision pinned in `CMakeLists.txt`, except that a
 sibling `../platform-h` checkout is used instead when one exists.
 
+Every [release](https://github.com/ZacWalk/libdos/releases) has the three for
+Windows x64 in a zip, with its SHA-256 alongside; dos4z's build downloads one.
+
 ## dui
 
 Drop a program or a folder onto the window, open one through **File**, or pass
