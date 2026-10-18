@@ -72,8 +72,8 @@ system or archive attribute.
 ## Build And Validation
 
 Build with the vendored dd driver in PowerShell 7.4+. It sets up the MSVC
-environment itself, so no developer prompt is needed. `build` and `test` cover
-Debug and Release unless one is named:
+environment itself, so no developer prompt is needed. `build` covers Debug and
+Release unless one is named; `test` always builds and runs both:
 
 ```powershell
 .\dd.ps1 test --label libdos        # build + the demu suite and dui's offscreen check
