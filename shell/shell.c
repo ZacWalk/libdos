@@ -31,9 +31,8 @@ void show_prompt(void)
 {
 	cwd[0] = 0;
 	dos_getcwd(cwd);
-	puts("C:");
-	if (cwd[0] == 0) puts("\\");
-	else puts(cwd);
+	puts("C:\\");
+	puts(cwd);
 	puts(">");
 }
 
@@ -280,9 +279,8 @@ void execute(void)
 		{
 			cwd[0] = 0;
 			dos_getcwd(cwd);
-			puts("C:");
-			if (cwd[0] == 0) putln("\\");
-			else putln(cwd);
+			puts("C:\\");
+			putln(cwd);
 			return;
 		}
 		if (!dos_chdir(argument)) putln("Invalid directory");

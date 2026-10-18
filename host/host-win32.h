@@ -3,7 +3,8 @@
 // libdos by Zac Walker
 //
 // Windows implementation of host_services: a single directory is presented to
-// the emulated program as its whole drive. Shared by the GUI app and the CLI.
+// the emulated program as its whole drive. Shared by dui and demu, which adds
+// its terminal and its native programs on top.
 
 #include "../src/host.h"
 
@@ -11,7 +12,7 @@
 
 constexpr int host_max_searches = 32;
 
-class win32_host final : public host_services
+class win32_host : public host_services
 {
 public:
 	win32_host();
@@ -33,8 +34,10 @@ public:
 	int file_read(int handle, uint8_t* buffer, int length) override;
 	int file_write(int handle, const uint8_t* buffer, int length) override;
 	int32_t file_seek(int handle, int32_t offset, int origin) override;
+	bool file_truncate(int handle) override;
 	bool file_delete(const char* path) override;
 	bool file_rename(const char* from, const char* to) override;
+	bool file_copy(const char* from, const char* to) override;
 	bool file_info(const char* path, host_file_info& info) override;
 	bool file_set_attributes(const char* path, uint8_t attributes) override;
 
@@ -55,6 +58,12 @@ public:
 	void code_commit(void* code, uint32_t size) override;
 
 	void trace(const char* text) override;
+
+protected:
+	// One line of the verbose log, through trace() so a subclass decides
+	// where it goes.
+	void report(const char* what, const char* path, int handle);
+	bool verbose() const { return verbose_; }
 
 private:
 	struct search_slot

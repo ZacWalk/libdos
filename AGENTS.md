@@ -25,7 +25,9 @@ covers at a glance.
   audio, dialogs and file paths. It names no operating system, and nothing
   Win32-shaped may go into platform-h to make it easier; see that repo's rules.
 - `host/` and `cli/` (demu) own what is left of Windows: the file system and the
-  console. `host/host-win32.cpp` is shared by dui and demu.
+  console. `host/host-win32.cpp` is shared by dui and demu; demu's program
+  runner (`cli/runner.cpp`) adds the terminal, the fixed date and LIB's
+  stand-in (`cli/lib-omf.c`) on top of it.
 - `cc/` is platform independent too, and opens no files: a caller supplies
   source text through `cc_sources`, the same way a host supplies the drive.
 - `shell/` is C for the emulated machine, not for the host. It is compiled by
@@ -172,6 +174,18 @@ whether a test already encodes the current behaviour:
   function, an unterminated comment or `#if` - with the line an error at the
   end of the file is reported on.
 - The disassembler, which the debugger depends on.
+- DOS for the build tools: PSP:0002 covering the whole program block, the
+  handle tables (a duplicated or forced handle sharing its position, files
+  closed when a program ends), devices by name, names cut to 8.3, a child's
+  own copy of the environment with its path, AH=47h, AH=29h, and searches a
+  program abandons; COMMAND.COM /C's built-in commands, redirection, PATH
+  search, exit codes and a host's own program; and the processor models.
+
+The suite cannot see the biggest consumer: demu builds MS-DOS 4.00 in
+[dos4z](https://github.com/ZacWalk/dos4z) with the original 1988 toolchain,
+and a change to `src/dos.cpp`, `src/command.cpp` or `src/cpu.cpp` should still
+produce every one of that build's binaries byte for byte. dos4z's
+`make-dos.ps1 -LibdosPath ..\libdos` builds with this checkout's demu.
 
 A green build proves nothing on its own - run `.\dd.ps1 test --label libdos`.
 It runs two CTest entries in each configuration: `demu_suite`, the demu

@@ -47,6 +47,7 @@ endif()
 add_library(libdos STATIC
     src/bios.cpp
     src/chips.cpp
+    src/command.cpp
     src/cpu.cpp
     src/debug.cpp
     src/dos.cpp
@@ -83,7 +84,7 @@ if(LIBDOS_BUILD_TOOLS)
     # demu: the command line runner, debugger and test suite. Runs a DOS
     # program headlessly, inspects, disassembles and traces one. Deliberately
     # uses no platform layer.
-    add_executable(demu cli/main.cpp)
+    add_executable(demu cli/main.cpp cli/runner.cpp cli/lib-omf.c)
     target_link_libraries(demu PRIVATE libdos libdos_cc libdos_host)
     list(APPEND libdos_targets demu)
     list(APPEND libdos_executables demu)

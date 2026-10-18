@@ -501,7 +501,8 @@ void debug_capture(const machine_state& s, debug_state& out)
 	out.psp_segment = s.dos.psp_segment;
 	out.dta = s.dos.dta;
 	out.open_files = 0;
-	for (const dos_file& file : s.dos.files) if (file.used && file.device == 0) ++out.open_files;
+	for (const dos_file& file : s.dos.files)
+		if (file.references > 0 && file.device == dos_device_none) ++out.open_files;
 
 	out.free_paragraphs = 0;
 	out.largest_block = 0;
