@@ -27,7 +27,7 @@ Repository: <https://github.com/ZacWalk/libdos>
 
 | Part | Coverage |
 |------|----------|
-| CPU | 8086 and 80186: every documented opcode and addressing mode, the segment wrap, BCD arithmetic, and string instructions that resume correctly after an interrupt |
+| CPU | 8086 and 80186: every documented opcode and addressing mode, the segment wrap, BCD arithmetic, and string instructions that resume correctly after an interrupt. Strict 8086 models stop at anything an IBM PC's 8088 does not have |
 | Memory | The full 1 MiB real-mode space with the MCB chain, PSP and environment block a program expects to walk |
 | VGA / EGA / CGA | 256 KiB of display memory with the graphics controller's four write modes, latches, set/reset and bit mask; text modes, CGA 4/5/6, EGA 0Dh/0Eh/10h, VGA 12h and 13h; the 256-entry DAC and the EGA-compatible palette |
 | Timer | 8253 channels 0 and 2. A game that reprograms channel 0 for a music tick gets IRQ 0 at that rate, not at 18.2 Hz |
@@ -35,7 +35,7 @@ Repository: <https://github.com/ZacWalk/libdos>
 | Keyboard | 8042 controller with scancodes, the BIOS translation layer and the BIOS keyboard buffer, both reachable |
 | Sound | AdLib / OPL2: nine channels, two operators each, four waveforms, envelopes, feedback and both connection modes. PC speaker driven from timer channel 2 |
 | Mouse | INT 33h driver with position, buttons, ranges, motion counters and an on-screen pointer |
-| DOS | INT 21h: console, handle-based file I/O, directory search, memory allocation, the DTA, interrupt vectors, dates and times, `EXEC` for child processes, and the MZ/COM loader with relocation |
+| DOS | INT 21h: console, handle-based file I/O with DOS's per-process handle tables and redirection, directory search, memory allocation, the DTA, interrupt vectors, dates and times, `EXEC` for child processes and overlays, COMMAND.COM /C carried out natively, and the MZ/COM loader with relocation |
 
 It also comes with a C compiler that targets 16-bit DOS, and a shell written in
 C and built with it - see [Building DOS programs](#building-dos-programs).
@@ -163,6 +163,41 @@ before any drive is mounted, and it is there whether or not you have built
 anything.
 
 ## demu
+
+### Running a program
+
+```powershell
+.\exe\demu.exe [options] <program> [arguments]
+```
+
+runs a DOS program the way a command line runs a native one: headlessly, to
+its end, with its console on stdin, stdout and stderr and its exit code
+returned. A host directory is drive C: - `-r <dir>`, or the root of the current
+drive - and nothing outside it can be reached. PATH, INCLUDE, LIB, INIT, TMP,
+TEMP and COUNTRY are passed in with their paths moved onto that drive (`-e`
+adds more), and an entry no DOS program could use, outside the drive or with a
+long name, is left out. The date is fixed, 15 June 1988, so a build comes out
+the same whenever it runs.
+
+That is what builds [dos4z](https://github.com/ZacWalk/dos4z) - MS-DOS 4.00
+from its source, with the original MASM 5.10, CL 5.10, LINK 3.65 and NMAKE -
+and every binary comes out byte for byte as it did under the demu that grew
+into libdos. NMAKE starting COMMAND.COM /C is carried out natively, built-in
+commands, redirection and all; LIB.EXE, an OS/2 bound executable, is stood in
+for by an OMF library manager. The processor is a strict 8086 unless `-cpu`
+says otherwise (`8086`, `186`, `386`), so a tool doing something an 8088
+cannot stops with the reason, rather than quietly doing it.
+
+```powershell
+cd C:\src\dos4z\dos\BOOT
+demu -r C:\src\dos4z C:\src\dos4z\dos\TOOLS\NMAKE.EXE
+```
+
+`-v` reports every DOS call and file open on stderr, `-d` describes the
+executable, and `-shell` reports DOS 4.00 rather than 3.20, for running
+COMMAND.COM itself.
+
+### The debugger and the test suite
 
 `demu.exe --test` runs the behavioural test suite and returns non-zero on
 failure. The same binary is the debugger:

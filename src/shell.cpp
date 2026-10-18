@@ -6,6 +6,7 @@
 // services INT 21h uses - what DIR lists is what a program will find.
 
 #include "machine.h"
+#include "command.h"
 
 #include <cstdio>
 #include <cstring>
@@ -49,179 +50,21 @@ namespace
 		}
 	}
 
-	// Splits the line into a command and the rest, both trimmed.
-	void split_command(const char* line, char* command, int command_size, const char** argument)
+	void screen_output(machine_state& s, const char* text, int length, bool, void*)
 	{
-		while (*line == ' ' || *line == '\t') ++line;
-		int length = 0;
-		while (*line != 0 && *line != ' ' && *line != '\t' && length < command_size - 1)
-			command[length++] = *line++;
-		command[length] = 0;
-		while (*line == ' ' || *line == '\t') ++line;
-		*argument = line;
+		for (int i = 0; i < length; ++i)
+		{
+			if (text[i] == '\r') continue; // the screen writer turns \n into a new line
+			if (text[i] == '\n') vga_write_char(s, 0, '\r', shell_attribute, true);
+			vga_write_char(s, 0, uint8_t(text[i]), shell_attribute, true);
+		}
 	}
 
-	void format_size(uint32_t value, char* out, int out_size)
-	{
-		// Thousands separators, because a bare byte count of a game's data
-		// file is unreadable.
-		char digits[16] = {};
-		snprintf(digits, sizeof(digits), "%u", value);
-		const int length = int(std::strlen(digits));
-		int written = 0;
-		for (int i = 0; i < length && written < out_size - 1; ++i)
-		{
-			if (i > 0 && (length - i) % 3 == 0) out[written++] = ',';
-			out[written++] = digits[i];
-		}
-		out[written] = 0;
-	}
+	void screen_clear(machine_state& s, void*) { vga_set_mode(s, 3); }
 
-	void command_dir(machine_state& s, const char* argument)
-	{
-		if (s.host == nullptr) return;
-
-		char pattern[192] = {};
-		if (argument[0] == 0) dos_resolve_path(s, "*.*", pattern, sizeof(pattern));
-		else
-		{
-			dos_resolve_path(s, argument, pattern, sizeof(pattern));
-			if (s.host->directory_exists(pattern))
-			{
-				const int length = int(std::strlen(pattern));
-				snprintf(pattern + length, sizeof(pattern) - size_t(length), "%s*.*",
-				         pattern[length - 1] == '\\' ? "" : "\\");
-			}
-		}
-
-		char header[96] = {};
-		snprintf(header, sizeof(header), " Directory of %s", pattern);
-		write_line(s, "");
-		write_line(s, header);
-		write_line(s, "");
-
-		host_file_info info;
-		int search = s.host->find_first(pattern, 0x10, info);
-		if (search < 0)
-		{
-			write_line(s, "File not found");
-			write_line(s, "");
-			return;
-		}
-
-		int files = 0;
-		int directories = 0;
-		uint32_t total = 0;
-		do
-		{
-			char name[16] = {};
-			char extension[8] = {};
-			// "." and ".." are names, not an empty name with an extension.
-			const char* dot = std::strchr(info.name, '.');
-			if (dot != nullptr && dot != info.name)
-			{
-				snprintf(name, sizeof(name), "%.*s", int(dot - info.name), info.name);
-				snprintf(extension, sizeof(extension), "%s", dot + 1);
-			}
-			else
-			{
-				snprintf(name, sizeof(name), "%s", info.name);
-			}
-
-			char size[20] = {};
-			if (info.directory)
-			{
-				snprintf(size, sizeof(size), "%s", "<DIR>");
-				++directories;
-			}
-			else
-			{
-				format_size(info.size, size, sizeof(size));
-				++files;
-				total += info.size;
-			}
-
-			char row[80] = {};
-			snprintf(row, sizeof(row), "%-8s %-3s %13s   %02u-%02u-%04u  %2u:%02u",
-			         name, extension, size,
-			         unsigned((info.dos_date >> 5) & 0x0f), unsigned(info.dos_date & 0x1f),
-			         unsigned(1980 + (info.dos_date >> 9)),
-			         unsigned((info.dos_time >> 11) & 0x1f), unsigned((info.dos_time >> 5) & 0x3f));
-			write_line(s, row);
-		}
-		while (s.host->find_next(search, info));
-		s.host->find_close(search);
-
-		char bytes[24] = {};
-		format_size(total, bytes, sizeof(bytes));
-		char summary[96] = {};
-		snprintf(summary, sizeof(summary), "%9d file(s) %14s bytes", files, bytes);
-		write_line(s, summary);
-		char free_text[24] = {};
-		format_size(s.host->free_space(), free_text, sizeof(free_text));
-		snprintf(summary, sizeof(summary), "%9d dir(s)  %14s bytes free", directories, free_text);
-		write_line(s, summary);
-		write_line(s, "");
-	}
-
-	void command_cd(machine_state& s, const char* argument)
-	{
-		if (argument[0] == 0)
-		{
-			char here[96] = {};
-			const char* cwd = s.dos.cwd[s.dos.current_drive < 3 ? s.dos.current_drive : 2];
-			snprintf(here, sizeof(here), "%c:%s", char('A' + s.dos.current_drive), cwd[0] != 0 ? cwd : "\\");
-			write_line(s, here);
-			return;
-		}
-
-		char path[192] = {};
-		dos_resolve_path(s, argument, path, sizeof(path));
-		if (s.host == nullptr || !s.host->directory_exists(path))
-		{
-			write_line(s, "Invalid directory");
-			return;
-		}
-		const int drive = (path[0] - 'A') < 3 ? (path[0] - 'A') : 2;
-		snprintf(s.dos.cwd[drive], sizeof(s.dos.cwd[drive]), "%s", path + 2);
-	}
-
-	void command_type(machine_state& s, const char* argument)
-	{
-		if (argument[0] == 0 || s.host == nullptr)
-		{
-			write_line(s, "Required parameter missing");
-			return;
-		}
-		char path[192] = {};
-		dos_resolve_path(s, argument, path, sizeof(path));
-		const int handle = s.host->file_open(path, host_open_read);
-		if (handle < 0)
-		{
-			write_line(s, "File not found");
-			return;
-		}
-		uint8_t buffer[512];
-		for (;;)
-		{
-			const int read = s.host->file_read(handle, buffer, int(sizeof(buffer)));
-			if (read <= 0) break;
-			for (int i = 0; i < read; ++i)
-			{
-				if (buffer[i] == 26) break; // end of file marker
-				vga_write_char(s, 0, buffer[i], shell_attribute, true);
-			}
-		}
-		s.host->file_close(handle);
-		write_text(s, "\n");
-	}
-
-	void command_del(machine_state& s, const char* argument)
-	{
-		char path[192] = {};
-		dos_resolve_path(s, argument, path, sizeof(path));
-		if (s.host == nullptr || !s.host->file_delete(path)) write_line(s, "File not found");
-	}
+	// The built-in commands write to the screen here, rather than through a
+	// program's standard output as they do for COMMAND.COM /C.
+	const command_output screen = {screen_output, screen_clear, nullptr};
 
 	void command_mem(machine_state& s)
 	{
@@ -256,7 +99,7 @@ namespace
 		write_line(s, "  CD [path]      change directory        VER    version");
 		write_line(s, "  MD / RD path   make/remove directory   MEM    free memory");
 		write_line(s, "  DEL file       delete a file           EXIT   quit");
-		write_line(s, "  TYPE file      show a file");
+		write_line(s, "  TYPE file      show a file             COPY / REN / ATTRIB / ECHO");
 		write_line(s, "");
 		write_line(s, "  Type the name of an .EXE or .COM file to run it.");
 		write_line(s, "");
@@ -320,41 +163,18 @@ namespace
 	{
 		char command[64] = {};
 		const char* argument = nullptr;
-		split_command(line, command, sizeof(command), &argument);
+		command_split(line, command, sizeof(command), &argument);
 		if (command[0] == 0) return;
 
-		if (equals(command, "dir")) command_dir(s, argument);
-		else if (equals(command, "cd") || equals(command, "chdir")) command_cd(s, argument);
-		else if (equals(command, "type")) command_type(s, argument);
-		else if (equals(command, "del") || equals(command, "erase")) command_del(s, argument);
-		else if (equals(command, "mem")) command_mem(s);
+		int code = 0;
+		if (equals(command, "mem")) command_mem(s);
 		else if (equals(command, "help") || equals(command, "?")) command_help(s);
-		else if (equals(command, "cls"))
-		{
-			vga_set_mode(s, 3);
-		}
-		else if (equals(command, "ver"))
-		{
-			write_line(s, "libdos - DOS 5.00 compatible");
-		}
-		else if (equals(command, "md") || equals(command, "mkdir"))
-		{
-			char path[192] = {};
-			dos_resolve_path(s, argument, path, sizeof(path));
-			if (s.host == nullptr || !s.host->make_directory(path)) write_line(s, "Unable to create directory");
-		}
-		else if (equals(command, "rd") || equals(command, "rmdir"))
-		{
-			char path[192] = {};
-			dos_resolve_path(s, argument, path, sizeof(path));
-			if (s.host == nullptr || !s.host->remove_directory(path)) write_line(s, "Unable to remove directory");
-		}
 		else if (equals(command, "exit"))
 		{
 			s.shell.active = false;
 			s.exited = true;
 		}
-		else if (!shell_run(s, command, argument))
+		else if (!command_builtin(s, command, argument, screen, code) && !shell_run(s, command, argument))
 		{
 			write_line(s, "Bad command or file name");
 		}

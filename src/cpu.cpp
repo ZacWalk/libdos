@@ -63,8 +63,47 @@ namespace
 
 		void undefined(const char* what)
 		{
-			if (s.error[0] == 0)
-				snprintf(s.error, sizeof(s.error), "%s at %04X:%04X", what, c.cs(), c.ip);
+			char reason[96] = {};
+			snprintf(reason, sizeof(reason), "%s at %04X:%04X", what, c.cs(), c.ip);
+			// An 8086 model stops rather than carrying on past an encoding
+			// that means nothing, which is what testing for one is for.
+			if (s.model >= cpu_model::i8086) machine_fault(s, reason);
+			else if (s.error[0] == 0) snprintf(s.error, sizeof(s.error), "%s", reason);
+		}
+
+		// The instructions a model does not have, as a table per model so the
+		// check is one lookup on every instruction.
+		bool missing(uint8_t opcode) const
+		{
+			struct tables
+			{
+				bool rejected[4][256] = {};
+
+				tables()
+				{
+					for (int opcode = 0; opcode < 256; ++opcode)
+					{
+						const bool not_8086 = opcode == 0x0f || (opcode >= 0x60 && opcode <= 0x6f) ||
+							opcode == 0xc0 || opcode == 0xc1 || opcode == 0xc8 || opcode == 0xc9;
+						const bool not_bare_xt = (opcode >= 0xd8 && opcode <= 0xdf) || opcode == 0x9b ||
+							opcode == 0xf0 || opcode == 0xf4;
+						rejected[int(cpu_model::i80186)][opcode] = opcode == 0x0f || (opcode >= 0x64 && opcode <= 0x67);
+						rejected[int(cpu_model::i8086)][opcode] = not_8086;
+						rejected[int(cpu_model::i8086_strict)][opcode] = not_8086 || not_bare_xt;
+					}
+				}
+			};
+			static const tables models;
+			return models.rejected[int(s.model)][opcode];
+		}
+
+		// A segment register field: 4-7 repeat ES-DS on an 8086, and name FS,
+		// GS or nothing on a 386.
+		int segment_register(int field)
+		{
+			if (s.model >= cpu_model::i8086) return field & 3;
+			if (field > seg_gs) undefined("invalid segment register");
+			return field > seg_gs ? seg_es : field;
 		}
 
 		uint32_t physical(uint16_t offset, int seg)
@@ -612,6 +651,15 @@ namespace
 		}
 
 		const uint8_t opcode = c.opcode;
+		if (s.model != cpu_model::i386 && missing(opcode))
+		{
+			static const char* const names[] = {"an 80386", "an 80186", "an 8086", "an 8086 without a coprocessor"};
+			char reason[128] = {};
+			snprintf(reason, sizeof(reason), "opcode %02Xh at %04X:%04X is not available on %s", opcode, c.cs(),
+			         c.instruction_ip, names[int(s.model)]);
+			machine_fault(s, reason);
+			return;
+		}
 		word_size = (opcode & 1) != 0;
 		source_is_rm = (opcode & 2) != 0;
 		const int operation = (opcode >> 3) & 7;
@@ -721,7 +769,9 @@ namespace
 
 		case 0x50: case 0x51: case 0x52: case 0x53:
 		case 0x54: case 0x55: case 0x56: case 0x57: // PUSH rw
-			push(c.regs[opcode & 7]);
+			// An 8086 pushes SP as it is after the decrement; later chips push
+			// the value it had, and a program can tell them apart by it.
+			push(opcode == 0x54 && s.model >= cpu_model::i8086 ? uint16_t(c.sp() - 2) : c.regs[opcode & 7]);
 			cycles = 11;
 			break;
 
@@ -839,7 +889,7 @@ namespace
 		case 0x8c: // MOV rm,segreg
 			effective_address();
 			word_size = true;
-			write_ea_again(c.regs[reg_seg + mod_rm_reg()]);
+			write_ea_again(c.regs[reg_seg + segment_register(mod_rm_reg())]);
 			break;
 
 		case 0x8d: // LEA
@@ -852,7 +902,7 @@ namespace
 		case 0x8e: // MOV segreg,rm
 			word_size = true;
 			data = read_ea();
-			c.regs[reg_seg + mod_rm_reg()] = uint16_t(data);
+			c.regs[reg_seg + segment_register(mod_rm_reg())] = uint16_t(data);
 			break;
 
 		case 0x8f: // POP rm
@@ -1048,7 +1098,8 @@ namespace
 
 		case 0xd0: case 0xd1: case 0xd2: case 0xd3: // shift rm,1 / rm,CL
 			data = read_ea();
-			source = (opcode & 2) == 0 ? 1 : (c.cl() & 0x1f);
+			// An 8086 shifts by all of CL; from the 80186 on, by CL mod 32.
+			source = (opcode & 2) == 0 ? 1 : (s.model >= cpu_model::i8086 ? c.cl() : (c.cl() & 0x1f));
 			rotate_shift();
 			write_ea_again(uint16_t(data));
 			break;
@@ -1501,8 +1552,9 @@ int cpu_step(machine_state& s)
 	cpu_state& c = s.cpu;
 
 	// Hardware interrupts are taken between instructions, never inside a
-	// prefix sequence, but they may interrupt a REP.
-	if (!c.prefix && c.if_())
+	// prefix sequence, but they may interrupt a REP. Nothing is requested
+	// almost all of the time, which is worth knowing before asking which.
+	if (!c.prefix && c.if_() && (s.pic.master.irr | s.pic.slave.irr) != 0)
 	{
 		const int vector = pic_pending_vector(s);
 		if (vector >= 0)

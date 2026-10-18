@@ -35,20 +35,32 @@ when a review turns one up, add it here rather than in AGENTS.md.
 
 - FCB file functions (0Fh-24h) are absent. Only the parse-filename call is
   there. Pre-3.0 programs will need them.
-- `EXEC` loads and runs a child (AL=0) but not an overlay (AL=3), and it always
-  gives the child the parent's environment rather than a copy.
+- `EXEC` AL=01h (load without running, for a debugger) is refused.
 - No Ctrl+C or Ctrl+Break. DOS never raises INT 23h and the BIOS never calls
   INT 1Bh, so a ^C typed at a program reading the console arrives as
   character 3 - into an AH=0Ah line as well - and nothing stops a program that
   never asks for input; Machine > Reset is the only way out. dui maps
   neither the Pause key nor Ctrl+Break.
-- AH=47h returns the current directory with its leading backslash (`\GAMES`)
-  where DOS gives `GAMES`. `shell/shell.c` builds its prompt on that backslash,
-  so the two have to change together.
 - The root of the drive lists `.` and `..`, which a real root directory does
   not have: the host's `FindFirstFileA` returns them for the mounted folder.
 - No network redirector, no SHARE, no file locking.
 - Extended error information (AH=59h) always reports success.
+- AH=57h cannot set a file's date and time: the host interface has no call for
+  it, so the request succeeds and changes nothing.
+- COMMAND.COM /C refuses pipes and batch files, and FOR can only run built-in
+  commands: starting a program for one item would leave the rest unrun.
+
+## demu as a runner
+
+- It runs the dos4z build of MS-DOS 4.00 about a third slower than the demu it
+  replaced (231 s against 169 s for a clean build), all of it in the
+  interpreter: per instruction, the decode, the effective address and the
+  flags. The timer and interrupt checks were the first 25% and are gone; the
+  rest wants the core reworked or the JIT in [jit.md](jit.md).
+- The old demu could check every memory access against a shadow map of what
+  had been written and allocated. That caught its own loader's mistakes more
+  than any program's, and doing it here would put a test on every access, so
+  it was not carried over; `--trace-tail` and the suite cover that ground.
 
 ## The C compiler
 
@@ -265,14 +277,15 @@ the WAD cache - though `C_ONLY` avoids it.
 ## Shell
 
 There are two: the native prompt in `src/shell.cpp` that dui comes up with,
-and `shell/shell.c`, a DOS program built by `cc/`. Neither has:
+and `shell/shell.c`, a DOS program built by `cc/`. The native one shares
+COMMAND.COM's built-in commands with COMMAND.COM /C (`src/command.cpp`), so it
+has COPY, wildcards for DEL, REN, ATTRIB and the rest, and `CD..` and `CD\`
+written without a space. Neither has:
 
 - Batch files, so a game's `RUN.BAT` has to be read and typed by hand.
-- `COPY`, wildcards for `DEL`, redirection or piping.
+- Redirection or piping at the prompt; COMMAND.COM /C has redirection.
 - Command history or editing beyond backspace.
 - `/W` or `/P` for `DIR`, so a long listing scrolls past.
-- `CD..` and `CD\` written without a space: the whole word is taken as a
-  program name, where COMMAND.COM accepts them.
 
 The native one additionally cannot start a program and stay resident the way
 the DOS one does through `EXEC`; it resets the machine instead.
