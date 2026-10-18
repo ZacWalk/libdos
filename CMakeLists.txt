@@ -72,12 +72,18 @@ add_library(libdos_cc STATIC
 
 target_include_directories(libdos_cc PUBLIC cc)
 
+# Bootable DOS disk images - floppies and partitioned hard disks - and reading
+# them back. Platform independent as well: a caller supplies the files' bytes
+# and a sink or a source for the sectors.
+add_library(libdos_disk STATIC disk/disk-image.cpp)
+target_include_directories(libdos_disk PUBLIC disk)
+
 # The Windows implementation of host_services: one directory presented to the
 # emulated program as its whole drive. Shared by demu and dui.
 add_library(libdos_host STATIC host/host-win32.cpp)
 target_link_libraries(libdos_host PUBLIC libdos)
 
-set(libdos_targets libdos libdos_cc libdos_host)
+set(libdos_targets libdos libdos_cc libdos_disk libdos_host)
 set(libdos_executables)
 
 if(LIBDOS_BUILD_TOOLS)
@@ -85,9 +91,15 @@ if(LIBDOS_BUILD_TOOLS)
     # program headlessly, inspects, disassembles and traces one. Deliberately
     # uses no platform layer.
     add_executable(demu cli/main.cpp cli/runner.cpp cli/lib-omf.c)
-    target_link_libraries(demu PRIVATE libdos libdos_cc libdos_host)
-    list(APPEND libdos_targets demu)
-    list(APPEND libdos_executables demu)
+    target_link_libraries(demu PRIVATE libdos libdos_cc libdos_disk libdos_host)
+
+    # dimg: makes bootable floppy and hard disk images, lists what is on one
+    # and copies files out.
+    add_executable(dimg dimg/main.cpp)
+    target_link_libraries(dimg PRIVATE libdos_disk)
+
+    list(APPEND libdos_targets demu dimg)
+    list(APPEND libdos_executables demu dimg)
 endif()
 
 if(LIBDOS_BUILD_APP)

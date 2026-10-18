@@ -5,8 +5,9 @@ libdos is a C++20 DOS program emulator: a platform-independent static library
 on the shared [platform-h](https://github.com/ZacWalk/platform-h) layer
 (`app/`) - and demu, the command-line runner that is also the test suite and
 the debugger (`cli/`).
-Alongside it are a C compiler for 16-bit DOS (`cc/`) and a DOS shell written in
-C and built with it (`shell/`).
+Alongside it are a C compiler for 16-bit DOS (`cc/`), a DOS shell written in
+C and built with it (`shell/`), and dimg (`dimg/`), which makes and reads
+bootable DOS disk images with the library in `disk/`.
 
 Read [docs/design.md](docs/design.md) before changing anything in `src/` - it
 covers the callback opcode, the mapping-not-emulating boundary, the plane
@@ -30,6 +31,10 @@ covers at a glance.
   stand-in (`cli/lib-omf.c`) on top of it.
 - `cc/` is platform independent too, and opens no files: a caller supplies
   source text through `cc_sources`, the same way a host supplies the drive.
+- `disk/` is platform independent as well and opens no files either: a caller
+  hands in the boot code and the files' bytes, and a `disk_sink` or
+  `disk_source` for the sectors. `dimg/` owns the files, the sparse image file
+  and the command line.
 - `shell/` is C for the emulated machine, not for the host. It is compiled by
   `cc/`, so it can only use the subset in [docs/todo.md](docs/todo.md).
 - When dui or demu needs a new capability, expose a platform-neutral operation from
@@ -91,7 +96,7 @@ for a second as a smoke check. After a build the suite runs directly too:
 ```
 
 Build trees are per preset under `build/`; binaries land in `exe/` as
-`dui.exe` and `demu.exe`, with a `-d` suffix for Debug. Embedded in another
+`dui.exe`, `demu.exe` and `dimg.exe`, with a `-d` suffix for Debug. Embedded in another
 CMake project, libdos builds only its libraries unless `LIBDOS_BUILD_TOOLS` or
 `LIBDOS_BUILD_APP` is on, and only `LIBDOS_BUILD_APP` fetches platform-h.
 
@@ -180,12 +185,17 @@ whether a test already encodes the current behaviour:
   own copy of the environment with its path, AH=47h, AH=29h, and searches a
   program abandons; COMMAND.COM /C's built-in commands, redirection, PATH
   search, exit codes and a host's own program; and the processor models.
+- Disk images: a floppy's parameter block, FATs and root directory order
+  (IO.SYS, MSDOS.SYS, then the label); a hard disk's cylinder-aligned
+  partitions, EBR chain, partition types and CHS addresses past cylinder 1023;
+  and the reader listing and reading back files, a subdirectory's included.
 
 The suite cannot see the biggest consumer: demu builds MS-DOS 4.00 in
 [dos4z](https://github.com/ZacWalk/dos4z) with the original 1988 toolchain,
 and a change to `src/dos.cpp`, `src/command.cpp` or `src/cpu.cpp` should still
 produce every one of that build's binaries byte for byte. dos4z's
-`make-dos.ps1 -LibdosPath ..\libdos` builds with this checkout's demu.
+`make-dos.ps1 -LibdosPath ..\libdos` builds with this checkout's demu, and its
+disk images with this checkout's dimg.
 
 A green build proves nothing on its own - run `.\dd.ps1 test --label libdos`.
 It runs two CTest entries in each configuration: `demu_suite`, the demu
@@ -195,7 +205,7 @@ the picture rather than leaving the window black, that a key held when the
 window loses the focus is let go, that the right and middle mouse buttons are
 let go, and that a close message ends the session.
 There is no separate unit-test binary; a new check of
-`src/` or `cc/` goes in the demu suite. Do not launch the GUI to verify a change;
+`src/`, `cc/` or `disk/` goes in the demu suite. Do not launch the GUI to verify a change;
 `dui.exe -test` is the headless form and `dd.ps1 launch` is for the human.
 
 ## Known Gaps

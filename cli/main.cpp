@@ -10,6 +10,7 @@
 #include "../host/host-win32.h"
 #include "../cc/cc.h"
 #include "../cc/support.h"
+#include "../disk/disk-image.h"
 
 #include <algorithm>
 #include <csetjmp>
@@ -2414,6 +2415,278 @@ namespace
 		}
 	}
 
+	// An image in memory that holds only the sectors written; the rest read
+	// as zeros, so a test disk can be gigabytes.
+	class sector_map final : public disk_sink, public disk_source
+	{
+	public:
+		bool size(uint64_t bytes) override
+		{
+			length = bytes;
+			sectors.clear();
+			return true;
+		}
+
+		bool write(uint64_t offset, const uint8_t* data, size_t count) override
+		{
+			if (offset + count > length) return false;
+			for (size_t done = 0; done < count;)
+			{
+				const uint64_t at = offset + done;
+				const size_t within = size_t(at % disk_sector_size);
+				const size_t part = std::min<size_t>(count - done, disk_sector_size - within);
+				std::vector<uint8_t>& block = sectors[at / disk_sector_size];
+				block.resize(disk_sector_size);
+				memcpy(block.data() + within, data + done, part);
+				done += part;
+			}
+			return true;
+		}
+
+		bool read(uint64_t offset, uint8_t* data, size_t count) override
+		{
+			if (offset + count > length) return false;
+			for (size_t done = 0; done < count;)
+			{
+				const uint64_t at = offset + done;
+				const size_t within = size_t(at % disk_sector_size);
+				const size_t part = std::min<size_t>(count - done, disk_sector_size - within);
+				const auto found = sectors.find(at / disk_sector_size);
+				if (found == sectors.end())
+					memset(data + done, 0, part);
+				else
+					memcpy(data + done, found->second.data() + within, part);
+				done += part;
+			}
+			return true;
+		}
+
+		std::vector<uint8_t> sector(uint64_t number)
+		{
+			std::vector<uint8_t> data(disk_sector_size);
+			read(number * disk_sector_size, data.data(), data.size());
+			return data;
+		}
+
+	private:
+		uint64_t length = 0;
+		std::map<uint64_t, std::vector<uint8_t>> sectors;
+	};
+
+	uint32_t le32(const uint8_t* p)
+	{
+		return p[0] | p[1] << 8 | p[2] << 16 | uint32_t(p[3]) << 24;
+	}
+
+	disk_file test_file(const char* name, size_t size, bool system)
+	{
+		disk_file file;
+		file.name = name;
+		file.system = system;
+		for (size_t i = 0; i < size; ++i) file.data.push_back(uint8_t(i * 7 + size));
+		return file;
+	}
+
+	// dimg's images: a floppy and hard disks laid out as DOS 4.0's FORMAT and
+	// FDISK lay them out, and the reader that finds the files again.
+	void test_disk_images()
+	{
+		uint8_t boot[disk_sector_size] = {0xeb, 0x3c, 0x90, 'M', 'S', 'D', 'O', 'S', '4', '.', '0'};
+		boot[510] = 0x55;
+		boot[511] = 0xaa;
+		uint8_t master[disk_sector_size] = {0xfa, 0x33, 0xc0};
+		master[510] = 0x55;
+		master[511] = 0xaa;
+		const std::vector<disk_file> files = {
+			test_file("bin\\io.sys", 3000, true), test_file("msdos.sys", 1500, true),
+			test_file("command.com", 25000, false), test_file("empty.txt", 0, false),
+			test_file("readme.long", 600, false),
+		};
+		disk_stamp stamp;
+		stamp.date = 8 << 9 | 6 << 5 | 15; // 1988-06-15
+		stamp.time = 12 << 11 | 34 << 5 | 28;
+		stamp.serial = 0x12345678;
+
+		{
+			uint8_t name[11];
+			disk_name_83("dir\\verylongname.text", name);
+			check(memcmp(name, "VERYLONGTEX", 11) == 0, "an 8.3 name is cut to eight and three, upper case");
+			disk_name_83("a.b.c", name);
+			check(memcmp(name, "A.B     C  ", 11) == 0, "an 8.3 name's extension follows the last dot");
+		}
+
+		// A 360 KB floppy: IO.SYS and MSDOS.SYS first, then the label.
+		std::vector<uint8_t> floppy;
+		disk_report report;
+		std::string error;
+		check(disk_build_floppy(360, boot, files, "test disk", stamp, floppy, report, error), "a 360 KB floppy is built");
+		check_equal(uint32_t(floppy.size()), 368640, "a 360 KB floppy is 720 sectors");
+		check(floppy[13] == 2 && floppy[17] == 112 && floppy[21] == 0xfd && floppy[22] == 2 && floppy[24] == 9,
+		      "a 360 KB floppy's parameter block");
+		check(memcmp(&floppy[43], "TEST DISK  ", 11) == 0 && memcmp(&floppy[54], "FAT12   ", 8) == 0,
+		      "the boot sector names the label and FAT12");
+		check_equal(le32(&floppy[39]), 0x12345678, "a floppy's serial number is the stamp's");
+		const uint8_t* root = &floppy[5 * disk_sector_size];
+		check(memcmp(root, "IO      SYS", 11) == 0 && root[11] == 0x07 && root[26] == 2, "IO.SYS is first, a system file at cluster 2");
+		check(memcmp(root + 32, "MSDOS   SYS", 11) == 0 && root[43] == 0x07 && root[58] == 5, "MSDOS.SYS follows it");
+		check(memcmp(root + 64, "TEST DISK  ", 11) == 0 && root[75] == 0x08, "the label is third");
+		check_equal(uint32_t(root[86] | root[87] << 8), stamp.time, "the label is dated");
+		check(memcmp(root + 128, "EMPTY   TXT", 11) == 0 && root[154] == 0 && le32(root + 156) == 0,
+		      "an empty file has an entry and no cluster");
+		const uint8_t* fat = &floppy[disk_sector_size];
+		check(fat[0] == 0xfd && fat[1] == 0xff && fat[2] == 0xff && fat[3] == 0x03 && (fat[6] | (fat[7] & 0x0f) << 8) == 0xfff,
+		      "the FAT holds the media byte and IO.SYS's chain");
+		check(memcmp(fat, &floppy[3 * disk_sector_size], 2 * disk_sector_size) == 0, "both FATs match");
+		check_equal(report.volumes[0].free_clusters, 354 - 31, "the floppy's free clusters");
+
+		// Read it back, with a subdirectory added by hand: SUB at cluster 33
+		// holding INNER.TXT at 34 and a deleted entry.
+		const auto cluster_at = [](uint32_t cluster) { return size_t(12 + (cluster - 2) * 2) * disk_sector_size; };
+		const auto set_fat12 = [&](uint32_t cluster, uint32_t value) {
+			uint8_t* p = &floppy[disk_sector_size + cluster + cluster / 2];
+			if (cluster & 1)
+			{
+				p[0] = uint8_t((p[0] & 0x0f) | (value & 0x0f) << 4);
+				p[1] = uint8_t(value >> 4);
+			}
+			else
+			{
+				p[0] = uint8_t(value);
+				p[1] = uint8_t((p[1] & 0xf0) | (value >> 8 & 0x0f));
+			}
+		};
+		uint8_t* sub = &floppy[5 * disk_sector_size + 6 * 32];
+		memcpy(sub, "SUB        ", 11);
+		sub[11] = 0x10;
+		sub[26] = 33;
+		uint8_t* listing = &floppy[cluster_at(33)];
+		memcpy(listing, ".          ", 11);
+		listing[11] = 0x10;
+		listing[26] = 33;
+		memcpy(listing + 32, "..         ", 11);
+		listing[43] = 0x10;
+		memcpy(listing + 64, "\xe5" "DELETEDTXT", 11);
+		memcpy(listing + 96, "INNER   TXT", 11);
+		listing[96 + 11] = 0x20;
+		listing[96 + 26] = 34;
+		listing[96 + 28] = 5;
+		memcpy(&floppy[cluster_at(34)], "hello", 5);
+		set_fat12(33, 0xfff);
+		set_fat12(34, 0xfff);
+
+		sector_map image;
+		image.size(floppy.size());
+		image.write(0, floppy.data(), floppy.size());
+		std::vector<disk_volume> volumes;
+		check(disk_volumes(image, volumes, error) && volumes.size() == 1, "a floppy is one volume");
+		check(volumes[0].formatted && !volumes[0].fat16 && volumes[0].type == 0 && volumes[0].label == "TEST DISK" &&
+		          volumes[0].clusters == 354 && volumes[0].free_clusters == 354 - 33,
+		      "the floppy's volume, label and free space are found");
+		std::vector<disk_entry> entries;
+		check(disk_list(image, volumes[0], entries, error), "the floppy is listed");
+		std::string paths;
+		for (const disk_entry& e : entries) paths += e.path + (e.attributes & 0x10 ? "/ " : " ");
+		check(paths == "\\IO.SYS \\MSDOS.SYS \\COMMAND.COM \\EMPTY.TXT \\README.LON \\SUB/ \\SUB\\INNER.TXT ",
+		      "the listing names every file and directory, and no label or deleted entry");
+		check(entries[2].size == 25000 && entries[2].date == stamp.date && entries[2].time == stamp.time,
+		      "an entry's size and date are listed");
+		std::vector<uint8_t> data;
+		check(disk_read_file(image, volumes[0], "\\command.com", data, error) && data == files[2].data,
+		      "a file is read back whole");
+		check(disk_read_file(image, volumes[0], "sub/inner.txt", data, error) && data.size() == 5 &&
+		          memcmp(data.data(), "hello", 5) == 0,
+		      "a file in a subdirectory is read back");
+		check(disk_read_file(image, volumes[0], "EMPTY.TXT", data, error) && data.empty(), "an empty file reads as nothing");
+		check(!disk_read_file(image, volumes[0], "\\deleted.txt", data, error), "a deleted file is not found");
+		check(!disk_read_file(image, volumes[0], "\\sub", data, error) && error.find("directory") != std::string::npos,
+		      "a directory is not read as a file");
+
+		std::vector<disk_file> too_many;
+		for (int i = 0; i < 120; ++i) too_many.push_back(test_file(("f" + std::to_string(i)).c_str(), 1, false));
+		check(!disk_build_floppy(360, boot, too_many, "", stamp, floppy, report, error) &&
+		          error.find("root directory") != std::string::npos,
+		      "a 360 KB floppy's root directory holds 112 entries");
+		check(!disk_build_floppy(360, boot, {test_file("big", 400000, false)}, "", stamp, floppy, report, error) &&
+		          error.find("full") != std::string::npos,
+		      "a file bigger than the floppy is refused");
+
+		// A 20 MB disk with 5 MB partitions: C: and three logical drives, all
+		// FAT12, on 16 heads and 63 sectors a track.
+		disk_layout layout;
+		layout.megabytes = 20;
+		layout.partition_megabytes = 5;
+		check(disk_build_hard_disk(layout, master, boot, files, "dos4z", stamp, image, report, error),
+		      "a 20 MB hard disk is built");
+		check(report.cylinders == 40 && report.heads == 16 && report.sectors_per_track == 63 && report.sectors == 40320,
+		      "the disk is whole cylinders");
+		check(report.volumes.size() == 4 && report.volumes[0].start == 63 && report.volumes[0].sectors == 10017 &&
+		          report.volumes[0].type == 0x01 && report.volumes[0].sectors_per_cluster == 8,
+		      "C: is a cylinder-aligned FAT12 partition");
+		std::vector<uint8_t> mbr = image.sector(0);
+		check(mbr[0] == 0xfa && mbr[510] == 0x55, "the master boot record keeps its code");
+		check(mbr[0x1be] == 0x80 && mbr[0x1bf] == 1 && mbr[0x1c0] == 1 && mbr[0x1c1] == 0 && mbr[0x1c2] == 0x01 &&
+		          le32(&mbr[0x1c6]) == 63 && le32(&mbr[0x1ca]) == 10017,
+		      "C: is active, at head 1 of cylinder 0");
+		check(mbr[0x1d2] == 0x05 && le32(&mbr[0x1d6]) == 10080 && le32(&mbr[0x1da]) == 30240,
+		      "the extended partition holds the rest of the disk");
+		std::vector<uint8_t> ebr = image.sector(10080);
+		check(ebr[0x1c2] == 0x01 && le32(&ebr[0x1c6]) == 63 && le32(&ebr[0x1ca]) == 10017 && ebr[0x1d2] == 0x05 &&
+		          le32(&ebr[0x1d6]) == 10080 && le32(&ebr[0x1da]) == 10080,
+		      "D:'s EBR places D: and links the next EBR, relative to the extended partition");
+		check(image.sector(30240)[0x1d2] == 0, "the last EBR links nothing");
+		std::vector<uint8_t> c_boot = image.sector(63);
+		check(le32(&c_boot[28]) == 63 && c_boot[36] == 0x80 && le32(&c_boot[39]) == 0x12345678 + 63 &&
+		          c_boot[21] == 0xf8 && memcmp(&c_boot[43], "DOS4Z      FAT12   ", 19) == 0,
+		      "C:'s boot sector counts the sectors before it and is drive 80h");
+
+		check(disk_volumes(image, volumes, error) && volumes.size() == 4, "the reader finds all four volumes");
+		check(volumes[0].label == "DOS4Z" && volumes[1].label == "DRIVE D" && volumes[3].label == "DRIVE F" &&
+		          volumes[3].start == 30303 && volumes[3].type == 0x01,
+		      "the logical drives follow the EBR chain in order");
+		check(disk_read_file(image, volumes[0], "\\IO.SYS", data, error) && data == files[0].data, "C: holds IO.SYS");
+		check(disk_list(image, volumes[2], entries, error) && entries.empty(), "a logical drive is empty");
+
+		// FAT16 partition types: 04h up to 32 MB, 06h beyond, 0Eh and 0Fh with LBA.
+		layout.megabytes = 40;
+		layout.partition_megabytes = 20;
+		layout.lba_types = true;
+		check(disk_build_hard_disk(layout, master, boot, {}, "", stamp, image, report, error) &&
+		          report.volumes.size() == 3 && report.volumes[0].type == 0x0e && report.volumes[1].type == 0x0e &&
+		          report.volumes[2].type == 0x01 && report.volumes[0].sectors_per_cluster == 4 && report.volumes[0].fat16,
+		      "LBA types: FAT16 partitions are 0Eh, a small one is still 01h");
+		check(image.sector(0)[0x1d2] == 0x0f, "the extended partition is 0Fh with LBA");
+		check(disk_volumes(image, volumes, error) && volumes.size() == 3 && volumes[0].fat16 && !volumes[2].fat16,
+		      "the reader tells FAT16 from FAT12 by the cluster count");
+		layout.lba_types = false;
+		check(disk_build_hard_disk(layout, master, boot, {}, "", stamp, image, report, error) &&
+		          report.volumes[0].type == 0x04,
+		      "a FAT16 partition under 32 MB is 04h");
+		layout.megabytes = 64;
+		layout.partition_megabytes = 64;
+		check(disk_build_hard_disk(layout, master, boot, {}, "", stamp, image, report, error) &&
+		          report.volumes.size() == 1 && report.volumes[0].type == 0x06 && report.volumes[0].sectors == 130977,
+		      "a partition over 32 MB is 06h");
+
+		// 8.5 GB: 255 heads, and partitions past cylinder 1023 get the
+		// largest CHS address.
+		layout.megabytes = 8500;
+		layout.partition_megabytes = 2047;
+		layout.lba_types = true;
+		check(disk_build_hard_disk(layout, master, boot, {}, "", stamp, image, report, error) &&
+		          report.heads == 255 && report.cylinders == 1083 && report.volumes.size() == 5 &&
+		          report.volumes[0].sectors_per_cluster == 64 && report.volumes[4].sectors_per_cluster == 16,
+		      "an 8.5 GB disk is five volumes, the first with 32 KB clusters");
+		std::vector<uint8_t> last = image.sector(report.volumes[4].start - 63);
+		check(last[0x1bf] == 0xfe && last[0x1c0] == 0xff && last[0x1c1] == 0xff,
+		      "a partition beyond cylinder 1023 has the largest CHS address");
+		check(disk_volumes(image, volumes, error) && volumes.size() == 5 && volumes[4].label == "DRIVE G",
+		      "the reader follows the chain past cylinder 1023");
+		layout.megabytes = 15;
+		layout.heads = 255;
+		check(!disk_build_hard_disk(layout, master, boot, {}, "", stamp, image, report, error),
+		      "a disk under two cylinders is refused");
+	}
+
 	int run_tests()
 	{
 		test_cpu();
@@ -2444,6 +2717,7 @@ namespace
 		test_command_line();
 		test_dos_services();
 		test_cpu_models();
+		test_disk_images();
 
 		printf("%d checks, %d failures\n", checks, failures);
 		return failures == 0 ? 0 : 1;
