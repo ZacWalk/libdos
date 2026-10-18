@@ -875,9 +875,17 @@ namespace
 				return;
 			}
 			const uint32_t buffer = linear_address(mem_read16(s, packet + 6), mem_read16(s, packet + 4));
+			// EDD 1.1 allows 127 sectors a call, and the XT-IDE Universal
+			// BIOS refuses more - or none - so DOS has to split its transfers.
+			const uint32_t count = mem_read16(s, packet + 2);
+			if (count == 0 || count > 127)
+			{
+				mem_write16(s, packet + 2, 0);
+				finish(0x01);
+				return;
+			}
 			uint32_t done = 0;
-			const uint8_t status = transfer(s, *drive, function == 0x43, function == 0x44, lba,
-			                                mem_read16(s, packet + 2), buffer, done);
+			const uint8_t status = transfer(s, *drive, function == 0x43, function == 0x44, lba, count, buffer, done);
 			mem_write16(s, packet + 2, uint16_t(done));
 			finish(status);
 			return;

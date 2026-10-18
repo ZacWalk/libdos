@@ -14,10 +14,13 @@ struct machine_state;
 
 // Where a built-in command's output goes. `error` marks a message for the
 // standard error handle; `clear` is CLS, null where there is no screen to clear.
+// `confirm` puts a yes-or-no question - DEL's, before it empties a directory -
+// and says whether the answer was yes.
 struct command_output
 {
 	void (*write)(machine_state& s, const char* text, int length, bool error, void* context);
 	void (*clear)(machine_state& s, void* context);
+	bool (*confirm)(machine_state& s, const char* question, void* context);
 	void* context;
 };
 

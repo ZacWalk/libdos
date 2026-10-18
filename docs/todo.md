@@ -49,9 +49,18 @@ when a review turns one up, add it here rather than in AGENTS.md.
   it, so the request succeeds and changes nothing.
 - COMMAND.COM /C refuses pipes and batch files, and FOR can only run built-in
   commands: starting a program for one item would leave the rest unrun.
+- AH=29h takes any letter A-Z for a drive; DOS also returns FFh for a drive
+  that is not there.
+- A program that restarts the machine - a far jump to FFFF:0000 - spins there
+  under the mapped DOS, where it could end the program instead; only boot
+  mode's ROM has a reset entry.
 
 ## demu as a runner
 
+- LIB's stand-in takes a response file's second line as the answer to "create
+  the library?" and starts the library afresh, which is what dos4z's
+  makefiles write; a response file for a library that already exists, which
+  LIB.EXE would not ask about, loses that line and the old modules.
 - It runs the dos4z build of MS-DOS 4.00 about a third slower than the demu it
   replaced (231 s against 169 s for a clean build), all of it in the
   interpreter: per instruction, the decode, the effective address and the
@@ -366,9 +375,10 @@ the DOS one does through `EXEC`; it resets the machine instead.
 
 ## Tests
 
-The suite in `cli/main.cpp` covers the CPU, the interrupt path, the timer, the
-video modes and write logic, DOS memory and paths, both loaders, a full program
-run, sound, the compiler and the disassembler. It does not yet pin:
+The suite in `cli/main.cpp` covers the CPU and the processor models, the
+interrupt path, the timer, the video modes and write logic, DOS memory, paths,
+handles and COMMAND.COM /C, both loaders, a full program run, sound, the
+compiler, the disassembler, disk images and boot mode. It does not yet pin:
 
 - The planar read modes and the colour-compare path.
 - The MCB chain layout a program would walk.

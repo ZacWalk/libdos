@@ -62,9 +62,19 @@ namespace
 
 	void screen_clear(machine_state& s, void*) { vga_set_mode(s, 3); }
 
+	// The prompt cannot stop for an answer, so a question stays open: the
+	// next line typed answers it, and a yes runs the command again.
+	bool screen_confirm(machine_state& s, const char* question, void*)
+	{
+		if (s.shell.answered) return true;
+		screen_output(s, question, int(std::strlen(question)), false, nullptr);
+		s.shell.asking = true;
+		return false;
+	}
+
 	// The built-in commands write to the screen here, rather than through a
 	// program's standard output as they do for COMMAND.COM /C.
-	const command_output screen = {screen_output, screen_clear, nullptr};
+	const command_output screen = {screen_output, screen_clear, screen_confirm, nullptr};
 
 	void command_mem(machine_state& s)
 	{
@@ -185,6 +195,8 @@ void shell_start(machine_state& s)
 {
 	s.shell.active = true;
 	s.shell.program_running = false;
+	s.shell.asking = false;
+	s.shell.answered = false;
 	s.shell.length = 0;
 	s.shell.line[0] = 0;
 	s.exited = false;
@@ -211,10 +223,25 @@ void shell_tick(machine_state& s)
 		{
 			write_text(s, "\n");
 			shell.line[shell.length] = 0;
-			const char* line = shell.line;
 			shell.length = 0;
-			execute_line(s, line);
-			if (shell.active && !shell.program_running) write_prompt(s);
+			if (shell.asking)
+			{
+				shell.asking = false;
+				const char* answer = shell.line;
+				while (*answer == ' ') ++answer;
+				if (upper(*answer) == 'Y')
+				{
+					shell.answered = true;
+					execute_line(s, shell.asked);
+					shell.answered = false;
+				}
+			}
+			else
+			{
+				execute_line(s, shell.line);
+				if (shell.asking) snprintf(shell.asked, sizeof(shell.asked), "%s", shell.line);
+			}
+			if (shell.active && !shell.program_running && !shell.asking) write_prompt(s);
 			shell.line[0] = 0;
 		}
 		else if (ch == 8)

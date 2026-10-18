@@ -4296,6 +4296,8 @@ static void gen_emit_startup(generator* g)
 
 	// The thunk a C program calls to reach a BIOS or DOS service: registers in,
 	// AX out, and whatever DOS left in the other registers readable afterwards.
+	// The disk services' AH=08h hands back a table's address in ES:DI, and a
+	// function keeps a variable in DI, so the BIOS disk thunks put DI back.
 static void gen_emit_interrupt_call(generator* g,int number, int cf, int bx, int cx, int dx, int with_si)
 	{
 		const auto from_frame = [&](int r, int displacement)
@@ -4316,6 +4318,7 @@ static void gen_emit_interrupt_call(generator* g,int number, int cf, int bx, int
 		emit_push_bp(&g->e_);
 		emit_mov_bp_sp(&g->e_);
 		if (with_si) emit_op(&g->e_, op_push, 2, operand_in(reg_si), operand_none());
+		if (number == 0x13) emit_op(&g->e_, op_push, 2, operand_in(reg_di), operand_none());
 		from_frame(reg_a, 4);
 		from_frame(reg_b, 6);
 		from_frame(reg_c, 8);
@@ -4331,6 +4334,7 @@ static void gen_emit_interrupt_call(generator* g,int number, int cf, int bx, int
 		emit_jump_if(&g->e_, cond_above_equal, carry_clear);
 		set_global(cf, 1);
 		emit_bind(&g->e_, carry_clear);
+		if (number == 0x13) emit_op(&g->e_, op_pop, 2, operand_in(reg_di), operand_none());
 		if (with_si) emit_op(&g->e_, op_pop, 2, operand_in(reg_si), operand_none());
 		emit_pop_bp(&g->e_);
 		emit_ret(&g->e_);
