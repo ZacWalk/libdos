@@ -7,6 +7,8 @@
 
 #include "machine.h"
 
+#include <algorithm>
+#include <cstdio>
 #include <cstring>
 
 namespace
@@ -44,11 +46,18 @@ namespace
 	void set_carry(machine_state& s, bool on) { cpu_set_iret_flag(s, flag_cf, on); }
 
 	void set_zero(machine_state& s, bool on) { cpu_set_iret_flag(s, flag_zf, on); }
+
+	// Where boot mode's ROM keeps its tables: the IBM PC's own addresses.
+	constexpr uint16_t rom_diskette_table = 0xefc7;
+	constexpr uint16_t rom_video_table = 0xf0a4;
 }
 
 void bios_reset(machine_state& s)
 {
-	s.bios = bios_state();
+	bios_state fresh;
+	for (int i = 0; i < bios_drive_count; ++i) fresh.drives[i] = s.bios.drives[i];
+	fresh.boot_drive = s.bios.boot_drive;
+	s.bios = fresh;
 
 	std::memset(s.memory + 0x400, 0, 0x100);
 	write16(s, bda_segment, 0x00, 0x03f8); // COM1
@@ -60,6 +69,90 @@ void bios_reset(machine_state& s)
 	write16(s, bda_segment, 0x80, bda_keyboard_buffer);
 	write16(s, bda_segment, 0x82, bda_keyboard_buffer_end);
 	write8(s, bda_segment, 0x96, 0x10); // enhanced keyboard present
+}
+
+int bios_drive_index(uint8_t drive)
+{
+	switch (drive)
+	{
+	case 0x00: return 0;
+	case 0x01: return 1;
+	case 0x80: return 2;
+	case 0x81: return 3;
+	default: return -1;
+	}
+}
+
+void bios_reset_pc(machine_state& s)
+{
+	uint8_t* rom = s.memory + 0xf0000;
+
+	// The power-on entry: a callback that starts the machine again, which is
+	// where FDISK's reboot - a far jump to FFFF:0000 - lands.
+	rom[0xfff0] = callback_opcode;
+	rom[0xfff1] = callback_power_on;
+	rom[0xfff2] = 0xf4; // HLT
+	std::memcpy(rom + 0xfff5, "10/27/82", 8);
+	rom[0xfffe] = 0xff; // model: IBM PC
+
+	// The 5150's diskette parameters and 6845 tables, which DOS copies and patches.
+	static const uint8_t diskette[11] = {0xdf, 0x02, 0x25, 0x02, 0x09, 0x2a, 0xff, 0x50, 0xf6, 0x0f, 0x02};
+	std::memcpy(rom + rom_diskette_table, diskette, sizeof(diskette));
+	static const uint8_t video[88] = {
+		0x38, 0x28, 0x2d, 0x0a, 0x1f, 0x06, 0x19, 0x1c, 0x02, 0x07, 0x06, 0x07, 0x00, 0x00, 0x00, 0x00,
+		0x71, 0x50, 0x5a, 0x0a, 0x1f, 0x06, 0x19, 0x1c, 0x02, 0x07, 0x06, 0x07, 0x00, 0x00, 0x00, 0x00,
+		0x38, 0x28, 0x2d, 0x0a, 0x7f, 0x06, 0x64, 0x70, 0x02, 0x01, 0x06, 0x07, 0x00, 0x00, 0x00, 0x00,
+		0x61, 0x50, 0x52, 0x0f, 0x19, 0x06, 0x19, 0x19, 0x02, 0x0d, 0x0b, 0x0c, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x08, 0x00, 0x10, 0x00, 0x40, 0x00, 0x40, 0x28, 0x28, 0x50, 0x50, 0x28, 0x28, 0x50, 0x50,
+		0x2c, 0x28, 0x2d, 0x29, 0x2a, 0x2e, 0x1e, 0x29,
+	};
+	std::memcpy(rom + rom_video_table, video, sizeof(video));
+	write16(s, 0, 0x1d * 4, rom_video_table);
+	write16(s, 0, 0x1d * 4 + 2, 0xf000);
+	write16(s, 0, 0x1e * 4, rom_diskette_table);
+	write16(s, 0, 0x1e * 4 + 2, 0xf000);
+	write16(s, 0, 0x1f * 4, 0);
+	write16(s, 0, 0x1f * 4 + 2, 0);
+
+	// One floppy drive at least, as every 5150 had, and a second if attached;
+	// an 83-key keyboard; the hard disks the host attached.
+	const int floppies = s.bios.drives[1].device != nullptr ? 2 : 1;
+	s.bios.equipment = uint16_t(0x0021 | (floppies - 1) << 6);
+	write16(s, bda_segment, 0x10, s.bios.equipment);
+	write8(s, bda_segment, 0x75, uint8_t((s.bios.drives[2].device != nullptr) + (s.bios.drives[3].device != nullptr)));
+	write8(s, bda_segment, 0x96, 0x00);
+}
+
+bool bios_bootstrap(machine_state& s)
+{
+	const int index = bios_drive_index(s.bios.boot_drive);
+	bios_drive* drive = index >= 0 ? &s.bios.drives[index] : nullptr;
+	uint8_t sector[512];
+	// A hard disk's boot record has to end in 55AAh; the 5150 read a floppy's
+	// first sector and ran it regardless.
+	if (drive == nullptr || drive->device == nullptr || !drive->device->read(0, sector, 1) ||
+	    ((s.bios.boot_drive & 0x80) != 0 && (sector[510] != 0x55 || sector[511] != 0xaa)))
+	{
+		char reason[64];
+		std::snprintf(reason, sizeof(reason), "nothing to boot in drive %02Xh", s.bios.boot_drive);
+		machine_fault(s, reason);
+		return false;
+	}
+	std::memcpy(s.memory + 0x7c00, sector, sizeof(sector));
+	cpu_state& c = s.cpu;
+	c.set_cs(0);
+	c.ip = 0x7c00;
+	c.set_ss(0);
+	c.set_sp(0x0400);
+	c.set_ds(0);
+	c.set_es(0);
+	c.set_dx(s.bios.boot_drive);
+	c.flags = flag_if | 0x0002;
+	c.halted = false;
+	c.prefix = false;
+	c.repeating = false;
+	c.segment_override = -1;
+	return true;
 }
 
 void bios_push_key(machine_state& s, uint8_t scancode, uint8_t ascii)
@@ -276,6 +369,7 @@ namespace
 				vga_write_char(s, page, c.al(), c.bl(), c.ah() == 0x09);
 			v.cursor_x[page] = x;
 			v.cursor_y[page] = y;
+			if (s.host != nullptr) s.host->video_text(c.al());
 			break;
 		}
 
@@ -294,6 +388,7 @@ namespace
 
 		case 0x0e:
 			vga_write_char(s, v.page, c.al(), c.bl(), v.render_mode != vga_render_mode::text);
+			if (s.host != nullptr) s.host->video_text(c.al());
 			break;
 
 		case 0x0f:
@@ -421,6 +516,7 @@ namespace
 					ch = read8(s, c.es(), uint16_t(c.bp() + i));
 				}
 				vga_write_char(s, page, ch, attribute, true);
+				if (s.host != nullptr) s.host->video_text(ch);
 			}
 			if ((c.al() & 1) == 0)
 			{
@@ -546,6 +642,279 @@ namespace
 	}
 }
 
+namespace
+{
+	uint32_t read32(machine_state& s, uint32_t address)
+	{
+		return mem_read16(s, address) | uint32_t(mem_read16(s, address + 2)) << 16;
+	}
+
+	void write32(machine_state& s, uint32_t address, uint32_t value)
+	{
+		mem_write16(s, address, uint16_t(value));
+		mem_write16(s, address + 2, uint16_t(value >> 16));
+	}
+
+	int floppy_count(const machine_state& s)
+	{
+		return ((s.bios.equipment >> 6) & 3) + 1;
+	}
+
+	int hard_disk_count(const machine_state& s)
+	{
+		return (s.bios.drives[2].device != nullptr) + (s.bios.drives[3].device != nullptr);
+	}
+
+	// AH=02h-05h's address: CH holds the cylinder's low eight bits, CL the
+	// sector and the cylinder's top two, DH the head.
+	bool chs_to_lba(const bios_drive& drive, const cpu_state& c, uint64_t& lba)
+	{
+		const disk_geometry& g = drive.geometry;
+		const uint32_t cylinder = c.ch() | uint32_t(c.cl() & 0xc0) << 2;
+		const uint32_t sector = c.cl() & 0x3fu;
+		if (sector == 0 || sector > g.sectors_per_track || c.dh() >= g.heads || cylinder >= g.cylinders) return false;
+		lba = (uint64_t(cylinder) * g.heads + c.dh()) * g.sectors_per_track + sector - 1;
+		return true;
+	}
+
+	// Moves sectors between a drive and memory one at a time, so a transfer
+	// that runs off the end of the disk stops where it does. Returns the
+	// status INT 13h reports.
+	uint8_t transfer(machine_state& s, bios_drive& drive, bool write, bool verify, uint64_t lba, uint32_t count,
+	                 uint32_t address, uint32_t& done)
+	{
+		uint8_t sector[512];
+		const uint64_t total = drive.device->sectors();
+		for (done = 0; done < count; ++done, ++lba, address += sizeof(sector))
+		{
+			if (lba >= total) return 0x04; // sector not found
+			if (verify) continue;
+			if (write)
+			{
+				for (uint32_t i = 0; i < sizeof(sector); ++i) sector[i] = mem_read8(s, address + i);
+				if (!drive.device->write(lba, sector, 1)) return 0xcc; // write fault
+			}
+			else
+			{
+				if (!drive.device->read(lba, sector, 1)) return 0x10; // uncorrectable error
+				for (uint32_t i = 0; i < sizeof(sector); ++i) mem_write8(s, address + i, sector[i]);
+			}
+		}
+		return 0;
+	}
+
+	// INT 13h in boot mode. The floppies are an XT's - no change line, AH=08h
+	// answered - and the hard disks what an XT-IDE card's BIOS offers: CHS,
+	// plus the LBA calls on a drive that has them.
+	void disk_interrupt(machine_state& s)
+	{
+		cpu_state& c = s.cpu;
+		const uint8_t function = c.ah();
+		const bool hard = (c.dl() & 0x80) != 0;
+		const int index = bios_drive_index(c.dl());
+		bios_drive* drive = index >= 0 && s.bios.drives[index].device != nullptr ? &s.bios.drives[index] : nullptr;
+		const bool extended = hard && drive != nullptr && drive->extensions;
+		// A floppy drive with nothing in it times out; a drive that is not
+		// there at all is a bad command.
+		const uint8_t absent = !hard && index >= 0 && index < floppy_count(s) ? 0x80 : 0x01;
+
+		const auto finish = [&](uint8_t status) {
+			c.set_ah(status);
+			set_carry(s, status != 0);
+			if (drive != nullptr) drive->status = status;
+			write8(s, bda_segment, hard ? 0x74 : 0x41, status);
+		};
+
+		switch (function)
+		{
+		case 0x00: case 0x0d: case 0x11: // reset, reset hard disk, recalibrate
+			finish(0);
+			return;
+
+		case 0x01:
+			finish(drive != nullptr ? drive->status : read8(s, bda_segment, hard ? 0x74 : 0x41));
+			return;
+
+		case 0x02: case 0x03: case 0x04: // read, write, verify
+		{
+			if (drive == nullptr)
+			{
+				finish(absent);
+				return;
+			}
+			uint64_t lba = 0;
+			const uint8_t count = c.al();
+			if (count == 0)
+			{
+				finish(0x01);
+				return;
+			}
+			if (!chs_to_lba(*drive, c, lba))
+			{
+				c.set_al(0);
+				finish(0x04);
+				return;
+			}
+			uint32_t done = 0;
+			const uint8_t status = transfer(s, *drive, function == 0x03, function == 0x04, lba, count,
+			                                linear_address(c.es(), c.bx()), done);
+			c.set_al(uint8_t(done));
+			finish(status);
+			return;
+		}
+
+		case 0x05: // format a track: a floppy's sectors come back filled with F6h
+		{
+			if (drive == nullptr)
+			{
+				finish(absent);
+				return;
+			}
+			const disk_geometry& g = drive->geometry;
+			if (!hard)
+			{
+				if (c.ch() >= g.cylinders || c.dh() >= g.heads)
+				{
+					finish(0x04);
+					return;
+				}
+				uint8_t filled[512];
+				std::memset(filled, 0xf6, sizeof(filled));
+				const uint64_t first = (uint64_t(c.ch()) * g.heads + c.dh()) * g.sectors_per_track;
+				for (uint32_t i = 0; i < g.sectors_per_track; ++i)
+				{
+					if (!drive->device->write(first + i, filled, 1))
+					{
+						finish(0xcc);
+						return;
+					}
+				}
+			}
+			finish(0);
+			return;
+		}
+
+		case 0x08: // drive parameters
+		{
+			if (drive == nullptr && (hard || absent == 0x01))
+			{
+				c.set_dl(uint8_t(hard ? hard_disk_count(s) : floppy_count(s)));
+				finish(hard ? 0x07 : 0x01);
+				return;
+			}
+			disk_geometry g = drive != nullptr ? drive->geometry : disk_geometry{40, 2, 9};
+			const uint32_t last = std::min<uint32_t>(g.cylinders, 1024) - 1;
+			c.set_ch(uint8_t(last));
+			c.set_cl(uint8_t((g.sectors_per_track & 0x3f) | (last >> 2 & 0xc0)));
+			c.set_dh(uint8_t(g.heads - 1));
+			c.set_al(0);
+			if (hard)
+			{
+				c.set_dl(uint8_t(hard_disk_count(s)));
+			}
+			else
+			{
+				const uint32_t sectors = g.cylinders * g.heads * g.sectors_per_track;
+				c.set_bx(sectors == 2400 ? 2 : sectors == 1440 ? 3 : sectors == 2880 ? 4 : sectors == 5760 ? 6 : 1);
+				c.set_dl(uint8_t(floppy_count(s)));
+				c.set_es(0xf000);
+				c.set_di(rom_diskette_table);
+			}
+			finish(0);
+			return;
+		}
+
+		case 0x0c: case 0x10: case 0x14: // seek, test ready, controller diagnostic
+			finish(hard ? (drive != nullptr ? 0 : 0x01) : 0x01);
+			return;
+
+		case 0x15: // drive type, which reports in AH rather than a status
+			if (hard && drive != nullptr)
+			{
+				const disk_geometry& g = drive->geometry;
+				const uint64_t sectors = std::min<uint64_t>(drive->device->sectors(),
+				                                            uint64_t(g.cylinders) * g.heads * g.sectors_per_track);
+				const uint32_t reported = uint32_t(std::min<uint64_t>(sectors, 0xffffffff));
+				c.set_cx(uint16_t(reported >> 16));
+				c.set_dx(uint16_t(reported));
+				c.set_ah(0x03);
+			}
+			else
+			{
+				c.set_ah(!hard && absent == 0x80 ? 0x01 : 0x00);
+			}
+			set_carry(s, false);
+			return;
+
+		case 0x41: // are the LBA calls there?
+			if (extended && c.bx() == 0x55aa)
+			{
+				c.set_bx(0xaa55);
+				c.set_ah(0x21); // EDD 1.1
+				c.set_cx(0x0001); // the fixed disk access calls: 42h-44h, 47h and 48h
+				set_carry(s, false);
+				return;
+			}
+			finish(0x01);
+			return;
+
+		case 0x42: case 0x43: case 0x44: case 0x47: // read, write, verify, seek by LBA
+		{
+			// DS:SI is the disk address packet: its size, a count of sectors,
+			// the buffer and the first sector. The count comes back as done.
+			const uint32_t packet = linear_address(c.ds(), c.si());
+			if (!extended || mem_read8(s, packet) < 0x10)
+			{
+				finish(0x01);
+				return;
+			}
+			const uint64_t lba = read32(s, packet + 8) | uint64_t(read32(s, packet + 12)) << 32;
+			if (function == 0x47)
+			{
+				finish(lba < drive->device->sectors() ? 0 : 0x04);
+				return;
+			}
+			const uint32_t buffer = linear_address(mem_read16(s, packet + 6), mem_read16(s, packet + 4));
+			uint32_t done = 0;
+			const uint8_t status = transfer(s, *drive, function == 0x43, function == 0x44, lba,
+			                                mem_read16(s, packet + 2), buffer, done);
+			mem_write16(s, packet + 2, uint16_t(done));
+			finish(status);
+			return;
+		}
+
+		case 0x48: // drive parameters by LBA
+		{
+			const uint32_t buffer = linear_address(c.ds(), c.si());
+			if (!extended || mem_read16(s, buffer) < 0x1a)
+			{
+				finish(0x01);
+				return;
+			}
+			const uint64_t total = drive->device->sectors();
+			const disk_geometry& g = drive->geometry;
+			// Beyond what CHS can reach the geometry means nothing, and EDD
+			// says so with bit 1 clear and the largest values instead.
+			const bool chs = total <= 16383ull * 16 * 63;
+			mem_write16(s, buffer, 0x1a);
+			mem_write16(s, buffer + 2, chs ? 0x0002 : 0x0000);
+			write32(s, buffer + 4, chs ? g.cylinders : 16383);
+			write32(s, buffer + 8, chs ? g.heads : 16);
+			write32(s, buffer + 12, chs ? g.sectors_per_track : 63);
+			write32(s, buffer + 16, uint32_t(total));
+			write32(s, buffer + 20, uint32_t(total >> 32));
+			mem_write16(s, buffer + 24, 512);
+			finish(0);
+			return;
+		}
+
+		default: // 09h-0Bh, 16h-18h and the rest: not on a 5150 or an XT-IDE card
+			finish(0x01);
+			return;
+		}
+	}
+}
+
 bool bios_interrupt(machine_state& s, uint8_t vector)
 {
 	cpu_state& c = s.cpu;
@@ -582,6 +951,11 @@ bool bios_interrupt(machine_state& s, uint8_t vector)
 		return true;
 
 	case 0x13:
+		if (s.boot_mode)
+		{
+			disk_interrupt(s);
+			return true;
+		}
 		// No disk hardware. Reset succeeds, everything else reports "invalid
 		// command" so that copy-protection code fails cleanly.
 		if (c.ah() == 0x00)
@@ -676,6 +1050,13 @@ bool bios_interrupt(machine_state& s, uint8_t vector)
 		case 0x02:
 		case 0x04:
 		{
+			// A 5150 has no clock chip; DOS asks the user instead.
+			if (s.boot_mode)
+			{
+				c.set_ah(0x86);
+				set_carry(s, true);
+				return true;
+			}
 			int year = 1990, month = 1, day = 1, weekday = 1, hour = 0, minute = 0, second = 0, hundredths = 0;
 			if (s.host) s.host->clock(year, month, day, weekday, hour, minute, second, hundredths);
 			const auto bcd = [](int value) { return uint8_t(((value / 10) << 4) | (value % 10)); };
@@ -700,6 +1081,11 @@ bool bios_interrupt(machine_state& s, uint8_t vector)
 			set_carry(s, true);
 			return true;
 		}
+
+	case 0x19:
+		if (!s.boot_mode) return false;
+		bios_bootstrap(s);
+		return true;
 
 	case 0x33:
 		mouse_interrupt(s);

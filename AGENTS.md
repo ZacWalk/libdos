@@ -21,7 +21,8 @@ covers at a glance.
 - `src/` is platform independent. No `windows.h`, no `wchar_t` in new API, no
   file-system access, no threads.
 - The library takes bytes and returns bytes. Reading files is the host's job,
-  through `host_services` in `src/host.h`.
+  through `host_services` in `src/host.h` - and in boot mode through the
+  `block_device`s in `src/block-device.h` a host attaches as drives.
 - `app/` (dui) talks to the outside world through `pf::` only - window, menu, input,
   audio, dialogs and file paths. It names no operating system, and nothing
   Win32-shaped may go into platform-h to make it easier; see that repo's rules.
@@ -194,13 +195,19 @@ whether a test already encodes the current behaviour:
   (IO.SYS, MSDOS.SYS, then the label); a hard disk's cylinder-aligned
   partitions, EBR chain, partition types and CHS addresses past cylinder 1023;
   and the reader listing and reading back files, a subdirectory's included.
+- Boot mode: a boot sector reading by CHS and by LBA, the LBA calls switched
+  off, a floppy booting without 55AAh, INT 13h AH=08h for both kinds of drive,
+  the IBM PC ROM with nothing mapped above INT 1Fh, a restart through
+  FFFF:0000, and nothing to boot.
 
 The suite cannot see the biggest consumer: demu builds MS-DOS 4.00 in
 [dos4z](https://github.com/ZacWalk/dos4z) with the original 1988 toolchain,
 and a change to `src/dos.cpp`, `src/command.cpp` or `src/cpu.cpp` should still
 produce every one of that build's binaries byte for byte. dos4z's
 `make-dos.ps1 -LibdosPath ..\libdos` builds with this checkout's demu, and its
-disk images with this checkout's dimg.
+disk images with this checkout's dimg; its `test-boot.ps1 -LibdosPath ..\libdos`
+boots the result with `demu --boot` - floppies, hard disks by CHS and by LBA,
+FDISK and FORMAT - and is the gate for `src/bios.cpp` and `cli/boot.cpp`.
 
 A green build proves nothing on its own - run `.\dd.ps1 test --label libdos`.
 It runs two CTest entries in each configuration: `demu_suite`, the demu

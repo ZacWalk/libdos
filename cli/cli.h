@@ -2,8 +2,8 @@
 
 // libdos by Zac Walker
 //
-// What demu's two halves share: the -- commands in main.cpp, and the program
-// runner in runner.cpp.
+// What demu's parts share: the -- commands in main.cpp, the program runner in
+// runner.cpp and boot mode in boot.cpp.
 
 // Describes a DOS executable: the MZ header, or that it is a COM file.
 int show_info(const char* path);
@@ -14,3 +14,11 @@ int run_dos_program(int argc, char** argv);
 
 // The runner's half of the usage text.
 void runner_usage();
+
+// demu --boot: boot mode, headless. Attaches disk images, powers on, and
+// carries out --expect and --type steps against the console; returns 0 when
+// they have all happened.
+int run_boot(int argc, char** argv);
+
+// Its half of the usage text.
+void boot_usage();

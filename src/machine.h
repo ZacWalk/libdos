@@ -30,6 +30,9 @@ constexpr uint16_t callback_segment = 0xf000;
 constexpr uint16_t callback_offset = 0xe000;
 constexpr uint8_t callback_opcode = 0xf1;
 
+// The callback boot mode's reset vector makes: power the machine off and on.
+constexpr uint8_t callback_power_on = 0xfe;
+
 struct machine_state
 {
 	uint8_t memory[memory_size] = {};
@@ -48,6 +51,7 @@ struct machine_state
 	uint64_t cycles = 0;
 	uint32_t cpu_hz = 8000000;
 	cpu_model model = cpu_model::i386;
+	bool boot_mode = false; // no DOS mapped in: whatever was booted owns INT 20h and up
 	bool exited = false;
 	uint8_t exit_code = 0;
 	bool faulted = false; // stopped by the emulator, not by the program; `error` says why
@@ -177,6 +181,19 @@ public:
 	// lands when no program has been started.
 	void start_shell();
 	bool shell_active() const;
+
+	// Boot mode: an IBM PC with no DOS mapped in, which loads a disk's boot
+	// sector and runs whatever it finds - DOS's own IO.SYS and MSDOS.SYS, on
+	// the emulated BIOS. Drives 00h and 01h are floppies, 80h and 81h hard
+	// disks. The device stays the host's and must outlive the machine, or be
+	// detached with a null one; `extensions` gives a hard disk INT 13h's LBA
+	// calls, AH=41h-48h. Attach the drives before power_on.
+	bool attach_disk(uint8_t drive, block_device* device, const disk_geometry& geometry, bool extensions);
+
+	// Starts the machine in boot mode from `drive`, as its power switch would.
+	// A program jumping to FFFF:0000 does the same. False if there is nothing
+	// to boot there, with error() saying so.
+	bool power_on(uint8_t drive);
 
 	// Runs a program by name, exactly as typing it at the prompt would, so it
 	// returns to the prompt when it ends.
