@@ -62,6 +62,16 @@ when a review turns one up, add it here rather than in AGENTS.md.
   than any program's, and doing it here would put a test on every access, so
   it was not carried over; `--trace-tail` and the suite cover that ground.
 
+## Disk images
+
+- dimg makes a new image; it cannot add a file to one that exists, make a
+  subdirectory, or write into an image DOS has used. `-extract` only reads.
+- FAT12 and FAT16 only, as DOS 4.0 knows them. A FAT32 partition is listed as
+  one it cannot read, and long file names are skipped.
+- The geometry is always 63 sectors a track. A real XT-IDE or CF card set up
+  through its own BIOS at another geometry wants that geometry's partitions,
+  which only FDISK on the machine makes.
+
 ## The C compiler
 
 - No floating point at run time. A floating literal folds in `double` inside a

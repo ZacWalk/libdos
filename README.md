@@ -10,6 +10,10 @@ An embeddable DOS emulator library, and the tools built on it:
   [dos4z](https://github.com/ZacWalk/dos4z), MS-DOS 4.00 from source, with the
   original 1988 toolchain.
 - **dui** is the windowed app: point it at a folder with a DOS game and play.
+- **dimg** makes bootable DOS disk images - a floppy, or a hard disk
+  partitioned and formatted the way DOS 4.0's FDISK and FORMAT leave one - and
+  lists or copies out the files on one. dos4z's boot floppies and the
+  CompactFlash card images for an IBM 5150 are made with it.
 
 libdos is not a PC emulator with DOS installed on it. It emulates the hardware
 a program talks to - the CPU, the VGA, the timer, the AdLib - and *maps* the
@@ -54,6 +58,8 @@ a DOS extender will not run).
 | `app/` | dui, written against the shared [platform-h](https://github.com/ZacWalk/platform-h) layer: window, menu, picture, sound and the key mapping, with no operating system named. |
 | `cli/` | demu: the test suite, plus tools to inspect, disassemble, trace and headlessly run a program. |
 | `cc/` | A C compiler for 16-bit DOS. Platform independent, and it opens no files either. `cc/include` and `cc/lib` are the C library it compiles against. |
+| `disk/` | Bootable DOS disk images - FAT12 floppies and partitioned FAT12/FAT16 hard disks - and the reader that finds the files on one again. Platform independent and opens no files: a caller supplies the bytes and a sink or a source for the sectors. Builds `libdos_disk`. |
+| `dimg/` | dimg, the command line for `disk/`: the files, the sparse image file and the options. |
 | `shell/` | `dos.h` and a DOS command interpreter written in C, built by `cc/`. |
 | `tools/` | `make-font.ps1`, which regenerates the character generator in `src/rom-font.cpp`. |
 | `docs/` | [design.md](docs/design.md) (architecture) and [todo.md](docs/todo.md) (gaps). |
@@ -75,7 +81,7 @@ cmake --preset release
 cmake --build --preset release
 ```
 
-Binaries land in `exe/` as `dui.exe` and `demu.exe`, with a `-d` suffix
+Binaries land in `exe/` as `dui.exe`, `demu.exe` and `dimg.exe`, with a `-d` suffix
 for Debug. Build trees go under `build/<preset>/`. The platform layer is pulled
 in by `FetchContent` at the revision pinned in `CMakeLists.txt`, except that a
 sibling `../platform-h` checkout is used instead when one exists.
@@ -222,6 +228,39 @@ the instructions it ran on the way there. `--keys` types on the emulated
 keyboard as the program runs, which is what gets a game past its title screen
 without dui.
 
+## dimg
+
+```powershell
+dimg -o <image> -b <bindir> [options]   # make a floppy, or a hard disk with -hd
+dimg -dir <image>                       # list the volumes and the files on them
+dimg -extract <image> <path> <file>     # copy a file out: C:\DOS\FORMAT.COM
+```
+
+makes a disk that boots the DOS in `<bindir>`: its boot sector from
+`MSBOOT.BIN`, then `IO.SYS` and `MSDOS.SYS` as the first two root directory
+entries - which the boot sector needs - then the volume label, `COMMAND.COM`
+and anything given with `-f`. A floppy is 360 KB (`-s 360`, the default) or
+1.44 MB (`-s 1440`).
+
+`-hd <MB>` makes a partitioned hard disk instead, behind FDISK's master boot
+record (`FDBOOT.BIN`): C: is the primary partition and logical drives in an
+extended partition fill the rest of the disk, up to Z:. Partitions end on a
+cylinder of 63 sectors and 16 heads - 255 above 504 MB - and each is laid out as
+DOS 4.0's FORMAT lays one out, so FDISK, FORMAT and CHKDSK see what they made
+themselves. `-p <MB>` caps a partition (2047 MB at most), `-lba` uses the LBA
+partition types 0Eh and 0Fh, `-heads` changes the geometry and `-nosys` leaves
+the system files off. The image is a sparse file, so a 32 GB card image takes
+the few megabytes that are written; dimg prints the DOSBox `imgmount` line
+that matches it.
+
+The files are dated, and the volumes numbered, from the time now - or, for a
+build that comes out the same every time, from `-t <seconds since 1970>` or
+`SOURCE_DATE_EPOCH`, read as UTC.
+
+`-dir` and `-extract` read any FAT12 or FAT16 image, from dimg or not: a floppy,
+or a hard disk's primary partitions then its logical drives, lettered as DOS
+letters them.
+
 ## Embedding
 
 Link the `libdos` CMake target and include `src/machine.h`. Implement
@@ -231,10 +270,11 @@ read `framebuffer()` and `generate_audio()`. `app/main.cpp` is a complete
 worked host.
 
 Pulled into another CMake project - with `add_subdirectory` or `FetchContent` -
-libdos builds only its libraries: `libdos`, `libdos_cc` (the compiler) and
-`libdos_host` (the Windows host). `LIBDOS_BUILD_TOOLS` and `LIBDOS_BUILD_APP`
-turn demu and dui on; they default to on only when libdos is the top-level
-project, and only dui fetches the platform layer.
+libdos builds only its libraries: `libdos`, `libdos_cc` (the compiler),
+`libdos_disk` (disk images) and `libdos_host` (the Windows host).
+`LIBDOS_BUILD_TOOLS` and `LIBDOS_BUILD_APP` turn demu and dimg, and dui, on;
+they default to on only when libdos is the top-level project, and only dui
+fetches the platform layer.
 
 ## Licence
 

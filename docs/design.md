@@ -5,7 +5,7 @@ How the emulator is put together and why. For what is *not* built yet, see
 
 ## Shape
 
-Four pieces, with a hard boundary between the first and the rest:
+The pieces, with a hard boundary between `src/` and the rest:
 
 | | |
 |---|---|
@@ -15,6 +15,8 @@ Four pieces, with a hard boundary between the first and the rest:
 | `cli/` | demu, a console harness that drives the library headlessly and doubles as the debugger, and the runner that builds MS-DOS with its 1988 toolchain (`runner.cpp`, with LIB's stand-in in `lib-omf.c`). |
 | `cc/` | A C compiler targeting 16-bit DOS. Platform independent, and like `src/` it opens no files. |
 | `shell/` | A DOS command interpreter written in C and built by `cc/`. |
+| `disk/` | Bootable DOS disk images and a reader for them. Platform independent, and it opens no files. |
+| `dimg/` | dimg, the command line for `disk/`. |
 
 `machine` is the embeddable façade; `machine_state` is the whole machine as
 plain data. `machine` owns exactly one `machine_state` and is non-copyable.
@@ -371,6 +373,32 @@ interrupt thunks (`__int21`, `__int21si`, `__int10`) and `__seg`; everything
 else is ordinary C. There is no linker, so a program that wants the C library
 in `cc/lib/libc.c` includes it rather than linking against it, and the headers
 in `cc/include` are declarations only.
+
+## Disk images
+
+`disk/` makes the disks a real DOS boots from, which is a different job from
+the emulator's: there, a folder is the drive; here, the drive is FAT on
+sectors. It takes the boot code and the files' bytes and writes through a
+`disk_sink`, which is told the image's size first and then gets only the
+sectors that hold something - so dimg's sink is a sparse file and a 32 GB card
+image costs the few megabytes written, and the suite's is a map of sectors.
+
+The layout is DOS 4.0's own, so that FDISK, FORMAT, CHKDSK and SYS on the
+machine find what they would have made. A hard disk has 63 sectors a track and
+16 heads up to 504 MB, 255 above; a partition starts a track into its
+cylinder - the first sector holds its partition table, FDISK's MBR for C: or an
+EBR for a logical drive - and ends on a cylinder; the types are FDISK's (01h up
+to 32680 sectors, 04h to 32 MB, 06h beyond, or 0Eh and 0Fh with LBA). Each
+volume gets the cluster size IO.SYS's DiskTable2 gives one of its size, and a
+FAT just big enough for the clusters left. Files are never deleted from an
+image being built, so each one is contiguous, which IO.SYS has to be. The date
+and serial number come from the caller in a `disk_stamp`, so a build that fixes
+them gets the same image every time.
+
+The reader goes the other way and assumes nothing it made: it takes the
+parameter block's word for the layout, finds the logical drives by walking the
+EBR chain, tells FAT12 from FAT16 by the cluster count as DOS does, and gives up
+on a chain that leaves the volume or loops.
 
 ## Introspection
 
