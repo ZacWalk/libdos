@@ -2828,6 +2828,25 @@ namespace
 			check(!m.power_on(0x80) && strstr(m.error(), "nothing to boot") != nullptr,
 			      "with no disk there is nothing to boot");
 		}
+
+		// cc's INT 13h thunk, as DISKINFO uses it. Mapped, there is no disk:
+		// a reset works and anything else is a bad command, with the carry set.
+		const char* disk_program =
+			"int __int13(int ax, int bx, int cx, int dx);\n"
+			"int __int21(int ax, int bx, int cx, int dx);\n"
+			"extern int __cf;\n"
+			"int main(void) {\n"
+			"  int ax;\n"
+			"  __int13(0x0000, 0, 0, 0x80);\n"
+			"  __int21(0x0200, 0, 0, __cf == 0 ? 'R' : '!');\n"
+			"  ax = __int13(0x0800, 0, 0, 0x80);\n"
+			"  __int21(0x0200, 0, 0, __cf != 0 && (ax >> 8) == 1 ? 'F' : '!');\n"
+			"  return 0;\n"
+			"}\n";
+		std::vector<uint8_t> image;
+		check(compile_text(disk_program, image, "disk.c"), "a program calling __int13 compiles");
+		if (!image.empty())
+			check(run_image(image, nullptr).find("RF") != std::string::npos, "__int13 reaches INT 13h and reports the carry");
 	}
 
 	int run_tests()

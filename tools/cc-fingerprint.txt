@@ -2,8 +2,8 @@ bench             12352 bytes  E9A6EF49E6F00017
 bench-386         12340 bytes  FD8C441057960D4F
 bench-no-inline   12352 bytes  A1A5567269EA631F
 roundtrip           843 bytes  2009A13D87C123FE
-shell              6064 bytes  55AB10201FCE5F6A
-hello              1175 bytes  92BDE6669433FFB6
+shell              6007 bytes  AAA123D384331F1F
+hello              1176 bytes  CE37EAA4BF50249C
 bench-run        exit code 216, 5695016 instructions, 44906002 cycles
 bench-native     checksum 865786815
 bench-native     returned 216
