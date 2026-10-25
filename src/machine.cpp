@@ -1,4 +1,4 @@
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // The machine: memory, the I/O port map, the interrupt stubs that make the
 // emulator's DOS and BIOS reachable through the vector table, and the exec
@@ -105,6 +105,19 @@ void machine_callback(machine_state& s, uint8_t index)
 		pic_write(s, 0x20, 0x20);
 		return;
 	}
+	if (index == callback_power_on)
+	{
+		// Only the boot ROM's reset entry holds this callback; a program
+		// under the mapped DOS that runs into it does not wipe that DOS.
+		if (!s.boot_mode) return;
+		// The cycle count runs on through a reboot: the host's exec loop
+		// is still measuring against it.
+		const uint64_t cycles = s.cycles;
+		machine_reset(s);
+		s.cycles = cycles;
+		bios_bootstrap(s);
+		return;
+	}
 
 	// An interrupt-level trace is how you find out why a program gave up, so
 	// it reports the call before it is serviced.
@@ -119,7 +132,7 @@ void machine_callback(machine_state& s, uint8_t index)
 		s.host->trace(text);
 	}
 
-	if (dos_interrupt(s, index)) return;
+	if (!s.boot_mode && dos_interrupt(s, index)) return;
 	if (bios_interrupt(s, index)) return;
 	// Anything else falls through to the IRET in the stub.
 }
@@ -176,6 +189,7 @@ void io_write8(machine_state& s, uint16_t port, uint8_t value)
 		kbd_write(s, port, value);
 		return;
 	case 0x61:
+		pit_sync(s); // the gate decides whether channel 2 has been counting
 		s.kbd.port_61 = value;
 		s.pit.channel[2].gate = (value & 1) != 0;
 		sound_queue_write(s, 0x61, value);
@@ -201,42 +215,116 @@ void machine::set_host(host_services* host)
 	state_->host = host;
 }
 
+void machine::set_cpu_model(cpu_model model)
+{
+	state_->model = model;
+}
+
+void machine::set_dos_version(uint8_t major, uint8_t minor)
+{
+	state_->dos.config.version_major = major;
+	state_->dos.config.version_minor = minor;
+}
+
+bool machine::set_environment(const char* const* variables, int count)
+{
+	dos_config& config = state_->dos.config;
+	int length = 0;
+	for (int i = 0; i < count; ++i)
+	{
+		const int size = int(std::strlen(variables[i])) + 1;
+		if (length + size + 1 > int(sizeof(config.environment))) return false;
+		std::memcpy(config.environment + length, variables[i], size_t(size));
+		length += size;
+	}
+	config.environment_length = length;
+	return true;
+}
+
+bool machine::set_current_directory(const char* dos_path)
+{
+	machine_state& s = *state_;
+	char path[192] = {};
+	dos_resolve_path(s, dos_path, path, sizeof(path));
+	const int drive = path[0] - 'A';
+	if (drive < 0 || drive > 2 || s.host == nullptr || !s.host->directory_exists(path)) return false;
+	// DOS keeps 64 characters of a drive's current directory; a longer one
+	// is refused rather than cut to a directory that does not exist.
+	const char* directory = path[3] != 0 ? path + 2 : "";
+	if (std::strlen(directory) >= sizeof(s.dos.cwd[drive])) return false;
+	snprintf(s.dos.cwd[drive], sizeof(s.dos.cwd[drive]), "%s", directory);
+	s.dos.current_drive = uint8_t(drive);
+	return true;
+}
+
+void machine_fault(machine_state& s, const char* reason)
+{
+	if (s.error[0] == 0) snprintf(s.error, sizeof(s.error), "%s", reason);
+	s.faulted = true;
+	s.exited = true;
+	s.exit_code = 255;
+}
+
 void machine_reset(machine_state& s)
 {
 	host_services* host = s.host;
 	const uint32_t cpu_hz = s.cpu_hz;
+	const cpu_model model = s.model;
 	const bool trace = s.trace;
+	const bool boot_mode = s.boot_mode;
+
+	// Audio is the host's setting, not the machine's. Losing it here silences
+	// every program started from the shell prompt.
+	const bool audio_enabled = s.sound.enabled;
+	const int volume = s.sound.volume;
 
 	std::memset(s.memory, 0, sizeof(s.memory));
 	cpu_reset(s.cpu);
 	pit_reset(s.pit);
 	pic_reset(s.pic);
 	sound_reset(s.sound);
+	s.sound.enabled = audio_enabled;
+	s.sound.volume = volume;
 	s.kbd = keyboard_controller();
 	s.cycles = 0;
-	s.next_render = 0;
 	s.exited = false;
 	s.exit_code = 0;
+	s.faulted = false;
 	s.error[0] = 0;
 	s.host = host;
 	s.cpu_hz = cpu_hz;
+	s.model = model;
 	s.trace = trace;
+	s.boot_mode = boot_mode;
 	s.shell = shell_state();
 
-	// A far jump to the BIOS entry point at the reset vector, so a program
-	// that jumps to F000:FFF0 restarts rather than executing rubbish.
+	// A far jump to itself at the reset vector, so a program that jumps to
+	// F000:FFF0 waits there rather than executing rubbish. Boot mode puts the
+	// power-on callback in its place.
 	s.memory[0xffff0] = 0xea;
 	s.memory[0xffff1] = 0xf0;
 	s.memory[0xffff2] = 0xff;
 	s.memory[0xffff3] = 0x00;
 	s.memory[0xffff4] = 0xf0;
 
-	for (int vector = 0; vector < 0x80; ++vector) machine_install_vector(s, uint8_t(vector));
+	// Booted, the machine has the BIOS's vectors and nothing above them: the
+	// DOS it loads installs its own.
+	const int vectors = boot_mode ? 0x20 : 0x80;
+	for (int vector = 0; vector < vectors; ++vector) machine_install_vector(s, uint8_t(vector));
 
 	bios_reset(s);
 	vga_reset(s.vga);
 	vga_set_mode(s, 3);
-	dos_reset(s);
+	if (boot_mode)
+	{
+		bios_reset_pc(s);
+		s.cpu.set_cs(0xf000);
+		s.cpu.ip = 0xfff0;
+	}
+	else
+	{
+		dos_reset(s);
+	}
 
 	// Unmask the timer and keyboard interrupts, as the BIOS leaves them.
 	s.pic.master.imr = 0xfc;
@@ -254,6 +342,7 @@ void machine::reset()
 bool machine::load_program(const uint8_t* image, uint32_t size, const char* dos_path, const char* command_line)
 {
 	machine_state& s = *state_;
+	s.boot_mode = false;
 	reset();
 	if (!dos_load_program(s, image, size, dos_path, command_line, s.error, sizeof(s.error)))
 	{
@@ -289,17 +378,27 @@ uint64_t machine::exec(uint64_t budget)
 	uint64_t spent = 0;
 	bool rendered = false;
 
+	// Sample the picture at the *last* emulated retrace inside this budget. A
+	// program that waits for retrace before drawing has finished by then, and
+	// taking the last one rather than the first stops the frame the host shows
+	// ageing by a variable amount when the budget spans two retraces.
+	const uint64_t frame_cycles = s.cpu_hz / 70;
+	const uint64_t retrace = frame_cycles - frame_cycles / 20;
+	const uint64_t end = s.cycles + budget;
+	uint64_t render_at = (end / frame_cycles) * frame_cycles + retrace;
+	// A budget shorter than a frame may hold no retrace at all, before the
+	// first one especially; then the picture is taken at the end.
+	while (render_at > end && render_at >= frame_cycles) render_at -= frame_cycles;
+
 	while (spent < budget && !s.exited)
 	{
 		const int cost = cpu_step(s);
 		s.cycles += uint64_t(cost);
 		spent += uint64_t(cost);
-		pit_step(s, uint64_t(cost));
+		s.pit.pending += uint64_t(cost);
+		if (s.pit.pending >= s.pit.due) pit_sync(s);
 
-		// Sample the picture at the emulated vertical retrace: a program that
-		// waits for retrace before drawing has finished by then, so the frame
-		// the host sees is a whole one rather than a half-drawn one.
-		if (!rendered && s.cycles >= s.next_render)
+		if (!rendered && s.cycles >= render_at)
 		{
 			vga_render(s);
 			rendered = true;
@@ -314,30 +413,57 @@ uint64_t machine::exec(uint64_t budget)
 
 	if (!rendered) vga_render(s);
 
-	const uint64_t frame_cycles = s.cpu_hz / 70;
-	const uint64_t retrace = frame_cycles - frame_cycles / 20;
-	s.next_render = (s.cycles / frame_cycles) * frame_cycles + retrace;
-	if (s.next_render <= s.cycles) s.next_render += frame_cycles;
-
 	draw_mouse_pointer(s);
 	return spent;
 }
 
 void machine::start_shell()
 {
+	state_->boot_mode = false;
 	machine_reset(*state_);
 	shell_start(*state_);
 }
 
 bool machine::shell_active() const { return state_->shell.active; }
 
+bool machine::attach_disk(uint8_t drive, block_device* device, const disk_geometry& geometry, bool extensions)
+{
+	const int index = bios_drive_index(drive);
+	if (index < 0) return false;
+	if (device != nullptr && (geometry.cylinders == 0 || geometry.heads == 0 || geometry.heads > 256 ||
+	                          geometry.sectors_per_track == 0 || geometry.sectors_per_track > 63))
+		return false;
+	bios_drive& d = state_->bios.drives[index];
+	d = bios_drive();
+	d.device = device;
+	d.geometry = geometry;
+	d.extensions = extensions && (drive & 0x80) != 0;
+	return true;
+}
+
+bool machine::power_on(uint8_t drive)
+{
+	machine_state& s = *state_;
+	s.boot_mode = true;
+	s.bios.boot_drive = drive;
+	machine_reset(s);
+	return bios_bootstrap(s);
+}
+
 bool machine::run_program(const char* name, const char* command_line)
 {
-	return shell_run(*state_, name, command_line);
+	machine_state& s = *state_;
+	if (!shell_run(s, name, command_line)) return false;
+
+	// Typing the name would have brought the prompt back after a program that
+	// would not load; a host starting one directly gets the same.
+	if (s.shell.active && !s.shell.program_running) shell_prompt(s);
+	return true;
 }
 
 bool machine::exited() const { return state_->exited; }
 uint8_t machine::exit_code() const { return state_->exit_code; }
+bool machine::faulted() const { return state_->faulted; }
 const char* machine::error() const { return state_->error; }
 
 const uint32_t* machine::framebuffer() const { return state_->vga.framebuffer; }

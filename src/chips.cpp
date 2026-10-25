@@ -1,4 +1,4 @@
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // 8253 timer, 8259 interrupt controllers and the 8042 keyboard controller.
 // The timer is the important one: DOS games reprogram channel 0 to get a
@@ -53,8 +53,24 @@ void pit_step(machine_state& s, uint64_t cycles)
 	}
 }
 
+void pit_sync(machine_state& s)
+{
+	pit_state& p = s.pit;
+	if (p.pending != 0)
+	{
+		const uint64_t cycles = p.pending;
+		p.pending = 0;
+		pit_step(s, cycles);
+	}
+	// Channel 0 reaches zero once `counter` more ticks have accumulated,
+	// counting the fraction of a tick already in the remainder.
+	const uint64_t needed = uint64_t(p.channel[0].counter) * s.cpu_hz - p.remainder;
+	p.due = (needed + pit_frequency - 1) / pit_frequency;
+}
+
 uint8_t pit_read(machine_state& s, uint16_t port)
 {
+	pit_sync(s);
 	pit_state& p = s.pit;
 	const int index = port & 3;
 	if (index > 2) return 0xff;
@@ -80,6 +96,7 @@ uint8_t pit_read(machine_state& s, uint16_t port)
 
 void pit_write(machine_state& s, uint16_t port, uint8_t value)
 {
+	pit_sync(s);
 	pit_state& p = s.pit;
 	const int index = port & 3;
 
@@ -126,6 +143,7 @@ void pit_write(machine_state& s, uint16_t port, uint8_t value)
 		break;
 	}
 	c.counter = channel_period(c);
+	pit_sync(s); // a new count moves when channel 0 is next due
 	if (index == 2) sound_queue_write(s, 0x42, c.reload);
 }
 

@@ -1,21 +1,43 @@
-# ovrwin
+# libdos
 
-Runs DOS games on modern Windows. Point it at a folder with a DOS executable
-and play.
+[![Build](https://github.com/ZacWalk/libdos/actions/workflows/build.yml/badge.svg)](https://github.com/ZacWalk/libdos/actions/workflows/build.yml)
 
-ovrwin is not a PC emulator with DOS installed on it. It emulates the hardware
-a game talks to - the CPU, the VGA, the timer, the AdLib - and *maps* the
+An embeddable DOS emulator library, and the tools built on it:
+
+- **demu** runs a DOS program from the command line - headlessly, with its
+  console on stdout and its exit code returned - and is also the debugger, the
+  front end of the C compiler and the test suite. It is what builds
+  [dos4z](https://github.com/ZacWalk/dos4z), MS-DOS 4.00 from source, with the
+  original 1988 toolchain, and what boots the result to test it (`--boot`).
+- **dui** is the windowed app: point it at a folder with a DOS game and play.
+- **dimg** makes bootable DOS disk images - a floppy, or a hard disk
+  partitioned and formatted the way DOS 4.0's FDISK and FORMAT leave one - and
+  lists or copies out the files on one. dos4z's boot floppies and the
+  CompactFlash card images for an IBM 5150 are made with it.
+
+libdos is not a PC emulator with DOS installed on it. It emulates the hardware
+a program talks to - the CPU, the VGA, the timer, the AdLib - and *maps* the
 software interfaces, INT 21h and the BIOS, onto the host the way Wine maps the
 Win32 API onto Linux. There is no DOS kernel in memory and no disk image: the
 folder you open is the emulated C: drive.
 
-Repository: <https://github.com/ZacWalk/ovrwin>
+Boot mode is the exception, for testing a DOS rather than running programs on
+one: the machine is an IBM PC with nothing mapped in, its BIOS serves disk
+images through INT 13h, and it boots whatever is on them. That is how
+[dos4z](https://github.com/ZacWalk/dos4z) checks that its MS-DOS 4.0 boots and
+works on an 8088 - see [Booting a disk](#booting-a-disk).
+
+![dui running a DOS demonstration in its Windows host](docs/screenshot.png)
+
+*An original demo built with the included 16-bit C compiler.*
+
+Repository: <https://github.com/ZacWalk/libdos>
 
 ## What is emulated
 
 | Part | Coverage |
 |------|----------|
-| CPU | 8086 and 80186: every documented opcode and addressing mode, the segment wrap, BCD arithmetic, and string instructions that resume correctly after an interrupt |
+| CPU | 8086 and 80186: every documented opcode and addressing mode, the segment wrap, BCD arithmetic, and string instructions that resume correctly after an interrupt. Strict 8086 models stop at anything an IBM PC's 8088 does not have |
 | Memory | The full 1 MiB real-mode space with the MCB chain, PSP and environment block a program expects to walk |
 | VGA / EGA / CGA | 256 KiB of display memory with the graphics controller's four write modes, latches, set/reset and bit mask; text modes, CGA 4/5/6, EGA 0Dh/0Eh/10h, VGA 12h and 13h; the 256-entry DAC and the EGA-compatible palette |
 | Timer | 8253 channels 0 and 2. A game that reprograms channel 0 for a music tick gets IRQ 0 at that rate, not at 18.2 Hz |
@@ -23,48 +45,58 @@ Repository: <https://github.com/ZacWalk/ovrwin>
 | Keyboard | 8042 controller with scancodes, the BIOS translation layer and the BIOS keyboard buffer, both reachable |
 | Sound | AdLib / OPL2: nine channels, two operators each, four waveforms, envelopes, feedback and both connection modes. PC speaker driven from timer channel 2 |
 | Mouse | INT 33h driver with position, buttons, ranges, motion counters and an on-screen pointer |
-| DOS | INT 21h: console, handle-based file I/O, directory search, memory allocation, the DTA, interrupt vectors, dates and times, `EXEC` for child processes, and the MZ/COM loader with relocation |
+| DOS | INT 21h: console, handle-based file I/O with DOS's per-process handle tables and redirection, directory search, memory allocation, the DTA, interrupt vectors, dates and times, `EXEC` for child processes and overlays, COMMAND.COM /C carried out natively, and the MZ/COM loader with relocation |
+| Disks | In boot mode only: INT 13h over disk images - two floppies, and two hard disks with CHS and the LBA calls - and INT 19h booting from them, on an IBM PC 5150's ROM |
 
 It also comes with a C compiler that targets 16-bit DOS, and a shell written in
 C and built with it - see [Building DOS programs](#building-dos-programs).
 
 How it all fits together is in [docs/design.md](docs/design.md). What is missing
 or approximate is in [docs/todo.md](docs/todo.md) - headline gaps are Sound
-Blaster digital audio, `EXEC` for child processes, and the 386 instruction set
-(so a DOS extender will not run).
+Blaster digital audio and the 386 instruction set (so a DOS extender will not
+run).
 
 ## Layout
 
 | Path | Contents |
 |------|----------|
-| `src/` | The emulator. Platform independent - no Windows headers, no file system. Builds `ovrwin.lib`. |
-| `host/` | The Windows implementation of the host interface: one directory presented as the emulated drive. |
-| `app/` | Win32 app: a window, a DIB blit, waveOut audio and the key mapping. |
-| `cli/` | Command line driver: the test suite, plus tools to inspect, disassemble, trace and headlessly run a program. |
+| `src/` | The emulator. Platform independent - no Windows headers, no file system. Builds `libdos`. |
+| `host/` | The Windows implementation of the host interface: one directory presented as the emulated drive, plus the pages the JIT executes from. Shared by demu and dui, and the last Windows-specific code in the repository. |
+| `app/` | dui, written against the shared [libdesktop](https://github.com/ZacWalk/libdesktop) layer: window, menu, picture, sound and the key mapping, with no operating system named. |
+| `cli/` | demu: the test suite and the debugger, the runner that builds dos4z with its 1988 toolchain (`runner.cpp`, with LIB's stand-in in `lib-omf.c`), and boot mode's headless runner (`boot.cpp`). |
 | `cc/` | A C compiler for 16-bit DOS. Platform independent, and it opens no files either. `cc/include` and `cc/lib` are the C library it compiles against. |
+| `disk/` | Bootable DOS disk images - FAT12 floppies and partitioned FAT12/FAT16 hard disks - and the reader that finds the files on one again. Platform independent and opens no files: a caller supplies the bytes and a sink or a source for the sectors. Builds `libdos_disk`. |
+| `dimg/` | dimg, the command line for `disk/`: the files, the sparse image file and the options. |
 | `shell/` | `dos.h` and a DOS command interpreter written in C, built by `cc/`. |
-| `tools/` | `make-font.ps1`, which regenerates the character generator in `src/rom-font.cpp`. |
-| `docs/` | [design.md](docs/design.md) (architecture) and [todo.md](docs/todo.md) (gaps). |
+| `tools/` | `make-font.ps1`, which regenerates the character generator in `src/rom-font.cpp`; `cc-fingerprint.ps1`, which pins what the compiler emits; and `port-gen.py`, from moving the compiler to C. |
+| `docs/` | [design.md](docs/design.md) (architecture), [todo.md](docs/todo.md) (gaps), [jit.md](docs/jit.md) (an x64 JIT, designed and measured) and [selfhost.md](docs/selfhost.md) (the compiler compiling itself). |
 
 ## Build and run
 
 ```powershell
-.\dd.ps1 test   # build + run the test suite
-.\dd.ps1 run    # build + launch the app
-.\dd.ps1 cli --info .\GAME\GAME.EXE
+.\dd.ps1 build              # both configurations
+.\dd.ps1 test               # build and run the suite
+.\dd.ps1 launch             # build Release, then start dui
+.\dd.ps1 bench --yes        # compile the benchmark for this machine and run it
+.\dd.ps1 bench --exe true --yes   # the same, but as a standalone exe\bench.exe
 ```
 
-Or with MSBuild directly:
+Or with CMake directly - `dd.ps1` only adds finding the toolchain:
 
 ```powershell
-msbuild ovrwin.sln /m /p:Configuration=Release /p:Platform=x64
+cmake --preset release
+cmake --build --preset release
 ```
 
-Binaries land in `bin/` as `<name><64|32><r|d>` - architecture then
-configuration, e.g. `ovrwin64d.lib`, `ovrwinapp64r.exe`, `ovrwincli64d.exe`.
-Intermediate artifacts go under `intermediate/`.
+Binaries land in `exe/` as `dui.exe`, `demu.exe` and `dimg.exe`, with a `-d` suffix
+for Debug. Build trees go under `build/<preset>/`. The platform layer is pulled
+in by `FetchContent` at the revision pinned in `CMakeLists.txt`, except that a
+sibling `../libdesktop` checkout is used instead when one exists.
 
-## The app
+Every [release](https://github.com/ZacWalk/libdos/releases) has the three for
+Windows x64 in a zip, with its SHA-256 alongside; dos4z's build downloads one.
+
+## dui
 
 Drop a program or a folder onto the window, open one through **File**, or pass
 one on the command line. Whichever you do, the folder becomes the emulated C:
@@ -99,8 +131,9 @@ solid block and never an uneven one. Each axis gets its own factor, bounded so
 a pixel is at least square and at most twice as tall as it is wide - roughly
 its shape on the display a 200-line mode was written for.
 
-Emulation is paced by the sound card: each frame's audio is queued to waveOut,
-and waiting for a free buffer is what keeps the machine running at real time.
+Emulation is paced by the sound card: each frame's audio is queued to the
+platform audio stream, and waiting for room in that queue is what keeps the
+machine running at real time. With sound off it falls back to the wall clock.
 
 ## Building DOS programs
 
@@ -110,15 +143,15 @@ and because a program compiled here and run there exercises the whole emulator
 from one end to the other.
 
 ```powershell
-.\bin\ovrwincli64d.exe --cc .\shell\hello.c        # writes hello.COM
-.\bin\ovrwincli64d.exe --run .\shell\hello.COM --screen
+.\exe\demu.exe --cc .\shell\hello.c        # writes hello.COM
+.\exe\demu.exe --run .\shell\hello.COM --screen
 ```
 
 A program that wants the C library includes it, because there is nothing to
 link with:
 
 ```powershell
-.\bin\ovrwincli64d.exe --cc prog.c -I cc\include -I cc\lib -D NDEBUG
+.\exe\demu.exe --cc prog.c -I cc\include -I cc\lib -D NDEBUG
 ```
 
 It is one pass with no syntax tree, in the shape of Fabrice Bellard's Tiny C
@@ -136,39 +169,176 @@ COMMAND.COM's command set. It runs as a real DOS program inside the emulator
 and launches others through INT 21h `EXEC`:
 
 ```powershell
-.\bin\ovrwincli64d.exe --cc .\shell\shell.c
+.\exe\demu.exe --cc .\shell\shell.c
 copy .\shell\shell.COM .\GAME\
-.\bin\ovrwincli64d.exe --run .\GAME\SHELL.COM --args "dir" --screen
+.\exe\demu.exe --run .\GAME\SHELL.COM --args "dir" --screen
 ```
 
-The prompt the app comes up with is a separate, native one: it has to work
+The prompt dui comes up with is a separate, native one: it has to work
 before any drive is mounted, and it is there whether or not you have built
 anything.
 
-## The command line
+## demu
 
-`ovrwincli64d.exe --test` runs the behavioural test suite and returns non-zero
-on failure. The same binary is the debugger:
+### Running a program
 
 ```powershell
-.\bin\ovrwincli64d.exe --info GAME.EXE                  # MZ header, memory needed
-.\bin\ovrwincli64d.exe --cc program.c [-I dir] [-D name=value]  # compile C to a DOS .COM
-.\bin\ovrwincli64d.exe --disasm GAME.EXE 40             # disassemble from the entry point
-.\bin\ovrwincli64d.exe --run GAME.EXE --frames 400 --bmp shot.bmp
-.\bin\ovrwincli64d.exe --run GAME.EXE --trace           # every DOS and BIOS call
-.\bin\ovrwincli64d.exe --run GAME.EXE --trace-tail 200  # the last instructions executed
-.\bin\ovrwincli64d.exe --run GAME.EXE --screen --state  # text screen, registers, memory
-.\bin\ovrwincli64d.exe --run .\GAME --args "dir" --screen  # mount a folder, use the shell
+.\exe\demu.exe [options] <program> [arguments]
+```
+
+runs a DOS program the way a command line runs a native one: headlessly, to
+its end, with its console on stdin, stdout and stderr and its exit code
+returned. A host directory is drive C: - `-r <dir>`, or the root of the current
+drive - and nothing outside it can be reached. PATH, INCLUDE, LIB, INIT, TMP,
+TEMP and COUNTRY are passed in with their paths moved onto that drive (`-e`
+adds more), and an entry no DOS program could use, outside the drive or with a
+long name, is left out. The date is fixed, 15 June 1988, so a build comes out
+the same whenever it runs.
+
+That is what builds [dos4z](https://github.com/ZacWalk/dos4z) - MS-DOS 4.00
+from its source, with the original MASM 5.10, CL 5.10, LINK 3.65 and NMAKE -
+and every binary comes out byte for byte as it did under the demu that grew
+into libdos. NMAKE starting COMMAND.COM /C is carried out natively, built-in
+commands, redirection and all; LIB.EXE, an OS/2 bound executable, is stood in
+for by an OMF library manager, which reaches files only under `-r` as a
+program would and fails as LIB does when one cannot be read or written. The
+processor is a strict 8086 unless `-cpu`
+says otherwise (`8086`, `186`, `386`), so a tool doing something an 8088
+cannot stops with the reason, rather than quietly doing it.
+
+```powershell
+cd C:\src\dos4z\dos\BOOT
+demu -r C:\src\dos4z C:\src\dos4z\dos\TOOLS\NMAKE.EXE
+```
+
+`-v` reports every DOS call and file open on stderr, `-d` describes the
+executable, and `-shell` reports DOS 4.00 rather than 3.20, for running
+COMMAND.COM itself.
+
+### Booting a disk
+
+```powershell
+demu --boot -a dos.img [-c hd.img] --expect "A>" --line "dir" --expect "bytes free" --screen
+```
+
+powers on an IBM PC 5150 - an 8088 at 4.77 MHz, 640 KB, the ROM's model byte
+and date - with disk images in its drives, `-a` and `-b` floppies and `-c` and
+`-d` hard disks, and boots from A: if there is a floppy and C: if not
+(`--from`). Nothing is mapped in: the DOS on the disk brings its own INT 21h,
+and the BIOS under it is libdos's, with INT 13h reading and writing the images.
+A hard disk has the geometry its partition table was made for - each
+partition ends on a cylinder, so its last head and sector say - or, blank,
+dimg's for its size; `--chs` sets another, up to 256 heads. It has the LBA
+calls, INT 13h AH=41h-48h, unless `--no-lba` takes them away - so both of a
+DOS's paths to a disk can be tried - and like the XT-IDE Universal BIOS it
+moves at most 127 sectors a call.
+
+The steps after it run in order against everything written through INT 10h:
+`--expect <text>` waits for text after the last match, `--type <text>` types
+it as it is, `--line <text>` types it and presses Enter, `--key <name>` presses
+Enter, Esc, an arrow or a function key, and `--reboot` restarts with the disks
+as they now are. Each key goes in once the console has been quiet for a
+moment, as a person types, so a program that flushes the keyboard after its
+prompt gets it.
+demu exits 0 when every step has happened and every key typed has been read, 1
+when an `--expect` timed out (`--timeout`, in emulated seconds) or keys were
+left unread, and 2 when the machine stopped - which the 8086 processor model
+does at any instruction an 8088 does not have. `--snapshot`
+keeps what is written in memory and leaves the images alone, `--log` writes
+the console's output, and `--trace` reports each BIOS call.
+
+### The debugger and the test suite
+
+`demu.exe --test` runs the behavioural test suite and returns non-zero on
+failure. The same binary is the debugger:
+
+```powershell
+.\exe\demu.exe --info GAME.EXE                  # MZ header, memory needed
+.\exe\demu.exe --cc program.c [-I dir] [-D name=value]  # compile C to a DOS .COM
+.\exe\demu.exe --disasm GAME.EXE 40             # disassemble from the entry point
+.\exe\demu.exe --run GAME.EXE --frames 400 --bmp shot.bmp
+.\exe\demu.exe --run GAME.EXE --trace           # every DOS and BIOS call
+.\exe\demu.exe --run GAME.EXE --trace-tail 200  # the last instructions executed
+.\exe\demu.exe --run GAME.EXE --screen --state  # text screen, registers, memory
+.\exe\demu.exe --run GAME.EXE --keys " \n" --key-delay 240 --bmp shot.bmp
+.\exe\demu.exe --run GAME.EXE --wav sound.wav    # what came out of the speaker
+.\exe\demu.exe --run .\GAME --args "dir" --screen  # mount a folder, use the shell
+.\exe\demu.exe --bench GAME.EXE --seconds 3     # guest instructions a second
 ```
 
 `--trace` and `--trace-tail` are how you find out why a program gave up: the
 first shows which service it asked for and what it got back, the second shows
-the instructions it ran on the way there.
+the instructions it ran on the way there. `--keys` types on the emulated
+keyboard as the program runs, which is what gets a game past its title screen
+without dui.
+
+## dimg
+
+```powershell
+dimg -o <image> -b <bindir> [options]   # make a floppy, or a hard disk with -hd
+dimg -dir <image>                       # list the volumes and the files on them
+dimg -extract <image> <path> <file>     # copy a file out: C:\DOS\FORMAT.COM
+```
+
+makes a disk that boots the DOS in `<bindir>`: its boot sector from
+`MSBOOT.BIN`, then `IO.SYS` and `MSDOS.SYS` as the first two root directory
+entries - which the boot sector needs - then the volume label, `COMMAND.COM`
+and anything given with `-f`. A floppy is 360 KB (`-s 360`, the default) or
+1.44 MB (`-s 1440`).
+
+`-hd <MB>` makes a partitioned hard disk instead, behind FDISK's master boot
+record (`FDBOOT.BIN`): C: is the primary partition and logical drives in an
+extended partition fill the rest of the disk, up to Z:. Partitions end on a
+cylinder of 63 sectors and 16 heads - 255 above 504 MB - and each is laid out as
+DOS 4.0's FORMAT lays one out, so FDISK, FORMAT and CHKDSK see what they made
+themselves. `-p <MB>` caps a partition (2047 MB at most), `-lba` uses the LBA
+partition types 0Eh and 0Fh, `-heads` changes the geometry and `-nosys` leaves
+the system files off. The image is a sparse file, so a 32 GB card image takes
+the few megabytes that are written; dimg prints the DOSBox `imgmount` line
+that matches it.
+
+The files are dated, and the volumes numbered, from the time now - or, for a
+build that comes out the same every time, from `-t <seconds since 1970>` or
+`SOURCE_DATE_EPOCH`, read as UTC.
+
+`-dir` and `-extract` read any FAT12 or FAT16 image, from dimg or not: a floppy,
+or a hard disk's partitions, lettered as DOS 4.0 letters them - the first
+primary partition of a DOS type is C:, then each logical drive of one, whether
+it is formatted or not. A partition DOS gives no letter is listed but has no
+drive to extract from. A damaged image - a chain of clusters or partitions that
+loops - is reported rather than followed.
 
 ## Embedding
 
-Add a project reference to `src/ovrwin.vcxproj`, include `src/machine.h`, and
-link the matching `ovrwin<arch><cfg>.lib`. Implement `host_services` from
-`src/host.h` to decide what the emulated drive is, then feed the machine an
-image (`load_program`), step it with `exec(cycles)`, and read `framebuffer()`
-and `generate_audio()`. `app/app.cpp` is a complete worked host.
+Link the `libdos` CMake target and include `src/machine.h`. Implement
+`host_services` from `src/host.h` to decide what the emulated drive is, then
+feed the machine an image (`load_program`), step it with `exec(cycles)`, and
+read `framebuffer()` and `generate_audio()`. `app/main.cpp` is a complete
+worked host. For boot mode, implement `block_device` from
+`src/block-device.h` over wherever the disk's sectors live, `attach_disk` it
+and `power_on`; `cli/boot.cpp` does that with image files.
+
+Pulled into another CMake project - with `add_subdirectory` or `FetchContent` -
+libdos builds only its libraries: `libdos`, `libdos_cc` (the compiler),
+`libdos_disk` (disk images) and `libdos_host` (the Windows host).
+`LIBDOS_BUILD_TOOLS` and `LIBDOS_BUILD_APP` turn demu and dimg, and dui, on;
+they default to on only when libdos is the top-level project, and only dui
+fetches the platform layer.
+
+## Licence
+
+MIT - see [LICENSE](LICENSE). Where parts of it came from, including the CPU
+core's descent from the reenigne project, is in [NOTICE.md](NOTICE.md). dui
+links libdesktop (LGPL-2.1-or-later) statically, so a distributed `dui.exe` -
+including the one in each release zip - must let its users relink it against a
+modified libdesktop (LGPL-2.1 section 6). demu and dimg do not link it.
+
+Before distributing dui, include libdesktop's notices, licence and
+corresponding source, including changes, plus the application source and
+build instructions or relinkable object files. Record the exact revisions,
+compiler and configuration, and verify a build with a modified libdesktop.
+Permit modification for the recipient's own use and reverse engineering
+to debug those modifications. A link to the latest source alone is not a
+relinking package.
+
+Contributing, or working on this with an AI agent? See [AGENTS.md](AGENTS.md).

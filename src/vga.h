@@ -1,6 +1,6 @@
 #pragma once
 
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // IBM VGA/EGA/CGA display adapter: 256 KiB of display memory with the planar
 // write logic, the sequencer / CRTC / graphics / attribute register files, the

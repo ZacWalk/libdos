@@ -1,6 +1,6 @@
 #pragma once
 
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // The whole emulated PC as one plain-data struct, plus the small class a host
 // embeds. `machine` owns exactly one `machine_state` and is non-copyable.
@@ -30,6 +30,9 @@ constexpr uint16_t callback_segment = 0xf000;
 constexpr uint16_t callback_offset = 0xe000;
 constexpr uint8_t callback_opcode = 0xf1;
 
+// The callback boot mode's reset vector makes: power the machine off and on.
+constexpr uint8_t callback_power_on = 0xfe;
+
 struct machine_state
 {
 	uint8_t memory[memory_size] = {};
@@ -47,9 +50,11 @@ struct machine_state
 
 	uint64_t cycles = 0;
 	uint32_t cpu_hz = 8000000;
-	uint64_t next_render = 0; // cycle the next frame is sampled at
+	cpu_model model = cpu_model::i386;
+	bool boot_mode = false; // no DOS mapped in: whatever was booted owns INT 20h and up
 	bool exited = false;
 	uint8_t exit_code = 0;
+	bool faulted = false; // stopped by the emulator, not by the program; `error` says why
 	bool trace = false;
 	char error[256] = {};
 };
@@ -117,6 +122,10 @@ void io_write8(machine_state& s, uint16_t port, uint8_t value);
 // Called by the CPU when it meets the callback opcode inside one of our stubs.
 void machine_callback(machine_state& s, uint8_t index);
 
+// Stops the machine because of something the program cannot be allowed to do
+// or the emulator cannot do for it, keeping the first reason given.
+void machine_fault(machine_state& s, const char* reason);
+
 // Returns the machine to power-on state, keeping the host and the current
 // directory. `machine::reset` is this plus nothing else.
 void machine_reset(machine_state& s);
@@ -154,6 +163,17 @@ public:
 	void set_host(host_services* host);
 	void reset();
 
+	// Settings that outlive reset(): which processor runs the program, what
+	// INT 21h AH=30h reports, and the environment a program the host starts is
+	// given, as NAME=VALUE strings (none restores the default).
+	void set_cpu_model(cpu_model model);
+	void set_dos_version(uint8_t major, uint8_t minor);
+	bool set_environment(const char* const* variables, int count);
+
+	// Makes a DOS path such as "C:\SRC" the current directory, if the host
+	// has it.
+	bool set_current_directory(const char* dos_path);
+
 	// Loads an MZ or COM image and leaves the CPU at its entry point.
 	bool load_program(const uint8_t* image, uint32_t size, const char* dos_path, const char* command_line);
 
@@ -161,6 +181,19 @@ public:
 	// lands when no program has been started.
 	void start_shell();
 	bool shell_active() const;
+
+	// Boot mode: an IBM PC with no DOS mapped in, which loads a disk's boot
+	// sector and runs whatever it finds - DOS's own IO.SYS and MSDOS.SYS, on
+	// the emulated BIOS. Drives 00h and 01h are floppies, 80h and 81h hard
+	// disks. The device stays the host's and must outlive the machine, or be
+	// detached with a null one; `extensions` gives a hard disk INT 13h's LBA
+	// calls, AH=41h-48h. Attach the drives before power_on.
+	bool attach_disk(uint8_t drive, block_device* device, const disk_geometry& geometry, bool extensions);
+
+	// Starts the machine in boot mode from `drive`, as its power switch would.
+	// A program jumping to FFFF:0000 does the same. False if there is nothing
+	// to boot there, with error() saying so.
+	bool power_on(uint8_t drive);
 
 	// Runs a program by name, exactly as typing it at the prompt would, so it
 	// returns to the prompt when it ends.
@@ -173,6 +206,7 @@ public:
 
 	bool exited() const;
 	uint8_t exit_code() const;
+	bool faulted() const;
 	const char* error() const;
 
 	const uint32_t* framebuffer() const;

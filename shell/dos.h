@@ -1,6 +1,6 @@
-/* ovrwin by Zac Walker
+/* libdos by Zac Walker
  *
- * The DOS interface for programs built with ovrwincc, plus the handful of
+ * The DOS interface for programs built with libdos cc, plus the handful of
  * library routines those programs need. There is no C library to link
  * against, so what is here is what there is.
  *

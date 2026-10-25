@@ -1,6 +1,6 @@
 #pragma once
 
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // 8086/80186 disassembler and machine introspection. Both are strictly
 // side-effect free: nothing here reads through a port or acknowledges an

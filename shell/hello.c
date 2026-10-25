@@ -1,4 +1,4 @@
-/* A first program for ovrwincc: proves the compiler, the DOS services and the
+/* A first program for libdos cc: proves the compiler, the DOS services and the
  * emulator all agree with each other. */
 
 #include "dos.h"
@@ -19,7 +19,7 @@ int main(void)
 	int i;
 	char buffer[16];
 
-	putln("Hello from C, compiled by ovrwincc.");
+	putln("Hello from C, compiled by libdos cc.");
 
 	puts("2 + 3 = ");
 	putu(add(2, 3));

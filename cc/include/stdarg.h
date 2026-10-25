@@ -1,7 +1,7 @@
-#ifndef __OVRWIN_STDARG_H__
-#define __OVRWIN_STDARG_H__
+#ifndef __LIBDOS_STDARG_H__
+#define __LIBDOS_STDARG_H__
 
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // Arguments are pushed right to left and the caller cleans up, so the extra
 // ones sit above the last named parameter in the caller's frame. __args is a

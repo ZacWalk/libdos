@@ -1,5 +1,5 @@
-#ifndef __OVRWIN_LIMITS_H__
-#define __OVRWIN_LIMITS_H__
+#ifndef __LIBDOS_LIMITS_H__
+#define __LIBDOS_LIMITS_H__
 
 #define CHAR_BIT 8
 #define SCHAR_MIN (-128)

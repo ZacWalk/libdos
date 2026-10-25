@@ -1,8 +1,11 @@
 # Build output
+build/
+exe/
 bin/
 intermediate/
 tmp/
 trace.txt
+debug_trace.log
 
 # Visual Studio
 .vs/
@@ -17,6 +20,7 @@ trace.txt
 # Reference material and sample programs, kept locally only
 inspiration/
 
-# Programs built by ovrwincc
+# Programs built by libdos cc
 shell/*.COM
 *.bmp
+/.dd/state/

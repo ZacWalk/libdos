@@ -1,6 +1,6 @@
 #pragma once
 
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // 8086/80186 real-mode CPU state and interpreter. The CPU is a plain-data
 // struct so the whole machine can be copied, saved or inspected; every entry
@@ -13,7 +13,7 @@ struct machine_state;
 // Register file order matches the x86 encoding, so a modrm field is a direct
 // index. Segment registers follow the eight general registers.
 enum : int { reg_ax, reg_cx, reg_dx, reg_bx, reg_sp, reg_bp, reg_si, reg_di };
-enum : int { seg_es, seg_cs, seg_ss, seg_ds };
+enum : int { seg_es, seg_cs, seg_ss, seg_ds, seg_fs, seg_gs };
 constexpr int reg_seg = 8;
 
 constexpr uint16_t flag_cf = 0x0001;
@@ -33,9 +33,25 @@ constexpr uint8_t int_overflow = 4;
 constexpr uint8_t int_bound = 5;
 constexpr uint8_t int_invalid_opcode = 6;
 
+// Which processor the interpreter is. The default runs what late-80s games
+// assume: 8086 and 80186, and the 80386's two-byte opcodes in their 16-bit
+// forms. The 8086 models stop the machine at anything an 8088 does not have,
+// so a program meant for an IBM PC cannot quietly rely on a newer chip, and
+// behave like one where it differs: PUSH SP and shift counts. The strict model
+// also refuses the instructions a program on an XT without a coprocessor has
+// no business executing - x87 escapes, WAIT, LOCK and HLT - which is what the
+// original 1988 toolchain is run under.
+enum class cpu_model : uint8_t
+{
+	i386,
+	i80186,
+	i8086,
+	i8086_strict,
+};
+
 struct cpu_state
 {
-	uint16_t regs[12] = {};
+	uint16_t regs[14] = {};
 	uint16_t ip = 0;
 	uint16_t flags = 0x0202;
 
@@ -51,6 +67,7 @@ struct cpu_state
 
 	bool halted = false;
 	uint64_t cycles = 0;
+	uint64_t instructions = 0; // one per repetition of a string instruction, as cpu_step counts them
 
 	uint16_t ax() const { return regs[reg_ax]; }
 	uint16_t cx() const { return regs[reg_cx]; }
@@ -64,6 +81,8 @@ struct cpu_state
 	uint16_t cs() const { return regs[reg_seg + seg_cs]; }
 	uint16_t ss() const { return regs[reg_seg + seg_ss]; }
 	uint16_t ds() const { return regs[reg_seg + seg_ds]; }
+	uint16_t fs() const { return regs[reg_seg + seg_fs]; }
+	uint16_t gs() const { return regs[reg_seg + seg_gs]; }
 
 	void set_ax(uint16_t v) { regs[reg_ax] = v; }
 	void set_cx(uint16_t v) { regs[reg_cx] = v; }
@@ -77,6 +96,8 @@ struct cpu_state
 	void set_cs(uint16_t v) { regs[reg_seg + seg_cs] = v; }
 	void set_ss(uint16_t v) { regs[reg_seg + seg_ss] = v; }
 	void set_ds(uint16_t v) { regs[reg_seg + seg_ds] = v; }
+	void set_fs(uint16_t v) { regs[reg_seg + seg_fs] = v; }
+	void set_gs(uint16_t v) { regs[reg_seg + seg_gs] = v; }
 
 	uint8_t al() const { return uint8_t(regs[reg_ax]); }
 	uint8_t ah() const { return uint8_t(regs[reg_ax] >> 8); }

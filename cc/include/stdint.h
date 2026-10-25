@@ -1,7 +1,7 @@
-#ifndef __OVRWIN_STDINT_H__
-#define __OVRWIN_STDINT_H__
+#ifndef __LIBDOS_STDINT_H__
+#define __LIBDOS_STDINT_H__
 
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // The fixed-width types as this compiler sees them: int is 16-bit and long is
 // 32-bit, so there is no 64-bit type to name.

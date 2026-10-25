@@ -1,8 +1,9 @@
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
-// 8086/80186 interpreter. One call to cpu_step executes one instruction, or
-// one repetition of a string instruction, so an interrupt can land in the
-// middle of a REP exactly as it does on hardware.
+// 8086/80186 interpreter, with the 80386's two-byte opcodes in their 16-bit
+// forms. One call to cpu_step executes one instruction, or one repetition of a
+// string instruction, so an interrupt can land in the middle of a REP exactly
+// as it does on hardware.
 //
 // The core decode is derived from Andrew Jenner's reenigne 8086 emulator by
 // way of the demu DOS tool, reworked into machine_state and extended with the
@@ -62,8 +63,47 @@ namespace
 
 		void undefined(const char* what)
 		{
-			if (s.error[0] == 0)
-				snprintf(s.error, sizeof(s.error), "%s at %04X:%04X", what, c.cs(), c.ip);
+			char reason[96] = {};
+			snprintf(reason, sizeof(reason), "%s at %04X:%04X", what, c.cs(), c.ip);
+			// An 8086 model stops rather than carrying on past an encoding
+			// that means nothing, which is what testing for one is for.
+			if (s.model >= cpu_model::i8086) machine_fault(s, reason);
+			else if (s.error[0] == 0) snprintf(s.error, sizeof(s.error), "%s", reason);
+		}
+
+		// The instructions a model does not have, as a table per model so the
+		// check is one lookup on every instruction.
+		bool missing(uint8_t opcode) const
+		{
+			struct tables
+			{
+				bool rejected[4][256] = {};
+
+				tables()
+				{
+					for (int opcode = 0; opcode < 256; ++opcode)
+					{
+						const bool not_8086 = opcode == 0x0f || (opcode >= 0x60 && opcode <= 0x6f) ||
+							opcode == 0xc0 || opcode == 0xc1 || opcode == 0xc8 || opcode == 0xc9;
+						const bool not_bare_xt = (opcode >= 0xd8 && opcode <= 0xdf) || opcode == 0x9b ||
+							opcode == 0xf0 || opcode == 0xf4;
+						rejected[int(cpu_model::i80186)][opcode] = opcode == 0x0f || (opcode >= 0x64 && opcode <= 0x67);
+						rejected[int(cpu_model::i8086)][opcode] = not_8086;
+						rejected[int(cpu_model::i8086_strict)][opcode] = not_8086 || not_bare_xt;
+					}
+				}
+			};
+			static const tables models;
+			return models.rejected[int(s.model)][opcode];
+		}
+
+		// A segment register field: 4-7 repeat ES-DS on an 8086, and name FS,
+		// GS or nothing on a 386.
+		int segment_register(int field)
+		{
+			if (s.model >= cpu_model::i8086) return field & 3;
+			if (field > seg_gs) undefined("invalid segment register");
+			return field > seg_gs ? seg_es : field;
 		}
 
 		uint32_t physical(uint16_t offset, int seg)
@@ -128,6 +168,24 @@ namespace
 				jump(uint16_t(c.ip + sign_extend(offset)));
 				cycles += 12;
 			}
+		}
+
+		// The low four bits of a Jcc, SETcc or CMOVcc opcode, inversion included.
+		bool test_condition(int cc) const
+		{
+			bool taken;
+			switch (cc & 0x0e)
+			{
+			case 0x00: taken = of(); break;
+			case 0x02: taken = cf(); break;
+			case 0x04: taken = zf(); break;
+			case 0x06: taken = cf() || zf(); break;
+			case 0x08: taken = sf(); break;
+			case 0x0a: taken = pf(); break;
+			case 0x0c: taken = sf() != of(); break;
+			default: taken = sf() != of() || zf(); break;
+			}
+			return taken == ((cc & 1) == 0);
 		}
 
 		bool cf() const { return (c.flags & flag_cf) != 0; }
@@ -521,6 +579,53 @@ namespace
 			cycles += 20;
 		}
 
+		// BT/BTS/BTR/BTC, with the effective address already decoded. A memory
+		// operand is indexed by the whole bit offset, so the bit selected can lie
+		// outside the word the modrm names.
+		void bit_operation(int operation, int32_t offset)
+		{
+			const int bit = offset & 15;
+			const uint16_t at = uint16_t(address + (offset >> 4) * 2);
+			uint16_t value = use_memory ? read_word(at, -1) : c.regs[address];
+			set_cf(((value >> bit) & 1) != 0);
+			switch (operation)
+			{
+			case 0: return; // BT reads only
+			case 1: value = uint16_t(value | (1 << bit)); break;
+			case 2: value = uint16_t(value & ~(1 << bit)); break;
+			default: value = uint16_t(value ^ (1 << bit)); break;
+			}
+			if (use_memory) write_word(value, at, -1);
+			else c.regs[address] = value;
+			cycles += 6;
+		}
+
+		// SHLD/SHRD, with the effective address already decoded.
+		void shift_double(bool left, uint16_t other, int count)
+		{
+			count &= 31;
+			if (count == 0) return;
+			const uint16_t value = read_ea_again();
+			if (count > 16)
+			{
+				// Undefined on a 386 for a 16-bit operand; leave it alone.
+				cycles += 3;
+				return;
+			}
+			const uint32_t pair = left
+				? (uint32_t(value) << 16) | other
+				: (uint32_t(other) << 16) | value;
+			const uint32_t shifted = left ? pair << count : pair >> count;
+			set_cf(((left ? value >> (16 - count) : value >> (count - 1)) & 1) != 0);
+			destination = value;
+			data = left ? shifted >> 16 : shifted & 0xffff;
+			word_size = true;
+			set_pzs();
+			if (count == 1) set_of_rotate();
+			write_ea_again(uint16_t(data));
+			cycles += 3 + count;
+		}
+
 		void execute();
 	};
 
@@ -546,6 +651,15 @@ namespace
 		}
 
 		const uint8_t opcode = c.opcode;
+		if (s.model != cpu_model::i386 && missing(opcode))
+		{
+			static const char* const names[] = {"an 80386", "an 80186", "an 8086", "an 8086 without a coprocessor"};
+			char reason[128] = {};
+			snprintf(reason, sizeof(reason), "opcode %02Xh at %04X:%04X is not available on %s", opcode, c.cs(),
+			         c.instruction_ip, names[int(s.model)]);
+			machine_fault(s, reason);
+			return;
+		}
 		word_size = (opcode & 1) != 0;
 		source_is_rm = (opcode & 2) != 0;
 		const int operation = (opcode >> 3) & 7;
@@ -606,6 +720,12 @@ namespace
 			cycles = 2;
 			break;
 
+		case 0x64: case 0x65: // FS/GS override (80386)
+			c.segment_override = opcode == 0x64 ? seg_fs : seg_gs;
+			c.prefix = true;
+			cycles = 2;
+			break;
+
 		case 0x27: // DAA
 		case 0x2f: // DAS
 			if (af() || (c.al() & 0x0f) > 9)
@@ -649,7 +769,9 @@ namespace
 
 		case 0x50: case 0x51: case 0x52: case 0x53:
 		case 0x54: case 0x55: case 0x56: case 0x57: // PUSH rw
-			push(c.regs[opcode & 7]);
+			// An 8086 pushes SP as it is after the decrement; later chips push
+			// the value it had, and a program can tell them apart by it.
+			push(opcode == 0x54 && s.model >= cpu_model::i8086 ? uint16_t(c.sp() - 2) : c.regs[opcode & 7]);
 			cycles = 11;
 			break;
 
@@ -732,18 +854,7 @@ namespace
 		case 0x74: case 0x75: case 0x76: case 0x77:
 		case 0x78: case 0x79: case 0x7a: case 0x7b:
 		case 0x7c: case 0x7d: case 0x7e: case 0x7f: // Jcc
-			switch (opcode & 0x0e)
-			{
-			case 0x00: taken = of(); break;
-			case 0x02: taken = cf(); break;
-			case 0x04: taken = zf(); break;
-			case 0x06: taken = cf() || zf(); break;
-			case 0x08: taken = sf(); break;
-			case 0x0a: taken = pf(); break;
-			case 0x0c: taken = sf() != of(); break;
-			default: taken = sf() != of() || zf(); break;
-			}
-			jump_short(fetch_byte(), taken == ((opcode & 1) == 0));
+			jump_short(fetch_byte(), test_condition(opcode));
 			break;
 
 		case 0x80: case 0x81: case 0x82: case 0x83: // alu rm,imm
@@ -778,7 +889,7 @@ namespace
 		case 0x8c: // MOV rm,segreg
 			effective_address();
 			word_size = true;
-			write_ea_again(c.regs[reg_seg + mod_rm_reg()]);
+			write_ea_again(c.regs[reg_seg + segment_register(mod_rm_reg())]);
 			break;
 
 		case 0x8d: // LEA
@@ -791,7 +902,7 @@ namespace
 		case 0x8e: // MOV segreg,rm
 			word_size = true;
 			data = read_ea();
-			c.regs[reg_seg + mod_rm_reg()] = uint16_t(data);
+			c.regs[reg_seg + segment_register(mod_rm_reg())] = uint16_t(data);
 			break;
 
 		case 0x8f: // POP rm
@@ -987,7 +1098,8 @@ namespace
 
 		case 0xd0: case 0xd1: case 0xd2: case 0xd3: // shift rm,1 / rm,CL
 			data = read_ea();
-			source = (opcode & 2) == 0 ? 1 : (c.cl() & 0x1f);
+			// An 8086 shifts by all of CL; from the 80186 on, by CL mod 32.
+			source = (opcode & 2) == 0 ? 1 : (s.model >= cpu_model::i8086 ? c.cl() : (c.cl() & 0x1f));
 			rotate_shift();
 			write_ea_again(uint16_t(data));
 			break;
@@ -1269,17 +1381,124 @@ namespace
 			}
 			break;
 
-		case 0x0f: // 80286 two-byte escape; only the harmless bits are modelled
+		case 0x0f: // 80286/80386 two-byte opcodes
 		{
 			const uint8_t second = fetch_byte();
-			if (second == 0x01)
+			word_size = true;
+			switch (second)
 			{
+			case 0x01:
 				effective_address();
 				if (mod_rm_reg() == 4) write_ea_again(0); // SMSW: real mode, no PE
-			}
-			else
+				else undefined("unsupported 0F 01 operation");
+				break;
+
+			case 0x80: case 0x81: case 0x82: case 0x83:
+			case 0x84: case 0x85: case 0x86: case 0x87:
+			case 0x88: case 0x89: case 0x8a: case 0x8b:
+			case 0x8c: case 0x8d: case 0x8e: case 0x8f: // near Jcc
 			{
+				// An 8086 has no near conditional jump, so a compiler had to
+				// branch over a near JMP. A 386 does, and 16-bit code built
+				// for one is full of them.
+				const uint16_t rel = fetch_word();
+				if (test_condition(second))
+				{
+					jump(uint16_t(c.ip + rel));
+					cycles += 12;
+				}
+				break;
+			}
+
+			case 0x90: case 0x91: case 0x92: case 0x93:
+			case 0x94: case 0x95: case 0x96: case 0x97:
+			case 0x98: case 0x99: case 0x9a: case 0x9b:
+			case 0x9c: case 0x9d: case 0x9e: case 0x9f: // SETcc rm8
+				word_size = false;
+				effective_address();
+				write_ea_again(test_condition(second) ? 1 : 0);
+				break;
+
+			case 0xa0: push(c.fs()); break;
+			case 0xa1: c.set_fs(pop()); break;
+			case 0xa8: push(c.gs()); break;
+			case 0xa9: c.set_gs(pop()); break;
+
+			case 0xa3: case 0xab: case 0xb3: case 0xbb: // BT/BTS/BTR/BTC rm,r
+				effective_address();
+				bit_operation((second >> 3) & 3, int16_t(get_reg()));
+				break;
+
+			case 0xba: // BT/BTS/BTR/BTC rm,imm8
+			{
+				effective_address();
+				const int operation_bits = mod_rm_reg();
+				const uint8_t bit = fetch_byte();
+				if (operation_bits < 4) undefined("invalid 0F BA operation");
+				else bit_operation(operation_bits - 4, bit);
+				break;
+			}
+
+			case 0xa4: case 0xa5: case 0xac: case 0xad: // SHLD/SHRD
+			{
+				effective_address();
+				const uint16_t other = get_reg();
+				const int count = (second & 1) == 0 ? fetch_byte() : c.cl();
+				shift_double(second < 0xac, other, count);
+				break;
+			}
+
+			case 0xaf: // IMUL r,rm
+			{
+				data = read_ea();
+				const int32_t r = int32_t(int16_t(get_reg())) * int32_t(int16_t(uint16_t(data)));
+				set_reg(uint16_t(r));
+				const bool overflow = r != int16_t(r);
+				set_cf(overflow);
+				set_of(overflow);
+				cycles += 20;
+				break;
+			}
+
+			case 0xb2: case 0xb4: case 0xb5: // LSS/LFS/LGS
+			{
+				effective_address();
+				far_load();
+				*mod_rm_rw() = saved_ip;
+				const int which = second == 0xb2 ? seg_ss : (second == 0xb4 ? seg_fs : seg_gs);
+				c.regs[reg_seg + which] = saved_cs;
+				break;
+			}
+
+			case 0xb6: case 0xb7: // MOVZX
+			case 0xbe: case 0xbf: // MOVSX
+			{
+				word_size = (second & 1) != 0;
+				const uint16_t value = read_ea();
+				word_size = true;
+				set_reg((second & 1) != 0 || second < 0xbe ? value : sign_extend(uint8_t(value)));
+				cycles += 3;
+				break;
+			}
+
+			case 0xbc: case 0xbd: // BSF/BSR
+			{
+				const uint16_t value = uint16_t(read_ea());
+				c.set_flag(flag_zf, value == 0);
+				if (value != 0)
+				{
+					const int step = second == 0xbc ? 1 : -1;
+					int bit = second == 0xbc ? 0 : 15;
+					while (((value >> bit) & 1) == 0) bit += step;
+					set_reg(uint16_t(bit));
+				}
+				cycles += 10;
+				break;
+			}
+
+			default:
 				undefined("unsupported 0F opcode");
+				break;
 			}
 			break;
 		}
@@ -1333,8 +1552,9 @@ int cpu_step(machine_state& s)
 	cpu_state& c = s.cpu;
 
 	// Hardware interrupts are taken between instructions, never inside a
-	// prefix sequence, but they may interrupt a REP.
-	if (!c.prefix && c.if_())
+	// prefix sequence, but they may interrupt a REP. Nothing is requested
+	// almost all of the time, which is worth knowing before asking which.
+	if (!c.prefix && c.if_() && (s.pic.master.irr | s.pic.slave.irr) != 0)
 	{
 		const int vector = pic_pending_vector(s);
 		if (vector >= 0)
@@ -1358,5 +1578,6 @@ int cpu_step(machine_state& s)
 	x86 x(s);
 	x.execute();
 	c.cycles += x.cycles;
+	++c.instructions;
 	return x.cycles;
 }

@@ -1,5 +1,5 @@
-#ifndef __OVRWIN_ENDIAN_H__
-#define __OVRWIN_ENDIAN_H__
+#ifndef __LIBDOS_ENDIAN_H__
+#define __LIBDOS_ENDIAN_H__
 
 #define LITTLE_ENDIAN 1234
 #define BIG_ENDIAN 4321

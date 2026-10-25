@@ -1,7 +1,7 @@
-# ovrwin gaps
+# libdos gaps
 
 Ranked roughly by value per unit of work. When you close an item, delete it;
-when a review turns one up, add it here.
+when a review turns one up, add it here rather than in AGENTS.md.
 
 ## Known-broken programs
 
@@ -14,9 +14,17 @@ when a review turns one up, add it here.
 
 ## CPU
 
-- No 386 instructions and no protected mode, so a DOS extender (DOS/4GW,
-  CWSDPMI) will not run. That rules out the Ultima IV upgrade and anything
-  else built with DJGPP.
+- No 32-bit operands or addresses and no protected mode, so a DOS extender
+  (DOS/4GW, CWSDPMI) will not run. That rules out the Ultima IV upgrade and
+  anything else built with DJGPP. This, not emulator speed, is what stops a
+  more advanced game running: `--bench` puts the interpreter at ~35 M guest
+  instructions a second, six times what a 386 at 33 MHz managed. The x64 JIT
+  design and those measurements are in [jit.md](jit.md).
+
+  The 386's two-byte opcodes are in, in their 16-bit forms, so a 16-bit program
+  built for a 386 runs. What is missing is the `66`/`67` prefixes, the 32-bit
+  register file with SIB addressing, `PUSHAD`/`POPAD`, `CDQ`/`CWDE`, `BSWAP`
+  and the 32-bit string instructions.
 - No x87. The escape opcodes consume their operands and do nothing, which is
   right for a program that checks for a coprocessor first and wrong for one
   that assumes it.
@@ -27,10 +35,65 @@ when a review turns one up, add it here.
 
 - FCB file functions (0Fh-24h) are absent. Only the parse-filename call is
   there. Pre-3.0 programs will need them.
-- `EXEC` loads and runs a child (AL=0) but not an overlay (AL=3), and it always
-  gives the child the parent's environment rather than a copy.
+- `EXEC` AL=01h (load without running, for a debugger) is refused.
+- No Ctrl+C or Ctrl+Break. DOS never raises INT 23h and the BIOS never calls
+  INT 1Bh, so a ^C typed at a program reading the console arrives as
+  character 3 - into an AH=0Ah line as well - and nothing stops a program that
+  never asks for input; Machine > Reset is the only way out. dui maps
+  neither the Pause key nor Ctrl+Break.
+- The root of the drive lists `.` and `..`, which a real root directory does
+  not have: the host's `FindFirstFileA` returns them for the mounted folder.
 - No network redirector, no SHARE, no file locking.
 - Extended error information (AH=59h) always reports success.
+- AH=57h cannot set a file's date and time: the host interface has no call for
+  it, so the request succeeds and changes nothing.
+- COMMAND.COM /C refuses pipes and batch files, and FOR can only run built-in
+  commands: starting a program for one item would leave the rest unrun.
+- AH=29h takes any letter A-Z for a drive; DOS also returns FFh for a drive
+  that is not there.
+- A program that restarts the machine - a far jump to FFFF:0000 - spins there
+  under the mapped DOS, where it could end the program instead; only boot
+  mode's ROM has a reset entry.
+
+## demu as a runner
+
+- LIB's stand-in takes a response file's second line as the answer to "create
+  the library?" and starts the library afresh, which is what dos4z's
+  makefiles write; a response file for a library that already exists, which
+  LIB.EXE would not ask about, loses that line and the old modules.
+- It runs the dos4z build of MS-DOS 4.00 about a third slower than the demu it
+  replaced (231 s against 169 s for a clean build), all of it in the
+  interpreter: per instruction, the decode, the effective address and the
+  flags. The timer and interrupt checks were the first 25% and are gone; the
+  rest wants the core reworked or the JIT in [jit.md](jit.md).
+- The old demu could check every memory access against a shadow map of what
+  had been written and allocated. That caught its own loader's mistakes more
+  than any program's, and doing it here would put a test on every access, so
+  it was not carried over; `--trace-tail` and the suite cover that ground.
+
+## Boot mode
+
+- The BIOS is an XT's with an XT-IDE card's disks, not the 5150's own to the
+  letter: INT 13h answers AH=08h and 15h for a floppy, and there is no DMA
+  boundary error, no change line, and no AH=17h or 18h for formatting a
+  1.2 MB or 1.44 MB disk in its drive.
+- INT 14h and 17h, the serial and printer BIOS, are stubs, and there is no
+  Ctrl+Alt+Del: a test restarts with `--reboot`.
+- The display adapter is libdos's VGA, set to mode 3; there is no MDA or CGA
+  with its own quirks.
+- `--expect` sees only what goes through INT 10h. A program writing straight
+  to video memory is on `--screen` but not in what `--expect` searches.
+- dui has no boot mode.
+
+## Disk images
+
+- dimg makes a new image; it cannot add a file to one that exists, make a
+  subdirectory, or write into an image DOS has used. `-extract` only reads.
+- FAT12 and FAT16 only, as DOS 4.0 knows them. A FAT32 partition is listed as
+  one it cannot read, and long file names are skipped.
+- The geometry is always 63 sectors a track. A real XT-IDE or CF card set up
+  through its own BIOS at another geometry wants that geometry's partitions,
+  which only FDISK on the machine makes.
 
 ## The C compiler
 
@@ -45,35 +108,167 @@ when a review turns one up, add it here.
 - `static` gives a local static storage, but a file-scope `static` is not
   private: there is one namespace, so two files defining the same helper name
   collide when they are included into one translation unit.
-- The generated code is naive - every operand goes through AX and the stack -
-  and roughly three times the size of what a real 8086 compiler emits. A 32-bit
-  operand pair lives in DX:AX, with CX:BX for the second operand, and anything
-  harder than an add calls one of the helpers emitted after the program.
+- The generated code is no longer naive, but it is still a long way from a real
+  8086 compiler's. `cc/bench/bench.c` is the yardstick - the shapes a game's
+  inner loops are made of, with a checksum in the exit code - and
+  `demu --ccbench cc\bench\bench.c` reports its size and what it costs to
+  run. What is there now, statement by statement: an operand that generates no
+  code of its own is placed rather than pushed, so a constant folds into the
+  instruction; a comparison stays in the flags instead of becoming a 0 or a 1
+  that is then tested; a dereference remembers that its address is still in a
+  pointer variable and uses `[bx+displacement]`; a constant index or a member
+  offset folds into the address; a statement whose result nobody wants is
+  applied straight to memory; an operator with a register/memory form reads its
+  second operand where it lies rather than through CX; and a loop puts its
+  condition at the bottom.
+
+  And across the whole program, from the instruction list described below: a
+  branch that reaches gets the two-byte form, a branch to the next instruction
+  goes altogether, a function nothing can reach is left out, and a body short
+  enough is copied to its call site instead of called - with any argument that
+  is a constant standing in for the parameter, which is what makes the copy
+  smaller as well as faster. `--inline <n>`, `--no-inline` and `--keep-unused`
+  control it; `--map` says where the code went.
+
+  And per function, over its finished instructions: the two frame slots it
+  touches most move into SI and DI, weighting a use inside a loop far above one
+  on a straight line - a loop being nothing more, here, than a branch back to
+  something already generated. A pointer that lands in a register then addresses
+  memory itself, which needs to know that BX is dead, which is a backward
+  liveness pass over the same list. None of this could have been decided while
+  parsing: which slot is worth a register is only known once the last statement
+  has been read.
+
+  What is not:
+
+  - Only two registers, and only whole-function live ranges. A value that is
+    hot in one loop and dead elsewhere holds its register for the whole body,
+    and a third candidate gets nothing. Splitting a range at a basic block
+    boundary is the next step, and the liveness pass is already there.
+  - Nothing is hoisted out of a loop, so an invariant operand is reloaded every
+    iteration once the two registers are spoken for.
+  - The address of a global folds into an `add` rather than into the
+    displacement of the access that follows it, costing an instruction at every
+    subscript of a global array.
+  - A 32-bit operand pair lives in DX:AX, with CX:BX for the second operand,
+    and anything harder than an add or a constant shift calls one of the
+    helpers emitted after the program.
+  - `switch` is a chain of compares, not a table.
+  - Only a constant argument stands in for a parameter when a body is copied.
+    A local would too, but only if nothing the body calls could change it, and
+    the generator cannot yet say that.
 - `sizeof` of an expression containing a call to a not-yet-defined function
   will leave a stale fixup behind.
+- A cast to an abstract function-pointer type, `(int (*)(int))p`, is a syntax
+  error; the same type through a `typedef` works.
+- A call is not checked against the prototype's parameter count, so `f(1)` for
+  `int f(int, int)` compiles and the callee reads whatever is on the stack.
+- Constant folding does not wrap to 16 bits: `1 << 15` folds to 32768, not
+  -32768, so `(1 << 15) == -32768` is false. Signed overflow is undefined in C,
+  but every 16-bit compiler wraps and programs rely on it.
 - A `switch` truncates its controlling expression to 16 bits.
 - Structures are packed to the byte, matching the `-zp1` a 16-bit DOS build
   normally uses. There is no way to ask for alignment.
 - The preprocessor has no `#` or `##` operator, and `#pragma` is ignored.
 - The C library in `cc/lib/libc.c` is a starting point, not a complete one:
-  `malloc` is a bump allocator that never reuses, `getenv` always fails, and
-  `printf` accepts width and precision but ignores them.
+  `malloc` is a bump allocator that never reuses, `getenv` always fails,
+  `printf` accepts width and precision but ignores them, and `fopen` in append
+  mode moves to the end once, when the file is opened, rather than before every
+  write. The list of what a real program still asks for is under the memory
+  model below.
+- The compiler is C++ and so cannot be its own input. Rewriting it in C and
+  then feeding it to itself is planned in [docs/selfhost.md](selfhost.md). What
+  stands in the way, in the compiler itself, is struct assignment, struct
+  parameters and struct returns, and a front end that honours the target's int
+  and pointer widths instead of assuming two bytes.
+- A program compiled for this machine runs in a 64 KiB block the host hands it,
+  so it is the tiny model natively as well: `demu --ccnative cc\bench\bench.c`
+  compiles the benchmark for x64, runs it in process and gets the same checksum
+  and exit code the emulated build gives - about 195x faster, 0.8 ms against
+  157 ms. `cc\bench\roundtrip.c` does the same for the file services. What is
+  missing there is the rest of DOS: no find-first, no keyboard, no EXEC, so the
+  shell does not run this way yet.
+- `demu --ccexe <file.c>` writes the same image out as a Windows
+  executable: one section holding the block, a startup that hands the program
+  its own base, and a service routine that turns INT 21h into `WriteFile` and
+  `ExitProcess`. It is not relocatable - there is no relocation table, so the
+  loader has to honour the image base - and its DOS is smaller still than the
+  in-process one: only 02h, 09h and 4Ch, so a program that opens a file runs but
+  gets a failure back.
 
 ## Running a large program: the memory model
 
 The compiler emits a `.COM`: one segment, code and data and stack together,
 64 KiB in total. That is the single largest limit in the project and the reason
-a real game cannot be built here yet. Doom8088, the worked example in
-`inspiration/Doom8088`, compiles 50 of the 51 files its mode 13h build needs
-but cannot be linked or run.
+a real game cannot be built here yet.
+
+Doom8088, the worked example in `inspiration/Doom8088`, now **compiles all the
+way through** as a single translation unit. Every one of the 51 files its mode
+13h build needs parses and generates code; the only thing it stops on is the
+segment limit. Reproducing it:
+
+```powershell
+# one file that includes the other 51, then the library it expects
+demu --cc doomall.c -I cc\include -DC_ONLY -DFLAT_SPAN -DVIEWWINDOWWIDTH=120
+```
+
+What that says today:
+
+- **132 KiB of code and 74 KiB of data.** The earlier guess here was 500-600 KiB
+  of code; the measurement is a quarter of that. Three code segments, not nine.
+- The data does **not** fit in one 64 KiB segment either, so the medium model
+  Doom8088's own build uses is not quite enough: either the large tables have
+  to move to the code segment (they are `const`) or data needs far pointers too.
+- Twenty-eight library and runtime functions are still missing: `inp`, `outp`,
+  `int86`, `_dos_getvect`, `_dos_setvect`, `_dos_allocmem`, `_disable`,
+  `_enable`, `_chain_intr`, `exit`, `abs`, `labs`, `fopen`, `fread`, `fseek`,
+  `ftell`, `printf`, `vprintf`, `sprintf`, `memcpy`, `memset`, `memcmp`,
+  `memchr`, `strcpy`, `strncpy`, `strlen`, `stricmp`, `toupper`. Most are
+  already in `cc/lib/libc.c`; the DOS ones are thin wrappers over `__int21`.
+- It is the `C_ONLY` configuration, so the three hand-written assembly files
+  (`i_vv13ma.asm`, `m_fixed.asm`, `z_xms.asm`) are not needed.
 
 **There is no linker to write.** `cc/` already does whole-program compilation:
 one token vector, one symbol table, every fixup resolved in `finish()`. Symbol
 resolution across objects is a linker's actual job and it is already done. Nor
-would working in offsets help, because the code already works in offsets and
-patches them at the end. The limit is narrower than that: a near `CALL`
-displacement is 16 bits and `CS` never changes. What is missing is a memory
-model, not a linker.
+would working in offsets help, because the code already works in offsets. The
+limit is narrower than that: a near `CALL` displacement is 16 bits and `CS`
+never changes. What is missing is a memory model, not a linker.
+
+The bookkeeping a memory model needs is now there. `emitter` holds an
+**instruction list** rather than bytes: each entry names an operation, a width,
+and operands that may be a register, an immediate, or a memory form, and an
+operand that means an address carries a reference instead of a number. Only
+`emit.c` knows an opcode, so `lay_out()` can choose an encoding for each
+branch, drop what the program cannot reach, move everything that is left, and
+recompute every label. That is the smallest thing that deserves to be called an
+intermediate representation, and it is what the three pieces below all rest on.
+`--map` prints what came out of it: for Doom8088, 583 functions, so dividing
+them into three segments is arithmetic.
+
+There are three back ends over that one list, which is the claim it was built to
+make:
+
+- **8086**, in `emit.c`. The default, and what a `.COM` needs.
+- **386**, the same file with more to say: `SETcc` instead of a branch over a
+  clear, `MOVZX`/`MOVSX` instead of a load and a fix-up, and a conditional
+  branch that reaches in one instruction. Still a 16-bit `.COM` - `--cpu 386`
+  is the switch, and every compiler test runs at both levels. Worth 5% of the
+  instructions on the benchmark.
+- **x64**, in `emit-x64.c`, a second file of the same shape: a different
+  mod/rm table, different prefixes, a branch that reaches further, and agreeing
+  with the first on nothing but the opcode bytes. `--ccnative` compiles a
+  program for the machine the compiler is running on, puts it in memory the
+  host made executable, and calls it. The test suite compiles one program both
+  ways and checks the host and the emulator agree.
+
+What the x64 back end cannot do yet is a **pointer**: the front end still makes
+an `int` and a pointer two bytes wide, so an address does not survive in a
+register. Locals reach through RBP and globals RIP-relative, which is enough
+for arithmetic, control flow and calls, and not enough for arrays, pointers or
+`long`. Making the front end parametric over width is the work that unblocks
+it, and it is the same work that would let the 386 back end compile 32-bit
+code.
 
 Three pieces, smallest first, each independently useful and testable:
 
@@ -90,11 +285,10 @@ Three pieces, smallest first, each independently useful and testable:
 - **Far calls and multi-segment code.** Emit every user call as a far call
   (`9A off:seg`) with `RETF`, uniformly, so single-pass emission never has to
   guess an instruction width - two bytes more per call, and correct by
-  construction. `finish()` already knows every function's start offset and
-  every call site, so laying functions into 64 KiB segments is arithmetic plus
-  padding, and each segment word becomes an MZ relocation entry. Data stays in
-  one segment, which is the medium model and what Doom8088's own build uses.
-  Function pointers widen to four bytes with it.
+  construction. The layout record already knows every function's span and every
+  call site, so laying functions into 64 KiB segments is arithmetic plus
+  padding, and each segment word becomes an MZ relocation entry. Function
+  pointers widen to four bytes with it.
 
 Overlays, or loading pieces on demand, are the obvious alternative and are
 worse here. Overlays pay off when a program has phases - load the menu, discard
@@ -103,30 +297,26 @@ the tables and the zone allocator call each other constantly, so it would
 thrash. It also needs an overlay manager and a thunk on every cross-overlay
 call. More machinery than far calls, for a worse result.
 
-Two things to weigh before starting:
-
-- The generated code is roughly three times the size of a real 8086 compiler's.
-  Doom8088 is about 200 KiB built with gcc-ia16 `-Os`, so here it would be
-  500-600 KiB across nine or so code segments. It would very likely run. Whether
-  it is playable is a different question, and if that is the goal then codegen
-  quality, not the memory model, is the real project.
-- One translation unit is viable. Compiling all 51 files together needs their
-  file-scope names not to collide, and a check across the mode 13h set found
-  only a handful that do. File-scope `static` being private would settle it.
+One translation unit is viable, and now demonstrated. The file-scope name
+collisions the whole-program build was expected to hit did not materialise in
+the mode 13h set.
 
 The emulator side is in better shape than the compiler side: mode 13h, the
 timer, the keyboard and the PC speaker are all there. The gaps that would bite
 are unchained mode Y (listed under Video) and XMS, which `z_xms.asm` uses for
-the WAD cache.
+the WAD cache - though `C_ONLY` avoids it.
 
 
 ## Shell
 
-There are two: the native prompt in `src/shell.cpp` that the app comes up with,
-and `shell/shell.c`, a DOS program built by `cc/`. Neither has:
+There are two: the native prompt in `src/shell.cpp` that dui comes up with,
+and `shell/shell.c`, a DOS program built by `cc/`. The native one shares
+COMMAND.COM's built-in commands with COMMAND.COM /C (`src/command.cpp`), so it
+has COPY, wildcards for DEL, REN, ATTRIB and the rest, and `CD..` and `CD\`
+written without a space. Neither has:
 
 - Batch files, so a game's `RUN.BAT` has to be read and typed by hand.
-- `COPY`, wildcards for `DEL`, redirection or piping.
+- Redirection or piping at the prompt; COMMAND.COM /C has redirection.
 - Command history or editing beyond backspace.
 - `/W` or `/P` for `DIR`, so a long listing scrolls past.
 
@@ -167,27 +357,34 @@ the DOS one does through `EXEC`; it resets the machine instead.
 
 - Extended keys reach the BIOS buffer through the keypad scancodes rather than
   the `E0` prefixed set, so a program reading raw scancodes from INT 9 cannot
-  tell the cursor pad from the numeric keypad.
+  tell the cursor pad from the numeric keypad. For the same reason the
+  emulated NumLock starts off, so the keypad's digits arrive as cursor keys
+  whatever the host's NumLock says.
+- Alt, Alt+key and F10 never reach a program in dui: libdesktop does not
+  forward `WM_SYSKEYDOWN`/`WM_SYSKEYUP`, so Windows uses them for the menu bar
+  instead. The BIOS translates Alt combinations for when they do arrive.
 - No joystick. Port 201h reports nothing attached.
 
 ## Host and app
 
-- The app has no settings file: window size, sound and aspect are not
+- dui has no settings file: window size, sound and aspect are not
   remembered between runs.
 - No save states.
-- The app draws the whole frame every iteration whether or not anything
+- dui draws the whole frame every iteration whether or not anything
   changed; `vga_state::dirty` is maintained but not used.
 
 ## Tests
 
-The suite in `cli/main.cpp` covers the CPU, the interrupt path, the timer, the
-video modes and write logic, DOS memory and paths, both loaders, a full program
-run, sound, the compiler and the disassembler. It does not yet pin:
+The suite in `cli/main.cpp` covers the CPU and the processor models, the
+interrupt path, the timer, the video modes and write logic, DOS memory, paths,
+handles and COMMAND.COM /C, both loaders, a full program run, sound, the
+compiler, the disassembler, disk images and boot mode. It does not yet pin:
 
 - The planar read modes and the colour-compare path.
 - The MCB chain layout a program would walk.
 - CGA mode rendering.
-- Anything about `--trace` or the debug capture output.
+- Anything about `--trace` or the debug capture output, or what `--info` says
+  about a file - which once called an MZ file too short to load a COM file.
 - The C library in `cc/lib/libc.c`. Every compiler test is self-contained, so
   the library is only exercised by hand; it needs a test that compiles a
   program including it and checks the output.

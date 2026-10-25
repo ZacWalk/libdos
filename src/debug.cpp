@@ -1,4 +1,4 @@
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // Disassembler and debug capture. Everything here reads emulated memory
 // directly rather than through the bus helpers, so looking at a machine can
@@ -14,7 +14,7 @@ namespace
 {
 	const char* const reg16_names[8] = {"ax", "cx", "dx", "bx", "sp", "bp", "si", "di"};
 	const char* const reg8_names[8] = {"al", "cl", "dl", "bl", "ah", "ch", "dh", "bh"};
-	const char* const segment_names[4] = {"es", "cs", "ss", "ds"};
+	const char* const segment_names[8] = {"es", "cs", "ss", "ds", "fs", "gs", "?", "?"};
 	const char* const memory_forms[8] = {
 		"bx+si", "bx+di", "bp+si", "bp+di", "si", "di", "bp", "bx"
 	};
@@ -107,6 +107,11 @@ disassembly disassemble(const machine_state& s, uint16_t segment, uint16_t offse
 		{
 			static const char* const prefixes[4] = {"es:", "cs:", "ss:", "ds:"};
 			d.segment_override = prefixes[(opcode >> 3) & 3];
+			continue;
+		}
+		if (opcode == 0x64 || opcode == 0x65)
+		{
+			d.segment_override = opcode == 0x64 ? "fs:" : "gs:";
 			continue;
 		}
 		if (opcode == 0xf2 || opcode == 0xf3 || opcode == 0xf0)
@@ -245,10 +250,12 @@ disassembly disassemble(const machine_state& s, uint16_t segment, uint16_t offse
 		case 0x9f: snprintf(text, sizeof(text), "lahf"); break;
 
 		case 0xa0: case 0xa1:
-			snprintf(text, sizeof(text), "mov %s,[%04Xh]", word_size ? "ax" : "al", d.word());
+			snprintf(text, sizeof(text), "mov %s,%s[%04Xh]", word_size ? "ax" : "al",
+			         d.segment_override ? d.segment_override : "", d.word());
 			break;
 		case 0xa2: case 0xa3:
-			snprintf(text, sizeof(text), "mov [%04Xh],%s", d.word(), word_size ? "ax" : "al");
+			snprintf(text, sizeof(text), "mov %s[%04Xh],%s",
+			         d.segment_override ? d.segment_override : "", d.word(), word_size ? "ax" : "al");
 			break;
 		case 0xa4: case 0xa5: snprintf(text, sizeof(text), "movs%c", word_size ? 'w' : 'b'); break;
 		case 0xa6: case 0xa7: snprintf(text, sizeof(text), "cmps%c", word_size ? 'w' : 'b'); break;
@@ -377,13 +384,88 @@ disassembly disassemble(const machine_state& s, uint16_t segment, uint16_t offse
 			break;
 		}
 
+		case 0x0f: // 80286/80386 two-byte opcodes
+		{
+			const uint8_t second = d.byte();
+			if (second >= 0x80 && second <= 0x8f)
+			{
+				const int16_t rel = int16_t(d.word());
+				snprintf(text, sizeof(text), "j%s %04Xh", condition_names[second & 0x0f],
+				         uint16_t(d.offset + rel));
+			}
+			else if (second >= 0x90 && second <= 0x9f)
+			{
+				d.modrm(rm, sizeof(rm), nullptr, 0, false);
+				snprintf(text, sizeof(text), "set%s %s", condition_names[second & 0x0f], rm);
+			}
+			else if (second == 0xa0 || second == 0xa8)
+				snprintf(text, sizeof(text), "push %s", second == 0xa0 ? "fs" : "gs");
+			else if (second == 0xa1 || second == 0xa9)
+				snprintf(text, sizeof(text), "pop %s", second == 0xa1 ? "fs" : "gs");
+			else if (second == 0xa3 || second == 0xab || second == 0xb3 || second == 0xbb)
+			{
+				static const char* const names[4] = {"bt", "bts", "btr", "btc"};
+				d.modrm(rm, sizeof(rm), reg, sizeof(reg), true);
+				snprintf(text, sizeof(text), "%s %s,%s", names[(second >> 3) & 3], rm, reg);
+			}
+			else if (second == 0xba)
+			{
+				static const char* const names[8] = {"?", "?", "?", "?", "bt", "bts", "btr", "btc"};
+				const int operation = d.modrm_op(d.offset);
+				d.modrm(rm, sizeof(rm), nullptr, 0, true);
+				snprintf(text, sizeof(text), "%s %s,%02Xh", names[operation], rm, d.byte());
+			}
+			else if (second == 0xa4 || second == 0xa5 || second == 0xac || second == 0xad)
+			{
+				const char* const name = second < 0xac ? "shld" : "shrd";
+				d.modrm(rm, sizeof(rm), reg, sizeof(reg), true);
+				if ((second & 1) == 0) snprintf(text, sizeof(text), "%s %s,%s,%02Xh", name, rm, reg, d.byte());
+				else snprintf(text, sizeof(text), "%s %s,%s,cl", name, rm, reg);
+			}
+			else if (second == 0xaf)
+			{
+				d.modrm(rm, sizeof(rm), reg, sizeof(reg), true);
+				snprintf(text, sizeof(text), "imul %s,%s", reg, rm);
+			}
+			else if (second == 0xb2 || second == 0xb4 || second == 0xb5)
+			{
+				const char* const name = second == 0xb2 ? "lss" : (second == 0xb4 ? "lfs" : "lgs");
+				d.modrm(rm, sizeof(rm), reg, sizeof(reg), true);
+				snprintf(text, sizeof(text), "%s %s,%s", name, reg, rm);
+			}
+			else if (second == 0xb6 || second == 0xb7 || second == 0xbe || second == 0xbf)
+			{
+				// The destination is always the wider register, so the rm and
+				// the reg halves of the modrm are not the same width.
+				const int which = d.modrm_op(d.offset);
+				d.modrm(rm, sizeof(rm), nullptr, 0, (second & 1) != 0);
+				snprintf(text, sizeof(text), "%s %s,%s", second < 0xbe ? "movzx" : "movsx",
+				         reg16_names[which], rm);
+			}
+			else if (second == 0xbc || second == 0xbd)
+			{
+				d.modrm(rm, sizeof(rm), reg, sizeof(reg), true);
+				snprintf(text, sizeof(text), "%s %s,%s", second == 0xbc ? "bsf" : "bsr", reg, rm);
+			}
+			else if (second == 0x01)
+			{
+				const int operation = d.modrm_op(d.offset);
+				d.modrm(rm, sizeof(rm), nullptr, 0, true);
+				snprintf(text, sizeof(text), "%s %s", operation == 4 ? "smsw" : "?", rm);
+			}
+			else
+			{
+				snprintf(text, sizeof(text), "db 0Fh,%02Xh", second);
+			}
+			break;
+		}
+
 		default:
 			snprintf(text, sizeof(text), "db %02Xh", opcode);
 			break;
 		}
 		break;
 	}
-
 	result.length = uint16_t(d.offset - offset);
 	if (result.length == 0) result.length = 1;
 	snprintf(result.text, sizeof(result.text), "%s", text);
@@ -419,7 +501,8 @@ void debug_capture(const machine_state& s, debug_state& out)
 	out.psp_segment = s.dos.psp_segment;
 	out.dta = s.dos.dta;
 	out.open_files = 0;
-	for (const dos_file& file : s.dos.files) if (file.used && file.device == 0) ++out.open_files;
+	for (const dos_file& file : s.dos.files)
+		if (file.references > 0 && file.device == dos_device_none) ++out.open_files;
 
 	out.free_paragraphs = 0;
 	out.largest_block = 0;

@@ -1,7 +1,7 @@
-#ifndef __OVRWIN_I86_H__
-#define __OVRWIN_I86_H__
+#ifndef __LIBDOS_I86_H__
+#define __LIBDOS_I86_H__
 
-// ovrwin by Zac Walker
+// libdos by Zac Walker
 //
 // The 8086-specific bits a 16-bit DOS source expects. The far-pointer macros
 // are honest only while the compiler emits the tiny model, where every segment
@@ -15,8 +15,8 @@ unsigned int __seg(void);
 #define FP_OFF(p) ((unsigned int)(p))
 #define MK_FP(s, o) ((void *)(o))
 
-#ifndef __OVRWIN_PORTS__
-#define __OVRWIN_PORTS__
+#ifndef __LIBDOS_PORTS__
+#define __LIBDOS_PORTS__
 int inp(int port);
 int outp(int port, int value);
 unsigned int inpw(int port);
