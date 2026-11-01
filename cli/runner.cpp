@@ -14,6 +14,7 @@
 #include "lib-omf.h"
 
 #include "../host/host-win32.h"
+#include <windows.h>
 #include "../src/machine.h"
 
 #include <conio.h>

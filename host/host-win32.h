@@ -8,7 +8,7 @@
 
 #include "../src/host.h"
 
-#include <windows.h>
+#include <memory>
 
 constexpr int host_max_searches = 32;
 
@@ -17,6 +17,8 @@ class win32_host : public host_services
 public:
 	win32_host();
 	~win32_host() override;
+	win32_host(const win32_host&) = delete;
+	win32_host& operator=(const win32_host&) = delete;
 
 	// Everything the program sees lives under this directory.
 	bool set_root(const char* directory);
@@ -66,16 +68,10 @@ protected:
 	bool verbose() const { return verbose_; }
 
 private:
-	struct search_slot
-	{
-		HANDLE handle = INVALID_HANDLE_VALUE;
-		uint8_t attributes = 0;
-	};
-
+	struct state;
+	std::unique_ptr<state> state_;
 	static const int max_files = 64;
-
-	char root_[MAX_PATH] = {};
-	HANDLE files_[max_files] = {};
-	search_slot searches_[host_max_searches];
+	static constexpr int path_capacity = 260;
+	char root_[path_capacity] = {};
 	bool verbose_ = false;
 };

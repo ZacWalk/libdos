@@ -31,6 +31,10 @@ covers at a glance.
   runner (`cli/runner.cpp`) adds the terminal, the fixed date and LIB's
   stand-in (`cli/lib-omf.c`) on top of it, and its boot mode (`cli/boot.cpp`)
   the disk image files and the script of steps.
+- `host/host-win32.h` exposes no Windows headers or handles. Its native file
+  and search handles live in the implementation, so including it from dui
+  does not pull the SDK across the GUI boundary. `host_header_boundary` checks
+  this independently of the emulator suite.
 - `cc/` is platform independent too, and opens no files: a caller supplies
   source text through `cc_sources`, the same way a host supplies the drive.
 - `disk/` is platform independent as well and opens no files either: a caller

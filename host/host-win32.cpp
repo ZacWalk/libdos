@@ -5,8 +5,20 @@
 
 #include "host-win32.h"
 
+#include <windows.h>
 #include <cstdio>
 #include <cstring>
+
+struct win32_host::state
+{
+	struct search_slot
+	{
+		HANDLE handle = INVALID_HANDLE_VALUE;
+		uint8_t attributes = 0;
+	};
+	HANDLE files[max_files] = {};
+	search_slot searches[host_max_searches];
+};
 
 namespace
 {
@@ -46,16 +58,17 @@ namespace
 	}
 }
 
-win32_host::win32_host()
+win32_host::win32_host() : state_(std::make_unique<state>())
 {
-	for (auto& file : files_) file = INVALID_HANDLE_VALUE;
+	static_assert(path_capacity == MAX_PATH);
+	for (auto& file : state_->files) file = INVALID_HANDLE_VALUE;
 	GetCurrentDirectoryA(MAX_PATH, root_);
 }
 
 win32_host::~win32_host()
 {
-	for (auto& file : files_) if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
-	for (auto& search : searches_) if (search.handle != INVALID_HANDLE_VALUE) FindClose(search.handle);
+	for (auto& file : state_->files) if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+	for (auto& search : state_->searches) if (search.handle != INVALID_HANDLE_VALUE) FindClose(search.handle);
 }
 
 bool win32_host::set_root(const char* directory)
@@ -122,9 +135,9 @@ int win32_host::file_open(const char* path, int access)
 
 	for (int i = 0; i < max_files; ++i)
 	{
-		if (files_[i] == INVALID_HANDLE_VALUE)
+		if (state_->files[i] == INVALID_HANDLE_VALUE)
 		{
-			files_[i] = handle;
+			state_->files[i] = handle;
 			if (verbose_) report("open", path, i);
 			return i;
 		}
@@ -145,9 +158,9 @@ int win32_host::file_create(const char* path, uint8_t attributes)
 
 	for (int i = 0; i < max_files; ++i)
 	{
-		if (files_[i] == INVALID_HANDLE_VALUE)
+		if (state_->files[i] == INVALID_HANDLE_VALUE)
 		{
-			files_[i] = handle;
+			state_->files[i] = handle;
 			if (verbose_) report("create", path, i);
 			return i;
 		}
@@ -158,40 +171,40 @@ int win32_host::file_create(const char* path, uint8_t attributes)
 
 void win32_host::file_close(int handle)
 {
-	if (handle < 0 || handle >= max_files || files_[handle] == INVALID_HANDLE_VALUE) return;
-	CloseHandle(files_[handle]);
-	files_[handle] = INVALID_HANDLE_VALUE;
+	if (handle < 0 || handle >= max_files || state_->files[handle] == INVALID_HANDLE_VALUE) return;
+	CloseHandle(state_->files[handle]);
+	state_->files[handle] = INVALID_HANDLE_VALUE;
 }
 
 int win32_host::file_read(int handle, uint8_t* buffer, int length)
 {
-	if (handle < 0 || handle >= max_files || files_[handle] == INVALID_HANDLE_VALUE) return -1;
+	if (handle < 0 || handle >= max_files || state_->files[handle] == INVALID_HANDLE_VALUE) return -1;
 	DWORD read = 0;
-	if (!ReadFile(files_[handle], buffer, DWORD(length), &read, nullptr)) return -1;
+	if (!ReadFile(state_->files[handle], buffer, DWORD(length), &read, nullptr)) return -1;
 	return int(read);
 }
 
 int win32_host::file_write(int handle, const uint8_t* buffer, int length)
 {
-	if (handle < 0 || handle >= max_files || files_[handle] == INVALID_HANDLE_VALUE) return -1;
+	if (handle < 0 || handle >= max_files || state_->files[handle] == INVALID_HANDLE_VALUE) return -1;
 	DWORD written = 0;
-	if (!WriteFile(files_[handle], buffer, DWORD(length), &written, nullptr)) return -1;
+	if (!WriteFile(state_->files[handle], buffer, DWORD(length), &written, nullptr)) return -1;
 	return int(written);
 }
 
 int32_t win32_host::file_seek(int handle, int32_t offset, int origin)
 {
-	if (handle < 0 || handle >= max_files || files_[handle] == INVALID_HANDLE_VALUE) return -1;
+	if (handle < 0 || handle >= max_files || state_->files[handle] == INVALID_HANDLE_VALUE) return -1;
 	const DWORD method = origin == 1 ? FILE_CURRENT : (origin == 2 ? FILE_END : FILE_BEGIN);
-	const DWORD position = SetFilePointer(files_[handle], offset, nullptr, method);
+	const DWORD position = SetFilePointer(state_->files[handle], offset, nullptr, method);
 	if (position == INVALID_SET_FILE_POINTER) return -1;
 	return int32_t(position);
 }
 
 bool win32_host::file_truncate(int handle)
 {
-	if (handle < 0 || handle >= max_files || files_[handle] == INVALID_HANDLE_VALUE) return false;
-	return SetEndOfFile(files_[handle]) != 0;
+	if (handle < 0 || handle >= max_files || state_->files[handle] == INVALID_HANDLE_VALUE) return false;
+	return SetEndOfFile(state_->files[handle]) != 0;
 }
 
 bool win32_host::file_delete(const char* path)
@@ -255,7 +268,7 @@ int win32_host::find_first(const char* pattern, uint8_t attributes, host_file_in
 	int slot = -1;
 	for (int i = 0; i < host_max_searches; ++i)
 	{
-		if (searches_[i].handle == INVALID_HANDLE_VALUE)
+		if (state_->searches[i].handle == INVALID_HANDLE_VALUE)
 		{
 			slot = i;
 			break;
@@ -267,8 +280,8 @@ int win32_host::find_first(const char* pattern, uint8_t attributes, host_file_in
 	const HANDLE handle = FindFirstFileA(windows_path, &found);
 	if (handle == INVALID_HANDLE_VALUE) return -1;
 
-	searches_[slot].handle = handle;
-	searches_[slot].attributes = attributes;
+	state_->searches[slot].handle = handle;
+	state_->searches[slot].attributes = attributes;
 
 	// The first match may be one the caller's attribute mask excludes.
 	for (;;)
@@ -287,7 +300,7 @@ int win32_host::find_first(const char* pattern, uint8_t attributes, host_file_in
 		if (!FindNextFileA(handle, &found))
 		{
 			FindClose(handle);
-			searches_[slot].handle = INVALID_HANDLE_VALUE;
+			state_->searches[slot].handle = INVALID_HANDLE_VALUE;
 			return -1;
 		}
 	}
@@ -295,13 +308,13 @@ int win32_host::find_first(const char* pattern, uint8_t attributes, host_file_in
 
 bool win32_host::find_next(int search, host_file_info& info)
 {
-	if (search < 0 || search >= host_max_searches || searches_[search].handle == INVALID_HANDLE_VALUE) return false;
+	if (search < 0 || search >= host_max_searches || state_->searches[search].handle == INVALID_HANDLE_VALUE) return false;
 
 	WIN32_FIND_DATAA found{};
-	while (FindNextFileA(searches_[search].handle, &found))
+	while (FindNextFileA(state_->searches[search].handle, &found))
 	{
 		const uint8_t found_attributes = to_dos_attributes(found.dwFileAttributes);
-		const bool wants_directories = (searches_[search].attributes & 0x10) != 0;
+		const bool wants_directories = (state_->searches[search].attributes & 0x10) != 0;
 		if ((found_attributes & 0x10) != 0 && !wants_directories) continue;
 
 		to_dos_name(found, info.name);
@@ -318,8 +331,8 @@ bool win32_host::find_next(int search, host_file_info& info)
 void win32_host::find_close(int search)
 {
 	if (search < 0 || search >= host_max_searches) return;
-	if (searches_[search].handle != INVALID_HANDLE_VALUE) FindClose(searches_[search].handle);
-	searches_[search].handle = INVALID_HANDLE_VALUE;
+	if (state_->searches[search].handle != INVALID_HANDLE_VALUE) FindClose(state_->searches[search].handle);
+	state_->searches[search].handle = INVALID_HANDLE_VALUE;
 }
 
 bool win32_host::make_directory(const char* path)

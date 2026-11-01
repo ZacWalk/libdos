@@ -8,6 +8,7 @@
 #include "../src/machine.h"
 #include "../src/debug.h"
 #include "../host/host-win32.h"
+#include <windows.h>
 #include "../cc/cc.h"
 #include "../cc/support.h"
 #include "../disk/disk-image.h"

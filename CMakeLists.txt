@@ -38,7 +38,7 @@ if(LIBDOS_BUILD_APP)
     include(FetchContent)
     FetchContent_Declare(libdesktop
         GIT_REPOSITORY https://github.com/ZacWalk/libdesktop.git
-        GIT_TAG        3d3b61378fc79444ba297abbb0b860793c72b2d3
+        GIT_TAG        31aae322af6e0696a9597726705b1121bd31580b
     )
     FetchContent_MakeAvailable(libdesktop)
 endif()
@@ -139,6 +139,9 @@ if(PROJECT_IS_TOP_LEVEL)
     include(CTest)
 endif()
 if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
+    add_executable(libdos_host_header_test host/host-header-test.cpp)
+    add_test(NAME host_header_boundary COMMAND libdos_host_header_test)
+    set_tests_properties(host_header_boundary PROPERTIES TIMEOUT 30 LABELS libdos)
     # The gates: demu's behavioural suite, then dui's offscreen self-check. A
     # new check of src/ or cc/ goes in the demu suite; there is no separate
     # unit test binary.

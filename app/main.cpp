@@ -6,10 +6,7 @@
 
 #include "platform.h"
 
-// The host is the one Windows-specific piece left, and it is shared with the
-// CLI. platform.h is included first so its std::max survives windows.h.
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
+// The host's handles stay in its implementation, shared with the CLI.
 #include "../host/host-win32.h"
 
 #include "../src/machine.h"
