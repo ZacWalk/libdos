@@ -23,9 +23,10 @@ covers at a glance.
 - The library takes bytes and returns bytes. Reading files is the host's job,
   through `host_services` in `src/host.h` - and in boot mode through the
   `block_device`s in `src/block-device.h` a host attaches as drives.
-- `app/` (dui) talks to the outside world through `pf::` only - window, menu, input,
-  audio, dialogs and file paths. It names no operating system, and nothing
-  Win32-shaped may go into libdesktop to make it easier; see that repo's rules.
+- `app/` (dui) is a `ui::app` over libdesktop's `core`, `platform`, `render` and
+  `ui` libraries - window, drawn menu, input, audio, dialogs and file paths. It
+  names no operating system, and nothing Win32-shaped may go into libdesktop to
+  make it easier; see that repo's rules.
 - `host/` and `cli/` (demu) own what is left of Windows: the file system and the
   console. `host/host-win32.cpp` is shared by dui and demu; demu's program
   runner (`cli/runner.cpp`) adds the terminal, the fixed date and LIB's
@@ -52,10 +53,9 @@ Considered and deliberately deferred, so nobody re-opens it by accident.
 Everything in `host-win32.cpp` but one call maps onto `<filesystem>`,
 `<fstream>` and `<chrono>`. The exception is `code_alloc` / `code_commit`,
 which wants pages that are writable and then executable and has no standard
-form - and routing that through `pf::` would drag the platform layer, and the
-`WinMain` that forces `app_init` stubs on a console program, into demu. If
-it is ever done, the shape is standard C++ plus a small OS-specific file, not
-`pf::`.
+form - and routing that through the UI application would pull Windows entry-point
+  details into demu. If it is ever done, the shape is standard C++ plus a small
+  OS-specific file, not a dependency on the desktop UI layer.
 
 Two behaviours would change and both want tests written first: `FindFirstFileA`
 is doing the DOS wildcard matching and the 8.3 short name today - and gets the
@@ -117,8 +117,8 @@ CLI, and MCP for an MCP client — and its
 [commands](https://github.com/ZacWalk/dd/blob/main/docs/cli.md#commands) are
 documented in its own repository.
 
-`dd bench` compiles a C source with libdos's own compiler and runs it (ported
-from the pre-dd driver). Build demu first with `dd build`:
+`dd bench` compiles a C source with libdos's own compiler and runs it. Build
+demu first with `dd build`:
 
 ```pwsh
 .\dd.ps1 bench --dry-run                 # default source cc/bench/bench.c, run natively
@@ -223,8 +223,8 @@ boots the result with `demu --boot` - floppies, hard disks by CHS and by LBA,
 FDISK and FORMAT - and is the gate for `src/bios.cpp` and `cli/boot.cpp`.
 
 A green build proves nothing on its own - run `.\dd.ps1 test --label libdos`.
-It runs two CTest entries in each configuration: `demu_suite`, the demu
-suite, and `dui_selftest`, dui's offscreen self-check, which pins the
+It runs the host-header boundary check, the demu behavioural suite and dui's
+offscreen self-check when those targets are enabled. Together they pin the
 picture scaling, that the framebuffer reaches the screen, that a repaint draws
 the picture rather than leaving the window black, that a key held when the
 window loses the focus is let go, that the right and middle mouse buttons are

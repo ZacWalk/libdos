@@ -62,7 +62,7 @@ run).
 |------|----------|
 | `src/` | The emulator. Platform independent - no Windows headers, no file system. Builds `libdos`. |
 | `host/` | The Windows implementation of the host interface: one directory presented as the emulated drive, plus the pages the JIT executes from. Shared by demu and dui, and the last Windows-specific code in the repository. |
-| `app/` | dui, written against the shared [libdesktop](https://github.com/ZacWalk/libdesktop) layer: window, menu, picture, sound and the key mapping, with no operating system named. |
+| `app/` | dui, a `ui::app` over libdesktop's `core`, `platform`, `render` and `ui` libraries: window, drawn menu, picture texture, sound and key mapping, with no operating system named. |
 | `cli/` | demu: the test suite and the debugger, the runner that builds dos4z with its 1988 toolchain (`runner.cpp`, with LIB's stand-in in `lib-omf.c`), and boot mode's headless runner (`boot.cpp`). |
 | `cc/` | A C compiler for 16-bit DOS. Platform independent, and it opens no files either. `cc/include` and `cc/lib` are the C library it compiles against. |
 | `disk/` | Bootable DOS disk images - FAT12 floppies and partitioned FAT12/FAT16 hard disks - and the reader that finds the files on one again. Platform independent and opens no files: a caller supplies the bytes and a sink or a source for the sectors. Builds `libdos_disk`. |
@@ -89,7 +89,7 @@ cmake --build --preset release
 ```
 
 Binaries land in `exe/` as `dui.exe`, `demu.exe` and `dimg.exe`, with a `-d` suffix
-for Debug. Build trees go under `build/<preset>/`. The platform layer is pulled
+for Debug. Build trees go under `build/<preset>/`. libdesktop's four libraries are pulled
 in by `FetchContent` at the revision pinned in `CMakeLists.txt`, except that a
 sibling `../libdesktop` checkout is used instead when one exists.
 
@@ -323,7 +323,7 @@ libdos builds only its libraries: `libdos`, `libdos_cc` (the compiler),
 `libdos_disk` (disk images) and `libdos_host` (the Windows host).
 `LIBDOS_BUILD_TOOLS` and `LIBDOS_BUILD_APP` turn demu and dimg, and dui, on;
 they default to on only when libdos is the top-level project, and only dui
-fetches the platform layer.
+fetches libdesktop.
 
 ## Licence
 

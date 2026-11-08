@@ -66,10 +66,9 @@ when a review turns one up, add it here rather than in AGENTS.md.
   interpreter: per instruction, the decode, the effective address and the
   flags. The timer and interrupt checks were the first 25% and are gone; the
   rest wants the core reworked or the JIT in [jit.md](jit.md).
-- The old demu could check every memory access against a shadow map of what
-  had been written and allocated. That caught its own loader's mistakes more
-  than any program's, and doing it here would put a test on every access, so
-  it was not carried over; `--trace-tail` and the suite cover that ground.
+- Memory accesses are not checked against a shadow map of what has been
+  written and allocated. Adding one would put a test on every access;
+  `--trace-tail` and the suite cover that ground.
 
 ## Boot mode
 
@@ -202,7 +201,7 @@ The compiler emits a `.COM`: one segment, code and data and stack together,
 64 KiB in total. That is the single largest limit in the project and the reason
 a real game cannot be built here yet.
 
-Doom8088, the worked example in `inspiration/Doom8088`, now **compiles all the
+Doom8088, the worked example, now **compiles all the
 way through** as a single translation unit. Every one of the 51 files its mode
 13h build needs parses and generates code; the only thing it stops on is the
 segment limit. Reproducing it:
@@ -360,15 +359,16 @@ the DOS one does through `EXEC`; it resets the machine instead.
   tell the cursor pad from the numeric keypad. For the same reason the
   emulated NumLock starts off, so the keypad's digits arrive as cursor keys
   whatever the host's NumLock says.
-- Alt, Alt+key and F10 never reach a program in dui: libdesktop does not
-  forward `WM_SYSKEYDOWN`/`WM_SYSKEYUP`, so Windows uses them for the menu bar
-  instead. The BIOS translates Alt combinations for when they do arrive.
+- Alt, Alt+key and F10 never reach a program in dui: the application leaves
+  those system keys to the menu bar and native window instead of forwarding them
+  to the emulated keyboard. The BIOS translates Alt combinations when a host
+  does provide them.
 - No joystick. Port 201h reports nothing attached.
 
 ## Host and app
 
-- dui has no settings file: window size, sound and aspect are not
-  remembered between runs.
+- dui reads an optional `dui.ini` for the window placement, but it does not
+  save the placement; sound and aspect are not remembered between runs.
 - No save states.
 - dui draws the whole frame every iteration whether or not anything
   changed; `vga_state::dirty` is maintained but not used.

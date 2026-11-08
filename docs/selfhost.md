@@ -235,7 +235,7 @@ script, one build, no diff in the output.
    `cc_map`, interned `cc_names`, and the source normaliser. Unit-tested from
    `cli/main.cpp`. *(done)*
 2. **`target.h`** - already almost C. Dropped `enum class` and the unused static
-   factory; the defaults moved into `cc_target_init`. *(done)*
+   factory; the defaults live in `cc_target_init`. *(done)*
 3. **`sources.h`** - the virtual `cc_sources` became a struct holding a `load`
    function pointer, which a host embeds as its first member. *(done)*
 4. **`lex.h`/`lex.c`** - the tokeniser and preprocessor. A token now carries an

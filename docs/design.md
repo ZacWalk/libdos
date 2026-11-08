@@ -11,7 +11,7 @@ The pieces, with a hard boundary between `src/` and the rest:
 |---|---|
 | `src/` | The emulator. Platform independent: no Windows headers, no file system, no threads. Builds `libdos`. |
 | `host/` | The Windows side of `host_services`: one directory presented as the emulated drive. |
-| `app/` | dui, the libdesktop host. Owns the window, picture, sound and menus through `pf::`. |
+| `app/` | dui, a `ui::app` over libdesktop's four libraries. Owns the frame, drawn menu, picture texture, sound and input mapping. |
 | `cli/` | demu, a console harness that drives the library headlessly and doubles as the debugger; the runner that builds MS-DOS with its 1988 toolchain (`runner.cpp`, with LIB's stand-in in `lib-omf.c`); and boot mode's headless runner (`boot.cpp`). |
 | `cc/` | A C compiler targeting 16-bit DOS. Platform independent, and like `src/` it opens no files. |
 | `shell/` | A DOS command interpreter written in C and built by `cc/`. |

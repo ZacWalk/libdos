@@ -312,7 +312,7 @@ The watch itself is unavoidable and cheap:
 
 - A **code bitmap**, one bit per 1 KiB of the 1 MiB address space (128 bytes
   total), marks pages a translated block was built from.
-- `mem_write8` gains one test against that bitmap. It already does a range test
+- `mem_write8` gains coverage for that bitmap. It already does a range test
   on every write, so this is a predictable branch on a hot but already-branchy
   path. A marked page invalidates every block starting in it - hence blocks
   never spanning a page boundary.

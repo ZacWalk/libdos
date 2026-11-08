@@ -38,7 +38,7 @@ if(LIBDOS_BUILD_APP)
     include(FetchContent)
     FetchContent_Declare(libdesktop
         GIT_REPOSITORY https://github.com/ZacWalk/libdesktop.git
-        GIT_TAG        31aae322af6e0696a9597726705b1121bd31580b
+        GIT_TAG        04109ee82a500db38d439fa281bbc3f43124adfe
     )
     FetchContent_MakeAvailable(libdesktop)
 endif()
@@ -103,15 +103,15 @@ if(LIBDOS_BUILD_TOOLS)
 endif()
 
 if(LIBDOS_BUILD_APP)
-    # dui: a window, the picture, the sound and the key mapping, all through
-    # the shared platform layer.
-    platform_add_app(dui
+    # dui: a ui frame, drawn menu, picture texture, sound and key mapping, all
+    # through libdesktop's four libraries.
+    libdesktop_add_app(dui
         SOURCES     app/main.cpp
         DESCRIPTION "dui - DOS emulator"
         OUTPUT_NAME dui
     )
 
-    target_link_libraries(dui PRIVATE libdos libdos_host)
+    target_link_libraries(dui PRIVATE libdos libdos_host libdesktop::ui)
     list(APPEND libdos_targets dui)
     list(APPEND libdos_executables dui)
 endif()
