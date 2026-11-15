@@ -28,14 +28,17 @@
 #include "target.h"
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 typedef enum condition
 {
+	// clang-format off
 	cond_equal, cond_not_equal,
 	cond_less, cond_less_equal, cond_greater, cond_greater_equal, /* signed */
 	cond_below, cond_below_equal, cond_above, cond_above_equal /* unsigned */
+	// clang-format on
 } condition;
 
 condition opposite(condition c);
@@ -43,14 +46,21 @@ condition opposite(condition c);
 /* The architecture's own numbering, so a back end can use it as the reg field. */
 enum reg_name
 {
-	reg_a = 0, reg_c = 1, reg_d = 2, reg_b = 3,
-	reg_sp = 4, reg_bp = 5, reg_si = 6, reg_di = 7,
+	reg_a = 0,
+	reg_c = 1,
+	reg_d = 2,
+	reg_b = 3,
+	reg_sp = 4,
+	reg_bp = 5,
+	reg_si = 6,
+	reg_di = 7,
 	reg_ah = 4, /* only as a byte register */
 	reg_none = 0xff
 };
 
 typedef enum op
 {
+	// clang-format off
 	op_nop,
 	op_mov,
 	op_lea,
@@ -64,6 +74,7 @@ typedef enum op
 	op_setcc, /* dest becomes 0 or 1, which an 8086 needs a branch for */
 	op_jmp, op_jcc, op_call, op_call_at, op_ret, op_interrupt,
 	op_literal /* a run of bytes, for the hand-written runtime helpers */
+	// clang-format on
 } op;
 
 typedef enum operand_kind
@@ -78,8 +89,8 @@ typedef enum operand_kind
 typedef enum reference_kind
 {
 	reference_kind_none,
-	reference_kind_data, /* the address of an object in the data section */
-	reference_kind_code, /* the address of a label */
+	reference_kind_data,    /* the address of an object in the data section */
+	reference_kind_code,    /* the address of a label */
 	reference_kind_deferred /* a value settled after generation, such as a frame size */
 } reference_kind;
 
@@ -89,7 +100,7 @@ typedef struct operand
 	uint8_t reg; /* the register, or the base of a memory operand */
 	uint8_t index;
 	reference_kind reference;
-	int32_t value; /* the displacement, or the immediate */
+	int32_t value;  /* the displacement, or the immediate */
 	int32_t target; /* the label, data offset or deferred slot */
 } operand;
 
@@ -114,7 +125,7 @@ typedef struct instruction
 	/* Settled by emit_lay_out(). */
 	int32_t offset;
 	int32_t length;
-	int32_t fixup; /* where in the instruction an address goes, from the start */
+	int32_t fixup;       /* where in the instruction an address goes, from the start */
 	int32_t fixup_width; /* and how many bytes of it there are */
 } instruction;
 
@@ -127,12 +138,12 @@ typedef struct code_range
 
 typedef struct emitter
 {
-	cc_list code; /* instruction */
+	cc_list code;     /* instruction */
 	cc_list literals; /* uint8_t */
-	cc_list labels; /* int, the instruction a label is bound to, or -1 */
+	cc_list labels;   /* int, the instruction a label is bound to, or -1 */
 	cc_list deferred; /* int32_t */
-	cc_list image; /* uint8_t, the encoding once emit_lay_out() has run */
-	cc_list dropped; /* code_range */
+	cc_list image;    /* uint8_t, the encoding once emit_lay_out() has run */
+	cc_list dropped;  /* code_range */
 
 	/* What the back end may emit. Set once, before anything is generated. */
 	cc_cpu cpu;
@@ -195,8 +206,10 @@ void emit_byte(emitter* e, int value);
 int emit_encode(const emitter* e, instruction* in, int position, cc_list* into);
 int emit_encode_x64(const emitter* e, instruction* in, int position, cc_list* into);
 
-static int emit_at(const emitter* e) { return e->code.count; }
-static int emit_code_size(const emitter* e) { return e->image.count; }
+static int emit_at(const emitter* e)
+{
+	return e->code.count;
+}
 
 /* ---- the shapes the generator asks for ----
  *
@@ -206,6 +219,7 @@ static int emit_code_size(const emitter* e) { return e->image.count; }
  * than part of the mnemonic.
  */
 
+// clang-format off
 static operand emit_frame(int32_t displacement) { return operand_at(reg_bp, displacement, reg_none); }
 static operand emit_pointee(int32_t displacement) { return operand_at(reg_b, displacement, reg_none); }
 
@@ -228,7 +242,6 @@ static void emit_mov_cl_imm(emitter* e, int v) { emit_op(e, op_mov, 1, operand_i
 
 static void emit_load_ax_absolute(emitter* e, int a) { emit_op(e, op_mov, 2, operand_in(reg_a), operand_absolute(a)); }
 static void emit_store_ax_absolute(emitter* e, int a) { emit_op(e, op_mov, 2, operand_absolute(a), operand_in(reg_a)); }
-static void emit_load_al_absolute(emitter* e, int a) { emit_op(e, op_mov, 1, operand_in(reg_a), operand_absolute(a)); }
 static void emit_store_al_absolute(emitter* e, int a) { emit_op(e, op_mov, 1, operand_absolute(a), operand_in(reg_a)); }
 static void emit_load_dx_absolute(emitter* e, int a) { emit_op(e, op_mov, 2, operand_in(reg_d), operand_absolute(a)); }
 static void emit_store_dx_absolute(emitter* e, int a) { emit_op(e, op_mov, 2, operand_absolute(a), operand_in(reg_d)); }
@@ -238,7 +251,6 @@ static void emit_mov_bx_absolute(emitter* e, int a) { emit_op(e, op_mov, 2, oper
 
 static void emit_load_ax_frame(emitter* e, int d) { emit_op(e, op_mov, 2, operand_in(reg_a), emit_frame(d)); }
 static void emit_store_ax_frame(emitter* e, int d) { emit_op(e, op_mov, 2, emit_frame(d), operand_in(reg_a)); }
-static void emit_load_al_frame(emitter* e, int d) { emit_op(e, op_mov, 1, operand_in(reg_a), emit_frame(d)); }
 static void emit_store_al_frame(emitter* e, int d) { emit_op(e, op_mov, 1, emit_frame(d), operand_in(reg_a)); }
 static void emit_load_dx_frame(emitter* e, int d) { emit_op(e, op_mov, 2, operand_in(reg_d), emit_frame(d)); }
 static void emit_store_dx_frame(emitter* e, int d) { emit_op(e, op_mov, 2, emit_frame(d), operand_in(reg_d)); }
@@ -250,16 +262,13 @@ static void emit_lea_cx_frame(emitter* e, int d) { emit_op(e, op_lea, 2, operand
 
 static void emit_load_ax_indirect(emitter* e, int d) { emit_op(e, op_mov, 2, operand_in(reg_a), emit_pointee(d)); }
 static void emit_store_ax_indirect(emitter* e, int d) { emit_op(e, op_mov, 2, emit_pointee(d), operand_in(reg_a)); }
-static void emit_load_al_indirect(emitter* e, int d) { emit_op(e, op_mov, 1, operand_in(reg_a), emit_pointee(d)); }
 static void emit_store_al_indirect(emitter* e, int d) { emit_op(e, op_mov, 1, emit_pointee(d), operand_in(reg_a)); }
 static void emit_load_dx_indirect_high(emitter* e, int d) { emit_op(e, op_mov, 2, operand_in(reg_d), emit_pointee(d + 2)); }
 static void emit_store_dx_indirect_high(emitter* e, int d) { emit_op(e, op_mov, 2, emit_pointee(d + 2), operand_in(reg_d)); }
-static void emit_lea_ax_indirect(emitter* e, int d) { emit_op(e, op_lea, 2, operand_in(reg_a), emit_pointee(d)); }
 
 static void emit_push_ax(emitter* e) { emit_one(e, op_push, 2, operand_in(reg_a)); }
 static void emit_pop_ax(emitter* e) { emit_one(e, op_pop, 2, operand_in(reg_a)); }
 static void emit_pop_bx(emitter* e) { emit_one(e, op_pop, 2, operand_in(reg_b)); }
-static void emit_pop_cx(emitter* e) { emit_one(e, op_pop, 2, operand_in(reg_c)); }
 static void emit_push_dx(emitter* e) { emit_one(e, op_push, 2, operand_in(reg_d)); }
 static void emit_pop_dx(emitter* e) { emit_one(e, op_pop, 2, operand_in(reg_d)); }
 static void emit_push_bp(emitter* e) { emit_one(e, op_push, 2, operand_in(reg_bp)); }
@@ -268,8 +277,6 @@ static void emit_pop_bp(emitter* e) { emit_one(e, op_pop, 2, operand_in(reg_bp))
 static void emit_move(emitter* e, int to, int from) { emit_op(e, op_mov, 2, operand_in(to), operand_in(from)); }
 static void emit_mov_cx_ax(emitter* e) { emit_move(e, reg_c, reg_a); }
 static void emit_mov_bx_ax(emitter* e) { emit_move(e, reg_b, reg_a); }
-static void emit_mov_ax_cx(emitter* e) { emit_move(e, reg_a, reg_c); }
-static void emit_mov_ax_bx(emitter* e) { emit_move(e, reg_a, reg_b); }
 static void emit_mov_dx_ax(emitter* e) { emit_move(e, reg_d, reg_a); }
 static void emit_mov_ax_dx(emitter* e) { emit_move(e, reg_a, reg_d); }
 static void emit_mov_cx_dx(emitter* e) { emit_move(e, reg_c, reg_d); }
@@ -425,6 +432,7 @@ static void emit_call(emitter* e, int label)
 static void emit_call_frame(emitter* e, int d) { emit_one(e, op_call_at, 2, emit_frame(d)); }
 static void emit_ret(emitter* e) { emit_plain(e, op_ret, 2); }
 static void emit_interrupt(emitter* e, int number) { emit_one(e, op_interrupt, 2, operand_constant(number)); }
+// clang-format on
 
 #ifdef __cplusplus
 }

@@ -17,26 +17,26 @@ namespace
 	constexpr double opl_native_rate = 49716.0;
 
 	// Frequency multiplier per operator, in halves.
-	const double multiplier_table[16] = {
-		0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 12, 12, 15, 15
-	};
+	const double multiplier_table[16] = {0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 12, 12, 15, 15};
 
 	// Key scale level attenuation in dB per octave above the base.
 	const double ksl_table[4] = {0.0, 1.5, 3.0, 6.0};
 
 	// ops[i] holds the operator whose registers live at this offset from the
 	// start of each OPL register block.
-	const int operator_slot[opl_operators] = {
-		0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 16, 17, 18, 19, 20, 21
-	};
+	const int operator_slot[opl_operators] = {0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 16, 17, 18, 19, 20, 21};
 
 	int slot_to_operator(int slot)
 	{
-		for (int i = 0; i < opl_operators; ++i) if (operator_slot[i] == slot) return i;
+		for (int i = 0; i < opl_operators; ++i)
+			if (operator_slot[i] == slot) return i;
 		return -1;
 	}
 
-	int modulator_of(int channel) { return (channel / 3) * 6 + (channel % 3); }
+	int modulator_of(int channel)
+	{
+		return (channel / 3) * 6 + (channel % 3);
+	}
 
 	double waveform(int shape, double phase)
 	{
@@ -151,7 +151,7 @@ namespace
 		case 1:
 		{
 			const double step = attack_step_per_sample(std::min(63, 4 * settings.attack + key_scale)) *
-				samples_per_step;
+			                    samples_per_step;
 			if (settings.attack == 0) op.envelope = 96.0;
 			else op.envelope -= step;
 			if (op.envelope <= 0.0)
@@ -163,8 +163,7 @@ namespace
 		}
 		case 2:
 		{
-			const double step = decay_step_per_sample(std::min(63, 4 * settings.decay + key_scale)) *
-				samples_per_step;
+			const double step = decay_step_per_sample(std::min(63, 4 * settings.decay + key_scale)) * samples_per_step;
 			op.envelope += step;
 			const double sustain_db = settings.sustain == 15 ? 96.0 : settings.sustain * 3.0;
 			if (op.envelope >= sustain_db)
@@ -177,8 +176,7 @@ namespace
 		case 3:
 			if (!settings.sustaining)
 			{
-				op.envelope += decay_step_per_sample(std::min(63, 4 * settings.release + key_scale)) *
-					samples_per_step;
+				op.envelope += decay_step_per_sample(std::min(63, 4 * settings.release + key_scale)) * samples_per_step;
 				if (op.envelope >= 96.0)
 				{
 					op.envelope = 96.0;
@@ -194,8 +192,7 @@ namespace
 				op.state = 0;
 			}
 			break;
-		default:
-			return 0.0;
+		default: return 0.0;
 		}
 
 		const double frequency = double(fnum) * opl_native_rate / std::pow(2.0, 20.0 - block);
@@ -224,10 +221,9 @@ namespace
 
 			const uint8_t connection = o.regs[0xc0 + channel];
 			const int feedback = (connection >> 1) & 7;
-			const double feedback_amount = feedback == 0
-				                               ? 0.0
-				                               : (o.ops[modulator].output + o.ops[modulator].previous) * 0.5 *
-				                               std::pow(2.0, feedback - 1) / 8.0;
+			const double feedback_amount = feedback == 0 ? 0.0
+			                                             : (o.ops[modulator].output + o.ops[modulator].previous) * 0.5 *
+			                                                   std::pow(2.0, feedback - 1) / 8.0;
 
 			const double modulator_value = operator_output(o, modulator, channel, feedback_amount, samples_per_step);
 			if ((connection & 1) != 0)
@@ -313,12 +309,9 @@ void sound_render(machine_state& s, int16_t* out, int frames)
 			const sound_event& e = sound.queue[event];
 			switch (e.port)
 			{
-			case 0x388: sound.opl.index = uint8_t(e.value);
-				break;
-			case 0x389: opl_write(sound.opl, sound.opl.index, uint8_t(e.value));
-				break;
-			case 0x42: speaker_reload = e.value;
-				break;
+			case 0x388: sound.opl.index = uint8_t(e.value); break;
+			case 0x389: opl_write(sound.opl, sound.opl.index, uint8_t(e.value)); break;
+			case 0x42: speaker_reload = e.value; break;
 			case 0x61:
 				sound.speaker.timer_gate = (e.value & 1) != 0;
 				sound.speaker.data_bit = (e.value & 2) != 0;
@@ -332,9 +325,8 @@ void sound_render(machine_state& s, int16_t* out, int frames)
 
 		if (sound.speaker.timer_gate && sound.speaker.data_bit)
 		{
-			const double frequency = speaker_reload == 0
-				                         ? double(pit_frequency) / 65536.0
-				                         : double(pit_frequency) / speaker_reload;
+			const double frequency = speaker_reload == 0 ? double(pit_frequency) / 65536.0
+			                                             : double(pit_frequency) / speaker_reload;
 			speaker_phase += frequency / sound_sample_rate;
 			if (speaker_phase >= 1.0) speaker_phase -= std::floor(speaker_phase);
 			sample += (speaker_phase < 0.5 ? 0.18 : -0.18);

@@ -51,7 +51,7 @@ int read_line(void)
 
 void split_line(void)
 {
-	char *p;
+	char* p;
 	int n;
 
 	p = line + 2;
@@ -84,7 +84,7 @@ void command_dir(void)
 	int files;
 	int directories;
 	int column;
-	char *name;
+	char* name;
 
 	if (argument[0] == 0) strcpy(path, "*.*");
 	else strcpy(path, argument);
@@ -193,7 +193,7 @@ void command_help(void)
 
 /* ---- external commands ---- */
 
-int has_extension(char *name)
+int has_extension(char* name)
 {
 	while (*name != 0)
 	{
@@ -203,7 +203,7 @@ int has_extension(char *name)
 	return 0;
 }
 
-int start(char *program)
+int start(char* program)
 {
 	int length;
 
@@ -240,10 +240,12 @@ void execute(void)
 {
 	if (command[0] == 0) return;
 
+	// clang-format off
 	if (match(command, "dir")) { command_dir(); return; }
 	if (match(command, "type")) { command_type(); return; }
 	if (match(command, "mem")) { command_mem(); return; }
 	if (match(command, "help") || match(command, "?")) { command_help(); return; }
+	// clang-format on
 	if (match(command, "rem")) return;
 
 	if (match(command, "cls"))

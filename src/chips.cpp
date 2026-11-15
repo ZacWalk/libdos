@@ -80,10 +80,8 @@ uint8_t pit_read(machine_state& s, uint16_t port)
 	uint8_t result;
 	switch (c.access)
 	{
-	case 1: result = uint8_t(value);
-		break;
-	case 2: result = uint8_t(value >> 8);
-		break;
+	case 1: result = uint8_t(value); break;
+	case 2: result = uint8_t(value >> 8); break;
 	default:
 		result = c.read_high ? uint8_t(value >> 8) : uint8_t(value);
 		c.read_high = !c.read_high;
@@ -125,12 +123,8 @@ void pit_write(machine_state& s, uint16_t port, uint8_t value)
 	pit_channel& c = p.channel[index];
 	switch (c.access)
 	{
-	case 1:
-		c.reload = uint16_t((c.reload & 0xff00) | value);
-		break;
-	case 2:
-		c.reload = uint16_t((c.reload & 0x00ff) | (value << 8));
-		break;
+	case 1: c.reload = uint16_t((c.reload & 0xff00) | value); break;
+	case 2: c.reload = uint16_t((c.reload & 0x00ff) | (value << 8)); break;
 	default:
 		if (!c.write_high)
 		{
@@ -254,16 +248,12 @@ namespace
 			chip.base = uint8_t(value & 0xf8);
 			chip.init_step = 2;
 			break;
-		case 2:
-			chip.init_step = 3;
-			break;
+		case 2: chip.init_step = 3; break;
 		case 3:
 			chip.auto_eoi = (value & 0x02) != 0;
 			chip.init_step = 0;
 			break;
-		default:
-			chip.imr = value;
-			break;
+		default: chip.imr = value; break;
 		}
 	}
 }

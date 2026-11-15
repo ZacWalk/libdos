@@ -1,20 +1,15 @@
 # libdos Repository Guidance
 
-libdos is a C++20 DOS program emulator: a platform-independent static library
-(`src/`), a Windows host implementation (`host/`), dui - the windowed app built
-on the shared [libdesktop](https://github.com/ZacWalk/libdesktop) layer
-(`app/`) - and demu, the command-line runner that is also the test suite and
-the debugger (`cli/`).
-Alongside it are a C compiler for 16-bit DOS (`cc/`), a DOS shell written in
-C and built with it (`shell/`), and dimg (`dimg/`), which makes and reads
-bootable DOS disk images with the library in `disk/`.
+libdos is a C++20 DOS program emulator and the tools built on it - demu, dui
+and dimg - with a C compiler for 16-bit DOS and a DOS shell compiled by it.
+What each directory holds, how to build and run it, and what is and is not
+emulated are in the [README](README.md).
 
-Read [docs/design.md](docs/design.md) before changing anything in `src/` - it
-covers the callback opcode, the mapping-not-emulating boundary, the plane
-interleave and the invariants that hold the design together.
-[docs/todo.md](docs/todo.md) is the gap list; prefer picking work from there
-over inventing new work. See [README.md](README.md) for what the emulator
-covers at a glance.
+| Read | Before |
+|---|---|
+| [docs/design.md](docs/design.md) | changing anything in `src/`: the callback opcode, the mapping-not-emulating boundary, the plane interleave and the invariants that hold the design together |
+| [docs/cc.md](docs/cc.md) | changing `cc/`, or writing C for `shell/` |
+| [README.md](README.md) | building, running, debugging a program, and what demu, dui and dimg do |
 
 ## Project Boundaries
 
@@ -23,15 +18,13 @@ covers at a glance.
 - The library takes bytes and returns bytes. Reading files is the host's job,
   through `host_services` in `src/host.h` - and in boot mode through the
   `block_device`s in `src/block-device.h` a host attaches as drives.
-- `app/` (dui) is a `ui::app` over libdesktop's `core`, `platform`, `render` and
-  `ui` libraries - window, drawn menu, input, audio, dialogs and file paths. It
-  names no operating system, and nothing Win32-shaped may go into libdesktop to
-  make it easier; see that repo's rules.
-- `host/` and `cli/` (demu) own what is left of Windows: the file system and the
-  console. `host/host-win32.cpp` is shared by dui and demu; demu's program
-  runner (`cli/runner.cpp`) adds the terminal, the fixed date and LIB's
-  stand-in (`cli/lib-omf.c`) on top of it, and its boot mode (`cli/boot.cpp`)
-  the disk image files and the script of steps.
+- `app/` (dui) gets its window, drawn menu, input, audio, dialogs and file
+  paths from libdesktop and calls no operating system directly. Nothing
+  Win32-shaped may go into libdesktop to make it easier; see that repo's rules.
+- `host/`, `cli/` (demu) and `dimg/` own what is left of Windows: the file
+  system and the console. `host/host-win32.cpp` is shared by dui and demu;
+  demu's program runner adds the terminal, the fixed date and LIB's stand-in on
+  top of it, and its boot mode the disk image files and the script of steps.
 - `host/host-win32.h` exposes no Windows headers or handles. Its native file
   and search handles live in the implementation, so including it from dui
   does not pull the SDK across the GUI boundary. `host_header_boundary` checks
@@ -40,32 +33,43 @@ covers at a glance.
   source text through `cc_sources`, the same way a host supplies the drive.
 - `disk/` is platform independent as well and opens no files either: a caller
   hands in the boot code and the files' bytes, and a `disk_sink` or
-  `disk_source` for the sectors. `dimg/` owns the files, the sparse image file
-  and the command line.
+  `disk_source` for the sectors. The files are `dimg/`'s.
 - `shell/` is C for the emulated machine, not for the host. It is compiled by
-  `cc/`, so it can only use the subset in [docs/todo.md](docs/todo.md).
-- When dui or demu needs a new capability, expose a platform-neutral operation from
-  `machine.h` rather than reaching into `machine_state`.
+  `cc/`, so it can only use [the C that cc accepts](docs/cc.md#the-language).
+- When dui or demu needs a new capability, expose a platform-neutral operation
+  from `machine.h` rather than reaching into `machine_state`.
 
-### Why `host/` is still Win32
+### Why `host/` is Win32
 
-Considered and deliberately deferred, so nobody re-opens it by accident.
-Everything in `host-win32.cpp` but one call maps onto `<filesystem>`,
-`<fstream>` and `<chrono>`. The exception is `code_alloc` / `code_commit`,
-which wants pages that are writable and then executable and has no standard
-form - and routing that through the UI application would pull Windows entry-point
-  details into demu. If it is ever done, the shape is standard C++ plus a small
-  OS-specific file, not a dependency on the desktop UI layer.
-
-Two behaviours would change and both want tests written first: `FindFirstFileA`
-is doing the DOS wildcard matching and the 8.3 short name today - and gets the
-name wrong on a volume with short-name creation disabled, truncating to 12
-characters without honouring the dot - and `std::filesystem` has no hidden,
-system or archive attribute.
+Decided, so nobody re-opens it by accident. Everything in `host-win32.cpp` but
+`code_alloc` / `code_commit` maps onto `<filesystem>`, `<fstream>` and
+`<chrono>`; those two want pages that are writable and then executable, which
+have no standard form. A port is standard C++ plus a small OS-specific file,
+never a dependency on the desktop UI layer, which would pull Windows
+entry-point details into demu. It changes two behaviours, so tests come
+first: `FindFirstFileA` does the DOS wildcard matching and supplies the 8.3
+short name - on a volume with short-name creation disabled it truncates the
+long name to 12 characters without honouring the dot - and `std::filesystem`
+has no hidden, system or archive attribute.
 
 ## Coding Guidelines
 
-- Tab-indented, C++20, existing naming (`snake_case` types and functions).
+- C++20, existing naming (`snake_case` types and functions).
+- `.clang-format` is the layout: tabs, Allman braces, 120 columns. It covers
+  the C that cc compiles - `shell/`, `cc/lib`, `cc/include`, `cc/bench` - as
+  well, since layout does not change what cc emits (`tools/cc-fingerprint.ps1`
+  checks). Visual Studio installs clang-format in `VC\Tools\Llvm\x64\bin`;
+  `.\dd.ps1 fmt` finds it only on PATH and formats `include`, `src` and
+  `tests`, which here is `src` alone, so run `clang-format -i` on the other
+  directories' files too. `.clang-format-ignore` keeps it off
+  `src/rom-font.cpp`, `cc/gen.c` (whose end of prelude `tools/port-gen.py`
+  finds by its indentation) and dd's templates, and a table laid out by hand -
+  opcode rows, BIOS and keyboard data, a run of one-line dispatches - is fenced
+  with `// clang-format off` and `// clang-format on`.
+- Every target MSVC builds compiles without warnings at `/W4`, and
+  `.clang-tidy` names the bug-finding and performance checks the code is kept
+  clean against. A deliberate exception is a `NOLINT(check): reason` on its
+  line or the line above.
 - Keep it compact. Add an abstraction only when it improves the library API or
   removes real duplication.
 - `src/rom-font.cpp` is generated data. Never hand-edit it; run
@@ -77,141 +81,59 @@ system or archive attribute.
 
 ## Build And Validation
 
-Build with the vendored dd driver in PowerShell 7.4+. It sets up the MSVC
-environment itself, so no developer prompt is needed. `build` covers Debug and
-Release unless one is named; `test` always builds and runs both:
-
-```powershell
-.\dd.ps1 test --label libdos        # build + the demu suite and dui's offscreen check
-.\dd.ps1 build release              # or debug
-.\dd.ps1 launch                     # build Release + start dui (for the human)
-.\dd.ps1 run cli '--' --info GAME.EXE
-.\dd.ps1 run cli '--' --cc .\shell\shell.c
-.\dd.ps1 bench --yes                # compile the benchmark for this machine and run it
-.\dd.ps1 clean --dry-run
-```
-
-The `'--'` is quoted because PowerShell removes a bare `--` from a script's
-arguments, and dd then rejects demu's own options as its own.
-
-Use `--label libdos`: an unfiltered `.\dd.ps1 test` also opens dui's window
-for a second as a smoke check. After a build the suite runs directly too:
-
-```powershell
-.\exe\demu.exe --test    # returns non-zero on failure
-```
-
-Build trees are per preset under `build/`; binaries land in `exe/` as
-`dui.exe`, `demu.exe` and `dimg.exe`, with a `-d` suffix for Debug. Embedded in another
-CMake project, libdos builds only its libraries unless `LIBDOS_BUILD_TOOLS` or
-`LIBDOS_BUILD_APP` is on, and only `LIBDOS_BUILD_APP` fetches libdesktop.
-
+The commands are in the README's [Build and run](README.md#build-and-run).
 The [dd](https://github.com/ZacWalk/dd) build driver is vendored unmodified as
 `dd.ps1` and `.dd/`, with file hashes recorded in
-[docs/dd-upstream.json](docs/dd-upstream.json). Project settings live in
-`dd.psd1`; libdesktop, the one dependency, is pinned by the `GIT_TAG` in
-`CMakeLists.txt`, not in `cmake/dd-dependencies.json`.
+[docs/dd-upstream.json](docs/dd-upstream.json); never edit either. Project
+settings live in `dd.psd1`; libdesktop, the one dependency, is pinned by the
+`GIT_TAG` in `CMakeLists.txt`, not in `cmake/dd-dependencies.json`.
 `.\dd.ps1 commands --json` lists this project's own commands. dd's
 [two modes](https://github.com/ZacWalk/dd/blob/main/docs/mcp.md#two-modes) —
 CLI, and MCP for an MCP client — and its
 [commands](https://github.com/ZacWalk/dd/blob/main/docs/cli.md#commands) are
 documented in its own repository.
 
-`dd bench` compiles a C source with libdos's own compiler and runs it. Build
-demu first with `dd build`:
-
-```pwsh
-.\dd.ps1 bench --dry-run                 # default source cc/bench/bench.c, run natively
-.\dd.ps1 bench --exe true --yes          # emit an executable into exe/ then run it
-.\dd.ps1 bench --source cc/bench/other.c --yes
-```
-
-dui builds against a sibling `../libdesktop` checkout when one exists and
-against the pinned revision in `CMakeLists.txt` otherwise - so a green local
-build says nothing about the pin. After changing libdesktop, push it and re-pin
-here.
-
-A tag `vX.Y.Z` on `main` releases: `.github/workflows/release.yml` builds and
-tests both configurations and publishes `libdos-vX.Y.Z-win-x64.zip` (demu,
-dimg and dui, Release) with its SHA-256. dos4z pins both the version and that
-hash in `make-dos.ps1`, so moving it to a new release means changing the two
-together there.
+- A green build proves nothing on its own - run `.\dd.ps1 test --label
+  libdos`. It runs the host-header boundary check, the demu behavioural suite
+  and dui's offscreen self-check, in both configurations.
+- Do not launch the GUI to verify a change - hence `--label libdos`, which
+  leaves out the smoke check that opens dui's window. `dui.exe -test` is the
+  headless form and `dd.ps1 launch` is for the human.
+- There is no separate unit-test binary; a new check of `src/`, `cc/` or
+  `disk/` goes in the demu suite.
+- `tools/cc-fingerprint.ps1` says whether a change to `cc/` changed what the
+  compiler emits; a difference is looked at and recorded again on purpose
+  ([docs/cc.md](docs/cc.md#checking-it)).
+- A sibling `../libdesktop` checkout, when there is one, replaces the revision
+  pinned in `CMakeLists.txt`, so a green local build says nothing about the
+  pin. After changing libdesktop, push it and re-pin here.
+- A tag `vX.Y.Z` on `main` releases: `.github/workflows/release.yml` builds and
+  tests both configurations and publishes `libdos-vX.Y.Z-win-x64.zip` (demu,
+  dimg and dui, Release) with its SHA-256. dos4z pins both the version and that
+  hash in `make-dos.ps1`, so moving it to a new release means changing the two
+  together there.
 
 ## Debugging A Program That Does Not Work
 
-This is most of the work, and demu exists for it. In order:
-
-1. `--trace` prints every DOS and BIOS call with its arguments and the address
-   it came from. Nearly every failure is visible here as a service returning
-   something the program did not expect.
-2. `--trace-tail n` prints the last `n` instructions executed with registers.
-   Use it when the program gives up without asking for anything.
-3. `--bmp file` writes the final frame. The text-screen dump (`--screen`) is
-   meaningless in a graphics mode; the bitmap is not.
-4. `--state` prints registers, the memory map, open files and a disassembly
-   window.
-
-A worked example, from the commit history: Elite reported "Packed file is
-corrupt". `--trace-tail` showed its EXEPACK unpacker decoding a valid block and
-then reading garbage. Comparing the source pointer before and after a
-`rep movsb` showed it had moved 1741 bytes instead of 2228 - a timer interrupt
-had arrived mid-block and the emulator had *abandoned* the REP instead of
-rewinding to the prefix and resuming it.
+This is most of the work, and demu exists for it. Work through the
+[debugger's steps](README.md#the-debugger-and-the-test-suite) in order:
+`--trace`, then `--trace-tail`, then `--bmp`, then `--state`.
 
 ## What The Tests Pin
 
 `cli/main.cpp` is the contract. Before "fixing" an emulation detail, check
-whether a test already encodes the current behaviour:
-
-- CPU: arithmetic and its flags, `MUL`/`IDIV`, shifts, string instructions,
-  `CALL`/`RET`, `LES`, and the 80186 additions.
-- Interrupts: INT 10h through the vector table, and a program hooking a vector
-  and seeing its own handler run.
-- Timer: channel 0 raising IRQ 0 at the programmed rate, and the BIOS tick
-  count advancing through the INT 8 stub.
-- Video: mode 13h linear memory and DAC output, the planar set/reset and bit
-  mask path, and text-mode plane writes.
-- DOS: MCB allocate/free/reuse/resize, path resolution including `..` and a
-  current directory below the root, both loaders including relocation,
-  buffered line input (AH=0Ah), and a program running to completion with its
-  output on screen.
-- The keyboard: what the BIOS buffers for a key with Shift, Ctrl or Alt held,
-  and that the modifiers and locks alone put nothing there.
-- The shell: a program run from the prompt gets its command line, leaves its
-  output on screen and returns; one that will not load is reported once.
-- Sound: the AdLib detection sequence, and both the OPL and the speaker
-  producing output.
-- The compiler: a C program using recursion, arrays, structures, `switch` and
-  the preprocessor is compiled and then **run in the emulator**, and its output
-  checked. The same is done for 32-bit arithmetic (multiply, both divides,
-  remainder, shifts and comparisons), for function pointers and `goto`, for
-  variadic functions and for the type and width of constants. A second pair of
-  programs pins `EXEC`, and a third that `__int13` reaches the BIOS and puts
-  DI back. What it
-  refuses is pinned too - structure assignment,
-  parameters and returns, assigning to an array, a second definition of a
-  function, an unterminated comment or `#if` - with the line an error at the
-  end of the file is reported on.
-- The disassembler, which the debugger depends on.
-- DOS for the build tools: PSP:0002 covering the whole program block, the
-  handle tables (a duplicated or forced handle sharing its position, files
-  closed when a program ends), devices by name, names cut to 8.3, a child's
-  own copy of the environment with its path, AH=47h, AH=29h as DOS's MakeFcb
-  parses, the input status calls at the end of redirected input, and searches
-  a program abandons around one it is still walking; COMMAND.COM /C's built-in
-  commands (ECHO's delimiters, `>>` over a ^Z, DEL asking before it empties a
-  directory), redirection, PATH search, exit codes and a host's own program;
-  and the processor models.
-- Disk images: a floppy's parameter block, FATs and root directory order
-  (IO.SYS, MSDOS.SYS, then the label); a hard disk's cylinder-aligned
-  partitions, EBR chain, partition types and CHS addresses past cylinder 1023;
-  the reader listing and reading back files, a subdirectory's included, and
-  lettering the drives as DOS does; and damaged images - a directory two
-  entries share, clusters that loop and an EBR that links back.
-- Boot mode: a boot sector reading by CHS and by LBA, the LBA calls switched
-  off and EDD's 127-sector limit, a floppy booting without 55AAh, INT 13h
-  AH=08h for both kinds of drive, the IBM PC ROM with nothing mapped above
-  INT 1Fh, a restart through FFFF:0000, and nothing to boot.
+whether a test already encodes the current behaviour. Its `test_*` functions
+cover the CPU and the processor models, interrupts and the timer, video memory
+and modes, DOS memory, paths, handles and services, both loaders, COMMAND.COM
+/C, the native prompt and programs run from it, the keyboard, sound, the
+compiler - programs compiled and run in the emulator at both CPU levels, what
+it refuses, and the x64 back end against the emulator - the disassembler the
+debugger depends on, disk images and boot mode. dui's offscreen self-check is
+`run_offscreen` in `app/main.cpp`. Nothing checks the planar read modes and
+colour compare, CGA rendering, the MCB chain as a program walks it, the output
+of `--trace`, `--info` and `--state`, the preprocessor on its own,
+`cc/lib/libc.c`, or `shell/shell.c`, which only the compiler's fingerprint
+compiles.
 
 The suite cannot see the biggest consumer: demu builds MS-DOS 4.00 in
 [dos4z](https://github.com/ZacWalk/dos4z) with the original 1988 toolchain,
@@ -221,18 +143,3 @@ produce every one of that build's binaries byte for byte. dos4z's
 disk images with this checkout's dimg; its `test-boot.ps1 -LibdosPath ..\libdos`
 boots the result with `demu --boot` - floppies, hard disks by CHS and by LBA,
 FDISK and FORMAT - and is the gate for `src/bios.cpp` and `cli/boot.cpp`.
-
-A green build proves nothing on its own - run `.\dd.ps1 test --label libdos`.
-It runs the host-header boundary check, the demu behavioural suite and dui's
-offscreen self-check when those targets are enabled. Together they pin the
-picture scaling, that the framebuffer reaches the screen, that a repaint draws
-the picture rather than leaving the window black, that a key held when the
-window loses the focus is let go, that the right and middle mouse buttons are
-let go, and that a close message ends the session.
-There is no separate unit-test binary; a new check of
-`src/`, `cc/` or `disk/` goes in the demu suite. Do not launch the GUI to verify a change;
-`dui.exe -test` is the headless form and `dd.ps1 launch` is for the human.
-
-## Known Gaps
-
-The gap list lives in [docs/todo.md](docs/todo.md). Keep it current.

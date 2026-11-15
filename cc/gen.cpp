@@ -32,8 +32,18 @@ namespace
 
 	enum type_kind
 	{
-		ty_void, ty_char, ty_uchar, ty_int, ty_uint, ty_long, ty_ulong, ty_real,
-		ty_pointer, ty_array, ty_record, ty_function
+		ty_void,
+		ty_char,
+		ty_uchar,
+		ty_int,
+		ty_uint,
+		ty_long,
+		ty_ulong,
+		ty_real,
+		ty_pointer,
+		ty_array,
+		ty_record,
+		ty_function
 	};
 
 	struct type_info
@@ -61,32 +71,52 @@ namespace
 		bool is_union = false;
 	};
 
-	enum symbol_kind { sym_global, sym_local, sym_function, sym_constant, sym_typedef };
+	enum symbol_kind
+	{
+		sym_global,
+		sym_local,
+		sym_function,
+		sym_constant,
+		sym_typedef
+	};
 
 	struct symbol
 	{
 		int name = 0;
 		symbol_kind kind = sym_global;
 		int type = 0;
-		int offset = 0; // data offset for globals, frame offset for locals
-		int label = -1; // where the code is, for a function
-		int start = -1; // the same label, kept for the span the body occupies
+		int offset = 0;  // data offset for globals, frame offset for locals
+		int label = -1;  // where the code is, for a function
+		int start = -1;  // the same label, kept for the span the body occupies
 		int finish = -1; // the label just past the body
-		long value = 0; // enumeration constant
+		long value = 0;  // enumeration constant
 		int scope = 0;
 		std::vector<int> parameters; // declared parameter types, so a call can convert
-		bool defined = false; // a body was generated, not just a declaration
-		bool called = false; // something other than a dropped function reached it
-		int body = -1; // the token the body starts at, for inlining
-		int frame = 0; // how much stack the body needs, for inlining
+		bool defined = false;        // a body was generated, not just a declaration
+		bool called = false;         // something other than a dropped function reached it
+		int body = -1;               // the token the body starts at, for inlining
+		int frame = 0;               // how much stack the body needs, for inlining
 		std::vector<int> parameter_names;
 	};
 
-	enum value_kind { val_const, val_reg, val_local, val_global, val_deref, val_flags };
+	enum value_kind
+	{
+		val_const,
+		val_reg,
+		val_local,
+		val_global,
+		val_deref,
+		val_flags
+	};
 
 	// Where the address of a dereference is. Leaving it in memory until the
 	// value is actually wanted is what keeps it off the stack.
-	enum address_source { addr_reg, addr_local, addr_global };
+	enum address_source
+	{
+		addr_reg,
+		addr_local,
+		addr_global
+	};
 
 	struct value
 	{
@@ -94,7 +124,7 @@ namespace
 		int type = 0;
 		long constant = 0;
 		double real = 0; // only meaningful while the value is still a constant
-		int offset = 0; // the condition, for a value that is still only flags
+		int offset = 0;  // the condition, for a value that is still only flags
 		address_source address = addr_reg;
 		int bias = 0; // the constant part of a dereferenced address
 	};
@@ -150,8 +180,18 @@ namespace
 	// program only if something called it.
 	enum helper
 	{
-		h_lmul, h_uldivmod, h_ldiv, h_uldiv, h_lmod, h_ulmod,
-		h_lshl, h_lshr, h_lsar, h_lcmp, h_ulcmp, helper_count
+		h_lmul,
+		h_uldivmod,
+		h_ldiv,
+		h_uldiv,
+		h_lmod,
+		h_ulmod,
+		h_lshl,
+		h_lshr,
+		h_lsar,
+		h_lcmp,
+		h_ulcmp,
+		helper_count
 	};
 
 	// What a token looks like in a diagnostic. Punctuation and keywords carry
@@ -235,6 +275,7 @@ namespace
 	{
 		switch (k)
 		{
+			// clang-format off
 		case tok::star: case tok::slash: case tok::percent: return 10;
 		case tok::plus: case tok::minus: return 9;
 		case tok::shl: case tok::shr: return 8;
@@ -246,10 +287,14 @@ namespace
 		case tok::and_and: return 2;
 		case tok::or_or: return 1;
 		default: return 0;
+			// clang-format on
 		}
 	}
 
-	bool is_comparison(cc_tok k) { return precedence_of(k) == 6 || precedence_of(k) == 7; }
+	bool is_comparison(cc_tok k)
+	{
+		return precedence_of(k) == 6 || precedence_of(k) == 7;
+	}
 
 	condition condition_of(cc_tok op, bool unsigned_operation)
 	{
@@ -267,8 +312,7 @@ namespace
 	class generator
 	{
 	public:
-		explicit generator(cc_token_stream& tokens, const cc_options& options)
-			: tokens_(tokens), options_(options)
+		explicit generator(cc_token_stream& tokens, const cc_options& options) : tokens_(tokens), options_(options)
 		{
 			cc_target_init(&target_);
 			emit_init(&e_);
@@ -332,10 +376,8 @@ namespace
 		bool hoisted_ = false;
 		int current_function_ = -1;
 		std::vector<int> inline_returns_; // the label the body's returns jump to
-		std::vector<int> inline_stack_; // what is being expanded, so it cannot expand itself
-		int helper_label_[helper_count] = {
-			-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
-		};
+		std::vector<int> inline_stack_;   // what is being expanded, so it cannot expand itself
+		int helper_label_[helper_count] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
 
 		int helper_label(int which)
 		{
@@ -348,8 +390,8 @@ namespace
 
 		[[noreturn]] void fail(const char* message) const
 		{
-			const cc_token& token = CC_TOKEN(tokens_, at_ < size_t(tokens_.tokens.count)
-			                                 ? int(at_) : tokens_.tokens.count - 1);
+			const cc_token& token = CC_TOKEN(tokens_,
+			                                 at_ < size_t(tokens_.tokens.count) ? int(at_) : tokens_.tokens.count - 1);
 			// Naming the token the parser stopped at is most of a diagnostic,
 			// and survives a line number that a macro expansion has moved.
 			std::string text = message;
@@ -363,12 +405,14 @@ namespace
 		const cc_token& peek(int ahead = 0) const
 		{
 			const size_t index = at_ + size_t(ahead);
-			return CC_TOKEN(tokens_, index < size_t(tokens_.tokens.count)
-			                ? int(index) : tokens_.tokens.count - 1);
+			return CC_TOKEN(tokens_, index < size_t(tokens_.tokens.count) ? int(index) : tokens_.tokens.count - 1);
 		}
 
 		cc_tok kind() const { return peek().kind; }
-		void advance() { if (at_ + 1 < size_t(tokens_.tokens.count)) ++at_; }
+		void advance()
+		{
+			if (at_ + 1 < size_t(tokens_.tokens.count)) ++at_;
+		}
 
 		bool accept(cc_tok k)
 		{
@@ -453,10 +497,7 @@ namespace
 
 		bool is_function_type(int index) const { return types_[size_t(index)].kind == ty_function; }
 
-		bool is_function_pointer(int index) const
-		{
-			return is_pointer(index) && is_function_type(target_of(index));
-		}
+		bool is_function_pointer(int index) const { return is_pointer(index) && is_function_type(target_of(index)); }
 
 		const std::vector<int>& signature_of(int function) const
 		{
@@ -631,10 +672,7 @@ namespace
 		}
 
 		static bool in_memory(const value& v) { return v.kind == val_local || v.kind == val_global; }
-		static address_source source_of(const value& v)
-		{
-			return v.kind == val_local ? addr_local : addr_global;
-		}
+		static address_source source_of(const value& v) { return v.kind == val_local ? addr_local : addr_global; }
 
 		bool fits_cx(const value& v) const
 		{
@@ -675,11 +713,13 @@ namespace
 			if (k != tok::number && k != tok::character && k != tok::identifier) return false;
 			switch (peek(1).kind)
 			{
-			case tok::l_paren: case tok::l_bracket: case tok::dot: case tok::arrow:
-			case tok::inc: case tok::dec:
-				return false;
-			default:
-				return precedence_of(peek(1).kind) <= level;
+			case tok::l_paren:
+			case tok::l_bracket:
+			case tok::dot:
+			case tok::arrow:
+			case tok::inc:
+			case tok::dec: return false;
+			default: return precedence_of(peek(1).kind) <= level;
 			}
 		}
 
@@ -714,8 +754,7 @@ namespace
 		void emit_return();
 		bool in_place_statement(cc_tok terminator);
 		operand place_of(const value& target, int extra = 0);
-		void memory_operation(op kind, int width, const value& target, const operand& source,
-		                      int extra = 0);
+		void memory_operation(op kind, int width, const value& target, const operand& source, int extra = 0);
 		bool operate_from_memory(cc_tok what, const value& right);
 		void promote_locals();
 		void fold_address_copies(int first, int last);
@@ -752,16 +791,12 @@ namespace
 	{
 		switch (v.address)
 		{
-		case addr_local:
-			emit_mov_bx_frame(&e_, v.offset);
-			break;
+		case addr_local: emit_mov_bx_frame(&e_, v.offset); break;
 		case addr_global:
 			emit_mov_bx_absolute(&e_, 0);
 			data_reference(v.offset);
 			break;
-		default:
-			emit_mov_bx_ax(&e_);
-			break;
+		default: emit_mov_bx_ax(&e_); break;
 		}
 	}
 
@@ -814,8 +849,7 @@ namespace
 			if (wide) emit_mov_dx_imm(&e_, int((v.constant >> 16) & 0xffff));
 			break;
 
-		case val_reg:
-			break;
+		case val_reg: break;
 
 		case val_flags:
 			// The comparison is only in the flags, so it costs something to ask
@@ -825,8 +859,7 @@ namespace
 
 		case val_local:
 			if (is_array(v.type) || is_record(v.type)) emit_lea_ax_frame(&e_, v.offset);
-			else if (type_size(v.type) == 1)
-				load_byte_widened(emit_frame(v.offset), !is_unsigned(v.type));
+			else if (type_size(v.type) == 1) load_byte_widened(emit_frame(v.offset), !is_unsigned(v.type));
 			else
 			{
 				emit_load_ax_frame(&e_, v.offset);
@@ -840,8 +873,7 @@ namespace
 				emit_mov_ax_imm(&e_, 0);
 				data_reference(v.offset);
 			}
-			else if (type_size(v.type) == 1)
-				load_byte_widened(operand_absolute(0), !is_unsigned(v.type), v.offset);
+			else if (type_size(v.type) == 1) load_byte_widened(operand_absolute(0), !is_unsigned(v.type), v.offset);
 			else
 			{
 				emit_load_ax_absolute(&e_, 0);
@@ -868,8 +900,7 @@ namespace
 				break;
 			}
 			address_to_bx(v);
-			if (type_size(v.type) == 1)
-				load_byte_widened(emit_pointee(v.bias), !is_unsigned(v.type));
+			if (type_size(v.type) == 1) load_byte_widened(emit_pointee(v.bias), !is_unsigned(v.type));
 			else
 			{
 				emit_load_ax_indirect(&e_, v.bias);
@@ -907,9 +938,7 @@ namespace
 	{
 		switch (v.kind)
 		{
-		case val_local:
-			emit_lea_ax_frame(&e_, v.offset);
-			break;
+		case val_local: emit_lea_ax_frame(&e_, v.offset); break;
 		case val_global:
 			emit_mov_ax_imm(&e_, 0);
 			data_reference(v.offset);
@@ -923,8 +952,7 @@ namespace
 			}
 			if (v.bias != 0) emit_add_ax_imm(&e_, v.bias);
 			break;
-		default:
-			fail("this expression has no address");
+		default: fail("this expression has no address");
 		}
 		v.kind = val_reg;
 		v.type = pointer_to(v.type);
@@ -973,8 +1001,7 @@ namespace
 			emit_store_ax_indirect(&e_, target.bias);
 			if (wide) emit_store_dx_indirect_high(&e_, target.bias);
 			break;
-		default:
-			fail("cannot assign to this expression");
+		default: fail("cannot assign to this expression");
 		}
 	}
 
@@ -1001,9 +1028,7 @@ namespace
 	{
 		switch (v.kind)
 		{
-		case val_const:
-			emit_mov_cx_imm(&e_, int(v.constant & 0xffff));
-			break;
+		case val_const: emit_mov_cx_imm(&e_, int(v.constant & 0xffff)); break;
 		case val_local:
 			if (is_array(v.type) || is_record(v.type)) emit_lea_cx_frame(&e_, v.offset);
 			else emit_load_cx_frame(&e_, v.offset);
@@ -1087,7 +1112,8 @@ namespace
 				emit_mov_dx_ax(&e_);
 				emit_xor_ax_ax(&e_);
 				const int rest = count - 16;
-				if (rest > 0 && rest <= 3) for (int i = 0; i < rest; ++i) emit_shl_dx_one(&e_);
+				if (rest > 0 && rest <= 3)
+					for (int i = 0; i < rest; ++i) emit_shl_dx_one(&e_);
 				else if (rest > 3)
 				{
 					emit_mov_cl_imm(&e_, rest);
@@ -1194,12 +1220,9 @@ namespace
 			return false;
 
 		case tok::shl:
-		case tok::shr:
-			shift_wide_constant(op, int(constant & 31), unsigned_operation);
-			return true;
+		case tok::shr: shift_wide_constant(op, int(constant & 31), unsigned_operation); return true;
 
-		default:
-			return false;
+		default: return false;
 		}
 	}
 
@@ -1268,20 +1291,21 @@ namespace
 			return true;
 
 		case tok::shl:
-		case tok::shr:
-			shift_ax_constant(op, value16 & 31, unsigned_operation);
-			return true;
+		case tok::shr: shift_ax_constant(op, value16 & 31, unsigned_operation); return true;
 
-		case tok::eq: case tok::ne: case tok::less: case tok::le:
-		case tok::greater: case tok::ge:
+		case tok::eq:
+		case tok::ne:
+		case tok::less:
+		case tok::le:
+		case tok::greater:
+		case tok::ge:
 			// A comparison against zero needs no operand at all. The result is
 			// left in the flags for the caller to branch on.
 			if (value16 == 0) emit_test_ax_ax(&e_);
 			else emit_cmp_ax_imm(&e_, value16);
 			return true;
 
-		default:
-			return false;
+		default: return false;
 		}
 	}
 
@@ -1289,8 +1313,8 @@ namespace
 	// other way round, which costs an exchange for the operators that care.
 	void generator::apply_operator(cc_tok op, bool unsigned_operation, bool reversed)
 	{
-		const bool commutative = op == tok::plus || op == tok::star || op == tok::amp ||
-			op == tok::pipe || op == tok::caret;
+		const bool commutative = op == tok::plus || op == tok::star || op == tok::amp || op == tok::pipe ||
+		                         op == tok::caret;
 		if (reversed && !is_comparison(op) && !commutative) emit_xchg_ax_cx(&e_);
 
 		switch (op)
@@ -1318,15 +1342,13 @@ namespace
 			if (unsigned_operation) emit_shr_ax_cl(&e_);
 			else emit_sar_ax_cl(&e_);
 			return;
-		default:
-			break;
+		default: break;
 		}
 
 		if (!is_comparison(op)) fail("unsupported operator");
 		if (reversed) emit_cmp_cx_ax(&e_);
 		else emit_cmp_ax_cx(&e_);
 	}
-
 
 	// DX:AX holds the left operand and CX:BX the right. Only the operations an
 	// 8086 can do in a couple of instructions are inline; the rest go to a
@@ -1335,6 +1357,7 @@ namespace
 	{
 		switch (op)
 		{
+			// clang-format off
 		case tok::plus: emit_add_ax_bx(&e_); emit_adc_dx_cx(&e_); return;
 		case tok::minus: emit_sub_ax_bx(&e_); emit_sbb_dx_cx(&e_); return;
 		case tok::amp: emit_and_ax_bx(&e_); emit_and_dx_cx(&e_); return;
@@ -1345,8 +1368,8 @@ namespace
 		case tok::percent: call_helper(unsigned_operation ? h_ulmod : h_lmod); return;
 		case tok::shl: call_helper(h_lshl); return;
 		case tok::shr: call_helper(unsigned_operation ? h_lshr : h_lsar); return;
-		default:
-			break;
+		// clang-format on
+		default: break;
 		}
 
 		// A comparison goes through a helper that reduces the pair to -1, 0 or 1
@@ -1465,8 +1488,7 @@ namespace
 		{
 			size_t scan = at_ + 1; // past the (
 			int depth = 0;
-			if (scan < size_t(tokens_.tokens.count) && CC_TOKEN(tokens_, int(scan)).kind != tok::r_paren)
-				arguments = 1;
+			if (scan < size_t(tokens_.tokens.count) && CC_TOKEN(tokens_, int(scan)).kind != tok::r_paren) arguments = 1;
 			for (; scan < size_t(tokens_.tokens.count); ++scan)
 			{
 				const cc_tok k = CC_TOKEN(tokens_, int(scan)).kind;
@@ -1520,14 +1542,20 @@ namespace
 			if (before == tok::amp || before == tok::inc || before == tok::dec) return true;
 			switch (CC_TOKEN(tokens_, int(scan) + 1).kind)
 			{
-			case tok::assign: case tok::plus_assign: case tok::minus_assign:
-			case tok::star_assign: case tok::slash_assign: case tok::percent_assign:
-			case tok::amp_assign: case tok::pipe_assign: case tok::caret_assign:
-			case tok::shl_assign: case tok::shr_assign:
-			case tok::inc: case tok::dec:
-				return true;
-			default:
-				break;
+			case tok::assign:
+			case tok::plus_assign:
+			case tok::minus_assign:
+			case tok::star_assign:
+			case tok::slash_assign:
+			case tok::percent_assign:
+			case tok::amp_assign:
+			case tok::pipe_assign:
+			case tok::caret_assign:
+			case tok::shl_assign:
+			case tok::shr_assign:
+			case tok::inc:
+			case tok::dec: return true;
+			default: break;
 			}
 		}
 		return true;
@@ -1575,7 +1603,7 @@ namespace
 			value argument = assignment_expression();
 
 			if (argument.kind == val_const && !is_real(argument.type) && !emitted_since(start) &&
-				!assigned_in_body(body, names[i]))
+			    !assigned_in_body(body, names[i]))
 			{
 				discard(start);
 				if (!is_wide(wanted) && !is_real(wanted)) argument.constant = long(int16_t(argument.constant));
@@ -1742,8 +1770,7 @@ namespace
 				expect(tok::l_paren, "expected ( after __args");
 				if (kind() != tok::identifier) fail("__args needs the last named parameter");
 				const int index = find(peek().name);
-				if (index < 0 || symbols_[size_t(index)].kind != sym_local ||
-					symbols_[size_t(index)].offset < 0)
+				if (index < 0 || symbols_[size_t(index)].kind != sym_local || symbols_[size_t(index)].offset < 0)
 					fail("__args needs the last named parameter");
 				const symbol& last = symbols_[size_t(index)];
 				emit_lea_ax_frame(&e_, last.offset + (is_wide(last.type) ? 4 : 2));
@@ -1790,11 +1817,9 @@ namespace
 				emit_mov_ax_imm(&e_, 0);
 				emit_refers_to_code(&e_, label_of(index));
 				symbols_[size_t(index)].called = true;
-				v.type = pointer_to(function_type(symbols_[size_t(index)].type,
-				                                  symbols_[size_t(index)].parameters));
+				v.type = pointer_to(function_type(symbols_[size_t(index)].type, symbols_[size_t(index)].parameters));
 				return v;
-			default:
-				fail("a type name cannot be used here");
+			default: fail("a type name cannot be used here");
 			}
 		}
 
@@ -1828,7 +1853,7 @@ namespace
 				value index;
 				bool index_settled = false;
 				if (peek(1).kind == tok::r_bracket &&
-					(kind() == tok::number || kind() == tok::character || kind() == tok::identifier))
+				    (kind() == tok::number || kind() == tok::character || kind() == tok::identifier))
 				{
 					index = expression();
 					index_settled = !emitted_since(start) && settled(index);
@@ -2263,8 +2288,7 @@ namespace
 					// (unsigned)0x8000 >> 15 is 1 and not a sign-extended -1.
 					if (type_size(cast) == 1)
 						v.constant = is_unsigned(cast) ? long(uint8_t(v.constant)) : long(int8_t(v.constant));
-					else
-						v.constant = is_unsigned(cast) ? long(uint16_t(v.constant)) : long(int16_t(v.constant));
+					else v.constant = is_unsigned(cast) ? long(uint16_t(v.constant)) : long(int16_t(v.constant));
 				}
 				v.type = cast;
 				return v;
@@ -2370,18 +2394,18 @@ namespace
 				// it, which is the only way it can reach the code generator.
 				if (is_real(left_constant_type) || is_real(right.type))
 				{
-					const double x = is_real(left_constant_type)
-						                 ? left_constant_real
-						                 : double(left_constant_value);
+					const double x = is_real(left_constant_type) ? left_constant_real : double(left_constant_value);
 					const double y = is_real(right.type) ? right.real : double(right.constant);
 					bool comparison = true;
 					long verdict = 0;
 					double folded = 0;
 					switch (op)
 					{
+						// clang-format off
 					case tok::plus: folded = x + y; comparison = false; break;
 					case tok::minus: folded = x - y; comparison = false; break;
 					case tok::star: folded = x * y; comparison = false; break;
+					// clang-format on
 					case tok::slash:
 						folded = y != 0 ? x / y : 0;
 						comparison = false;
@@ -2458,29 +2482,25 @@ namespace
 			// simply truncated rather than dragging the whole operation wide.
 			const bool wide = !left_pointer && !right_pointer && (left_wide || is_wide(right.type));
 			const bool unsigned_operation = is_unsigned(left.type) || is_scalar_pointer(left.type) ||
-				is_unsigned(right.type) || is_scalar_pointer(right.type);
-			const bool scaled = left_pointer && !right_pointer && element != 1 &&
-				(op == tok::plus || op == tok::minus);
+			                                is_unsigned(right.type) || is_scalar_pointer(right.type);
+			const bool scaled = left_pointer && !right_pointer && element != 1 && (op == tok::plus || op == tok::minus);
 
 			// The right operand can be placed last, and a constant then folds
 			// into the instruction itself.
-			const bool place_right = right_settled && !pushed &&
-				(!scaled || right.kind == val_const) &&
-				(wide ? fits_cx_bx(right) : fits_cx(right));
+			const bool place_right = right_settled && !pushed && (!scaled || right.kind == val_const) &&
+			                         (wide ? fits_cx_bx(right) : fits_cx(right));
 
 			if (place_right)
 			{
 				if (wide)
 				{
 					long constant = right.constant;
-					if (!is_wide(right.type) && !is_unsigned(right.type))
-						constant = long(int16_t(constant));
+					if (!is_wide(right.type) && !is_unsigned(right.type)) constant = long(int16_t(constant));
 
 					// A shift of 16 or more throws the low half away, so it is
 					// never loaded. This is the fixed-point idiom.
-					const bool high_only = left_wide && in_memory(left) &&
-						right.kind == val_const && op == tok::shr &&
-						(constant & 31) >= 16;
+					const bool high_only = left_wide && in_memory(left) && right.kind == val_const && op == tok::shr &&
+					                       (constant & 31) >= 16;
 					if (high_only)
 					{
 						if (left.kind == val_local) emit_load_ax_frame(&e_, left.offset + 2);
@@ -2498,8 +2518,7 @@ namespace
 					{
 						load(left);
 						if (!left_wide) widen(left.type);
-						if (right.kind != val_const ||
-							!apply_operator_wide_constant(op, constant, unsigned_operation))
+						if (right.kind != val_const || !apply_operator_wide_constant(op, constant, unsigned_operation))
 						{
 							load_to_cx_bx(right);
 							apply_operator_wide(op, unsigned_operation);
@@ -2666,9 +2685,9 @@ namespace
 
 		const bool simple = op == tok::assign;
 		const bool compound = op == tok::plus_assign || op == tok::minus_assign || op == tok::star_assign ||
-			op == tok::slash_assign || op == tok::percent_assign || op == tok::amp_assign ||
-			op == tok::pipe_assign || op == tok::caret_assign || op == tok::shl_assign ||
-			op == tok::shr_assign;
+		                      op == tok::slash_assign || op == tok::percent_assign || op == tok::amp_assign ||
+		                      op == tok::pipe_assign || op == tok::caret_assign || op == tok::shl_assign ||
+		                      op == tok::shr_assign;
 		if (!simple && !compound) return target;
 
 		if (target.kind != val_local && target.kind != val_global && target.kind != val_deref)
@@ -2695,14 +2714,14 @@ namespace
 			cc_tok assign;
 			cc_tok binary;
 		} mapping[] = {
-			{tok::plus_assign, tok::plus}, {tok::minus_assign, tok::minus},
-			{tok::star_assign, tok::star}, {tok::slash_assign, tok::slash},
-			{tok::percent_assign, tok::percent}, {tok::amp_assign, tok::amp},
-			{tok::pipe_assign, tok::pipe}, {tok::caret_assign, tok::caret},
-			{tok::shl_assign, tok::shl}, {tok::shr_assign, tok::shr},
+			{tok::plus_assign, tok::plus},   {tok::minus_assign, tok::minus},     {tok::star_assign, tok::star},
+			{tok::slash_assign, tok::slash}, {tok::percent_assign, tok::percent}, {tok::amp_assign, tok::amp},
+			{tok::pipe_assign, tok::pipe},   {tok::caret_assign, tok::caret},     {tok::shl_assign, tok::shl},
+			{tok::shr_assign, tok::shr},
 		};
 		cc_tok binary = tok::plus;
-		for (const auto& entry : mapping) if (entry.assign == op) binary = entry.binary;
+		for (const auto& entry : mapping)
+			if (entry.assign == op) binary = entry.binary;
 
 		const bool pointer_target = is_scalar_pointer(target.type);
 		const int element = pointer_target ? type_size(target_of(target.type)) : 1;
@@ -2718,8 +2737,8 @@ namespace
 		{
 			source = assignment_expression();
 			source_settled = !emitted_since(start) && settled(source) &&
-				(wide ? fits_cx_bx(source) : fits_cx(source)) &&
-				(element == 1 || source.kind == val_const);
+			                 (wide ? fits_cx_bx(source) : fits_cx(source)) &&
+			                 (element == 1 || source.kind == val_const);
 			if (!source_settled)
 			{
 				discard(start);
@@ -2734,20 +2753,17 @@ namespace
 		if (source_settled)
 		{
 			const bool unsigned_operation = is_unsigned(target.type) || is_scalar_pointer(target.type) ||
-				is_unsigned(source.type);
+			                                is_unsigned(source.type);
 			long constant = source.constant;
 			if (source.kind == val_const)
 			{
-				if (!is_wide(source.type) && !is_unsigned(source.type))
-					constant = long(int16_t(constant));
-				if (pointer_target && element != 1 &&
-					(binary == tok::plus || binary == tok::minus))
+				if (!is_wide(source.type) && !is_unsigned(source.type)) constant = long(int16_t(constant));
+				if (pointer_target && element != 1 && (binary == tok::plus || binary == tok::minus))
 					constant *= element;
 			}
 			const bool folded = source.kind == val_const &&
-				(wide
-					 ? apply_operator_wide_constant(binary, constant, unsigned_operation)
-					 : apply_operator_constant(binary, constant, unsigned_operation));
+			                    (wide ? apply_operator_wide_constant(binary, constant, unsigned_operation)
+			                          : apply_operator_constant(binary, constant, unsigned_operation));
 			if (!folded)
 			{
 				if (source.kind == val_const) source.constant = constant;
@@ -2774,8 +2790,7 @@ namespace
 		emit_push_ax(&e_);
 		source = assignment_expression();
 		load(source);
-		if (pointer_target && element != 1 && (binary == tok::plus || binary == tok::minus))
-			scale_ax(element);
+		if (pointer_target && element != 1 && (binary == tok::plus || binary == tok::minus)) scale_ax(element);
 		if (wide)
 		{
 			if (!is_wide(source.type)) widen(source.type);
@@ -2827,18 +2842,27 @@ namespace
 	{
 		switch (peek(ahead).kind)
 		{
-		case tok::kw_void: case tok::kw_char: case tok::kw_int: case tok::kw_unsigned:
-		case tok::kw_signed: case tok::kw_short: case tok::kw_long: case tok::kw_struct:
-		case tok::kw_union: case tok::kw_enum: case tok::kw_const: case tok::kw_qualifier:
-		case tok::kw_static: case tok::kw_extern: case tok::kw_typedef:
-			return true;
+		case tok::kw_void:
+		case tok::kw_char:
+		case tok::kw_int:
+		case tok::kw_unsigned:
+		case tok::kw_signed:
+		case tok::kw_short:
+		case tok::kw_long:
+		case tok::kw_struct:
+		case tok::kw_union:
+		case tok::kw_enum:
+		case tok::kw_const:
+		case tok::kw_qualifier:
+		case tok::kw_static:
+		case tok::kw_extern:
+		case tok::kw_typedef: return true;
 		case tok::identifier:
 		{
 			const int index = find(peek(ahead).name);
 			return index >= 0 && symbols_[size_t(index)].kind == sym_typedef;
 		}
-		default:
-			return false;
+		default: return false;
 		}
 	}
 
@@ -2909,8 +2933,7 @@ namespace
 				bool is_function = false;
 				std::vector<int> parameters;
 				std::vector<int> parameter_names;
-				const int member_type = parse_declarator(base, member_name, is_function, parameters,
-				                                         parameter_names);
+				const int member_type = parse_declarator(base, member_name, is_function, parameters, parameter_names);
 				if (member_name == 0) fail("expected a member name");
 
 				record_member member;
@@ -2984,12 +3007,8 @@ namespace
 
 		switch (kind())
 		{
-		case tok::kw_void:
-			advance();
-			return t_void_;
-		case tok::kw_char:
-			advance();
-			return is_unsigned_type ? t_uchar_ : t_char_;
+		case tok::kw_void: advance(); return t_void_;
+		case tok::kw_char: advance(); return is_unsigned_type ? t_uchar_ : t_char_;
 		case tok::kw_short:
 			advance();
 			if (kind() == tok::kw_int) advance();
@@ -2999,18 +3018,10 @@ namespace
 			while (kind() == tok::kw_long) advance(); // long long is 32-bit here too
 			if (kind() == tok::kw_int) advance();
 			return is_unsigned_type ? t_ulong_ : t_long_;
-		case tok::kw_int:
-			advance();
-			return is_unsigned_type ? t_uint_ : t_int_;
-		case tok::kw_struct:
-			advance();
-			return parse_record(false);
-		case tok::kw_union:
-			advance();
-			return parse_record(true);
-		case tok::kw_enum:
-			advance();
-			return parse_enum();
+		case tok::kw_int: advance(); return is_unsigned_type ? t_uint_ : t_int_;
+		case tok::kw_struct: advance(); return parse_record(false);
+		case tok::kw_union: advance(); return parse_record(true);
+		case tok::kw_enum: advance(); return parse_enum();
 		case tok::identifier:
 		{
 			const int index = find(peek().name);
@@ -3021,16 +3032,15 @@ namespace
 			}
 			break;
 		}
-		default:
-			break;
+		default: break;
 		}
 
 		if (seen_sign) return is_unsigned_type ? t_uint_ : t_int_;
 		fail("expected a type");
 	}
 
-	int generator::parse_declarator(int base, int& name, bool& is_function,
-	                                std::vector<int>& parameters, std::vector<int>& parameter_names)
+	int generator::parse_declarator(int base, int& name, bool& is_function, std::vector<int>& parameters,
+	                                std::vector<int>& parameter_names)
 	{
 		skip_qualifiers();
 		while (accept(tok::star))
@@ -3052,8 +3062,7 @@ namespace
 				if (kind() == tok::l_paren) ++depth;
 				else if (kind() == tok::r_paren) --depth;
 				advance();
-			}
-			while (depth > 0);
+			} while (depth > 0);
 
 			const int inner_base = parse_declarator_suffix(base, is_function, parameters, parameter_names);
 			const size_t after = at_;
@@ -3097,8 +3106,8 @@ namespace
 				bool nested = false;
 				std::vector<int> nested_parameters;
 				std::vector<int> nested_names;
-				int parameter_type = parse_declarator(parameter_base, parameter_name, nested,
-				                                      nested_parameters, nested_names);
+				int parameter_type = parse_declarator(parameter_base, parameter_name, nested, nested_parameters,
+				                                      nested_names);
 				// A parameter declared as an array or a function is really a pointer.
 				if (is_array(parameter_type)) parameter_type = pointer_to(target_of(parameter_type));
 				else if (is_function_type(parameter_type)) parameter_type = pointer_to(parameter_type);
@@ -3298,8 +3307,7 @@ namespace
 			const char* text = peek().text;
 			const int length = peek().length;
 			advance();
-			if (offset < 0 || size_t(offset) + size_t(length) > data_.size())
-				fail("the initialiser does not fit");
+			if (offset < 0 || size_t(offset) + size_t(length) > data_.size()) fail("the initialiser does not fit");
 			for (int i = 0; i < length && i < type_size(type_index); ++i)
 				data_[size_t(offset) + size_t(i)] = uint8_t(text[i]);
 			return;
@@ -3328,8 +3336,7 @@ namespace
 					}
 					else
 					{
-						if (index >= int(records_[size_t(record)].members.size()))
-							fail("too many initialisers");
+						if (index >= int(records_[size_t(record)].members.size())) fail("too many initialisers");
 						const record_member member = records_[size_t(record)].members[size_t(index)];
 						global_initialiser(member.type, offset + member.offset);
 					}
@@ -3382,8 +3389,7 @@ namespace
 	}
 
 	// An operation applied straight to a variable in memory.
-	void generator::memory_operation(op kind, int width, const value& target, const operand& source,
-	                                 int extra)
+	void generator::memory_operation(op kind, int width, const value& target, const operand& source, int extra)
 	{
 		emit_op(&e_, kind, width, place_of(target, extra), source);
 		if (target.kind != val_local) data_reference(target.offset + extra);
@@ -3456,8 +3462,7 @@ namespace
 				const operand* o = operands[side];
 				if (o->reg == reg_si || o->reg == reg_di || o->index == reg_si || o->index == reg_di)
 					if (o->kind != operand_kind_immediate) return;
-				if (o->kind != operand_kind_memory || o->reg != reg_bp || o->index != reg_none)
-					continue;
+				if (o->kind != operand_kind_memory || o->reg != reg_bp || o->index != reg_none) continue;
 				// An address that escapes reaches slots this pass cannot see,
 				// so one of them anywhere in the body settles the question.
 				if (in.code == op_lea) return;
@@ -3520,10 +3525,8 @@ namespace
 		{
 			put(prologue_slots_ + n, emit_frame(save[n]), operand_in(registers[n]));
 			// A parameter arrives on the stack, so it is fetched once.
-			if (chosen[n] > 0)
-				put(prologue_slots_ + 2 + n, operand_in(registers[n]), emit_frame(chosen[n]));
-			for (const int at : epilogue_slots_)
-				put(at + n, operand_in(registers[n]), emit_frame(save[n]));
+			if (chosen[n] > 0) put(prologue_slots_ + 2 + n, operand_in(registers[n]), emit_frame(chosen[n]));
+			for (const int at : epilogue_slots_) put(at + n, operand_in(registers[n]), emit_frame(save[n]));
 		}
 
 		fold_address_copies(first, last);
@@ -3538,27 +3541,22 @@ namespace
 		{
 			// A helper takes its second 32-bit operand in CX:BX and a DOS call
 			// takes whatever the program put in the registers, so both count.
-			if (in.code == op_call || in.code == op_call_at || in.code == op_interrupt)
-				return true;
+			if (in.code == op_call || in.code == op_call_at || in.code == op_interrupt) return true;
 			const operand* operands[2] = {&in.dest, &in.source};
 			for (int side = 0; side < 2; ++side)
 			{
 				const operand* o = operands[side];
-				if (o->kind == operand_kind_memory && (o->reg == which || o->index == which))
-					return true;
+				if (o->kind == operand_kind_memory && (o->reg == which || o->index == which)) return true;
 				if (o->kind != operand_kind_reg || o->reg != which) continue;
 				if (o == &in.source) return true;
-				if (in.code != op_mov && in.code != op_lea && in.code != op_pop &&
-					in.code != op_setcc)
-					return true;
+				if (in.code != op_mov && in.code != op_lea && in.code != op_pop && in.code != op_setcc) return true;
 			}
 			return false;
 		};
 		const auto writes = [&](const instruction& in)
 		{
 			return in.dest.kind == operand_kind_reg && in.dest.reg == which &&
-				(in.code == op_mov || in.code == op_lea || in.code == op_pop ||
-					in.code == op_setcc);
+			       (in.code == op_mov || in.code == op_lea || in.code == op_pop || in.code == op_setcc);
 		};
 
 		std::vector<bool> live(size_t(last - first) + 1, false);
@@ -3575,8 +3573,7 @@ namespace
 					if ((in.code == op_jmp || in.code == op_jcc) && in.label >= 0)
 					{
 						const int target = EMIT_LABEL(e_, int(in.label));
-						out = out || target < first || target >= last ||
-							live[size_t(target - first)];
+						out = out || target < first || target >= last || live[size_t(target - first)];
 					}
 				}
 				const bool now = reads(in) || (out && !writes(in));
@@ -3620,9 +3617,8 @@ namespace
 				// Where control can arrive another way, or leave, the question
 				// is not what the next instruction does but whether BX is
 				// wanted at all from here on.
-				if (entered[size_t(k - first)] || in.code == op_literal ||
-					in.code == op_jmp || in.code == op_jcc || in.code == op_ret ||
-					in.code == op_call || in.code == op_call_at || in.code == op_interrupt)
+				if (entered[size_t(k - first)] || in.code == op_literal || in.code == op_jmp || in.code == op_jcc ||
+				    in.code == op_ret || in.code == op_call || in.code == op_call_at || in.code == op_interrupt)
 				{
 					if (live[size_t(k - first)]) rejected = true;
 					settled = true;
@@ -3645,8 +3641,8 @@ namespace
 					}
 				}
 				if (in.code == op_xchg) rejected = true;
-				if (in.dest.kind == operand_kind_reg && in.dest.reg == base &&
-					in.code != op_cmp && in.code != op_test && in.code != op_push)
+				if (in.dest.kind == operand_kind_reg && in.dest.reg == base && in.code != op_cmp &&
+				    in.code != op_test && in.code != op_push)
 					base_gone = true;
 			}
 			if (!settled || rejected || uses.empty()) continue;
@@ -3682,15 +3678,14 @@ namespace
 		bool step_only = false;
 		bool increment = true;
 
-		if ((token(0) == tok::inc || token(0) == tok::dec) && token(1) == tok::identifier &&
-			token(2) == terminator)
+		if ((token(0) == tok::inc || token(0) == tok::dec) && token(1) == tok::identifier && token(2) == terminator)
 		{
 			increment = token(0) == tok::inc;
 			name = start + 1;
 			step_only = true;
 		}
 		else if (token(0) == tok::identifier && (token(1) == tok::inc || token(1) == tok::dec) &&
-			token(2) == terminator)
+		         token(2) == terminator)
 		{
 			increment = token(1) == tok::inc;
 			step_only = true;
@@ -3704,9 +3699,8 @@ namespace
 				cc_tok assign;
 				cc_tok binary;
 			} compound[] = {
-				{tok::plus_assign, tok::plus}, {tok::minus_assign, tok::minus},
-				{tok::amp_assign, tok::amp}, {tok::pipe_assign, tok::pipe},
-				{tok::caret_assign, tok::caret},
+				{tok::plus_assign, tok::plus}, {tok::minus_assign, tok::minus}, {tok::amp_assign, tok::amp},
+				{tok::pipe_assign, tok::pipe}, {tok::caret_assign, tok::caret},
 			};
 
 			if (token(0) != tok::identifier) return false;
@@ -3723,16 +3717,15 @@ namespace
 				if (token(1) != tok::assign || token(2) != tok::identifier) return false;
 				if (CC_TOKEN(tokens_, int(start)).name != CC_TOKEN(tokens_, int(start) + 2).name) return false;
 				const cc_tok binary = token(3);
-				if (binary != tok::plus && binary != tok::minus && binary != tok::amp &&
-					binary != tok::pipe && binary != tok::caret)
+				if (binary != tok::plus && binary != tok::minus && binary != tok::amp && binary != tok::pipe &&
+				    binary != tok::caret)
 					return false;
 				op = binary;
 				rest = 4;
 			}
 			if (token(rest + 1) != terminator) return false;
 			const cc_tok source_kind = token(rest);
-			if (source_kind != tok::number && source_kind != tok::character &&
-				source_kind != tok::identifier)
+			if (source_kind != tok::number && source_kind != tok::character && source_kind != tok::identifier)
 				return false;
 		}
 
@@ -3776,8 +3769,7 @@ namespace
 			if (constant_source)
 			{
 				constant = source.constant;
-				if (!is_wide(source.type) && !is_unsigned(source.type))
-					constant = long(int16_t(constant));
+				if (!is_wide(source.type) && !is_unsigned(source.type)) constant = long(int16_t(constant));
 				if (is_scalar_pointer(entry.type) && (op == tok::plus || op == tok::minus))
 					constant *= type_size(target_of(entry.type));
 			}
@@ -3897,7 +3889,7 @@ namespace
 		bool is_typedef = false;
 		bool is_static = false;
 		while (kind() == tok::kw_static || kind() == tok::kw_extern || kind() == tok::kw_typedef ||
-			kind() == tok::kw_qualifier)
+		       kind() == tok::kw_qualifier)
 		{
 			if (kind() == tok::kw_typedef) is_typedef = true;
 			if (kind() == tok::kw_static) is_static = true;
@@ -3918,8 +3910,7 @@ namespace
 
 			// An array declared without a length takes it from its initialiser,
 			// which has to be measured before any storage is reserved.
-			if (!is_function && !is_typedef && is_array(declared) && type(declared).count == 0 &&
-				kind() == tok::assign)
+			if (!is_function && !is_typedef && is_array(declared) && type(declared).count == 0 && kind() == tok::assign)
 				declared = array_of(target_of(declared), initialiser_length());
 
 			if (is_typedef)
@@ -4003,7 +3994,10 @@ namespace
 		expect(tok::semicolon, "expected ; after a declaration");
 	}
 
-	void generator::local_declaration() { declaration(); }
+	void generator::local_declaration()
+	{
+		declaration();
+	}
 
 	// -----------------------------------------------------------------------
 	// Statements
@@ -4144,9 +4138,7 @@ namespace
 			compound_statement();
 			return;
 
-		case tok::semicolon:
-			advance();
-			return;
+		case tok::semicolon: advance(); return;
 
 		case tok::kw_if:
 		{
@@ -4304,8 +4296,7 @@ namespace
 			return;
 		}
 
-		default:
-			break;
+		default: break;
 		}
 
 		if (is_type_start())
@@ -4474,7 +4465,10 @@ namespace
 		for (int i = 0; i < helper_count; ++i) used[i] = referenced(i);
 		if (used[h_ldiv] || used[h_uldiv] || used[h_lmod] || used[h_ulmod]) used[h_uldivmod] = true;
 
-		const auto bytes = [&](std::initializer_list<int> list) { for (const int b : list) emit_byte(&e_, b); };
+		const auto bytes = [&](std::initializer_list<int> list)
+		{
+			for (const int b : list) emit_byte(&e_, b);
+		};
 
 		// On the host the machine has the 32-bit operation itself, so each
 		// helper is that one instruction with the pair put together around it.
@@ -4513,8 +4507,8 @@ namespace
 				compose_left();
 				compose_right();
 				if (which == h_ldiv || which == h_lmod) bytes({0x99, 0xf7, 0xf9}); // cdq / idiv ecx
-				else bytes({0x31, 0xd2, 0xf7, 0xf1}); // xor edx,edx / div ecx
-				if (which == h_lmod || which == h_ulmod) bytes({0x89, 0xd0}); // mov eax,edx
+				else bytes({0x31, 0xd2, 0xf7, 0xf1});                              // xor edx,edx / div ecx
+				if (which == h_lmod || which == h_ulmod) bytes({0x89, 0xd0});      // mov eax,edx
 				split_and_return();
 			}
 
@@ -4524,10 +4518,10 @@ namespace
 				if (!used[which]) continue;
 				emit_bind(&e_, helper_label(which));
 				compose_left();
-				bytes({0x88, 0xd9, 0x80, 0xe1, 0x1f}); // mov cl,bl / and cl,31
-				if (which == h_lshl) bytes({0xd3, 0xe0}); // shl eax,cl
+				bytes({0x88, 0xd9, 0x80, 0xe1, 0x1f});         // mov cl,bl / and cl,31
+				if (which == h_lshl) bytes({0xd3, 0xe0});      // shl eax,cl
 				else if (which == h_lshr) bytes({0xd3, 0xe8}); // shr eax,cl
-				else bytes({0xd3, 0xf8}); // sar eax,cl
+				else bytes({0xd3, 0xf8});                      // sar eax,cl
 				split_and_return();
 			}
 
@@ -4539,11 +4533,11 @@ namespace
 				emit_bind(&e_, helper_label(which));
 				compose_left();
 				compose_right();
-				bytes({0x39, 0xc8}); // cmp eax,ecx
+				bytes({0x39, 0xc8});                                              // cmp eax,ecx
 				if (which == h_lcmp) bytes({0x0f, 0x9c, 0xc0, 0x0f, 0x9f, 0xc2}); // setl al / setg dl
-				else bytes({0x0f, 0x92, 0xc0, 0x0f, 0x97, 0xc2}); // setb al / seta dl
-				bytes({0x28, 0xc2}); // sub dl,al
-				bytes({0x0f, 0xbe, 0xc2}); // movsx eax,dl
+				else bytes({0x0f, 0x92, 0xc0, 0x0f, 0x97, 0xc2});                 // setb al / seta dl
+				bytes({0x28, 0xc2});                                              // sub dl,al
+				bytes({0x0f, 0xbe, 0xc2});                                        // movsx eax,dl
 				emit_ret(&e_);
 			}
 			return;
@@ -4557,9 +4551,18 @@ namespace
 			emit_jump_if(&e_, c, target);
 			return target;
 		};
-		const auto here = [&](int target) { emit_bind(&e_, target); };
-		const auto again = [&](condition c, int target) { emit_jump_if(&e_, c, target); };
-		const auto negate = [&] { emit_negate_dx_ax(&e_); };
+		const auto here = [&](int target)
+		{
+			emit_bind(&e_, target);
+		};
+		const auto again = [&](condition c, int target)
+		{
+			emit_jump_if(&e_, c, target);
+		};
+		const auto negate = [&]
+		{
+			emit_negate_dx_ax(&e_);
+		};
 
 		if (used[h_uldivmod] || used[h_uldiv])
 		{
@@ -4567,46 +4570,49 @@ namespace
 			// remainder while the quotient replaces the dividend in DX:AX.
 			emit_bind(&e_, helper_label(h_uldivmod));
 			if (helper_label_[h_uldiv] >= 0) emit_bind(&e_, helper_label_[h_uldiv]);
-			bytes({0x56, 0x57, 0x55}); // push si / push di / push bp
+			bytes({0x56, 0x57, 0x55});       // push si / push di / push bp
 			bytes({0x31, 0xf6, 0x31, 0xff}); // xor si,si / xor di,di
-			bytes({0xbd, 0x20, 0x00}); // mov bp,32
+			bytes({0xbd, 0x20, 0x00});       // mov bp,32
 			const int loop = emit_here(&e_);
 			bytes({0xd1, 0xe0, 0xd1, 0xd2, 0xd1, 0xd7, 0xd1, 0xd6}); // shl ax,1 / rcl dx,1 / rcl di,1 / rcl si,1
-			bytes({0x39, 0xce}); // cmp si,cx
+			bytes({0x39, 0xce});                                     // cmp si,cx
 			const int skip_low = branch(cond_below);
 			const int to_subtract = branch(cond_above);
 			bytes({0x39, 0xdf}); // cmp di,bx
 			const int skip = branch(cond_below);
 			here(to_subtract);
 			bytes({0x29, 0xdf, 0x19, 0xce}); // sub di,bx / sbb si,cx
-			bytes({0x0c, 0x01}); // or al,1
+			bytes({0x0c, 0x01});             // or al,1
 			here(skip_low);
 			here(skip);
 			emit_byte(&e_, 0x4d); // dec bp
 			again(cond_not_equal, loop);
 			bytes({0x89, 0xf1, 0x89, 0xfb}); // mov cx,si / mov bx,di
-			bytes({0x5d, 0x5f, 0x5e}); // pop bp / pop di / pop si
+			bytes({0x5d, 0x5f, 0x5e});       // pop bp / pop di / pop si
 			emit_ret(&e_);
 		}
 
-		const auto call_divide = [&] { emit_call(&e_, helper_label(h_uldivmod)); };
+		const auto call_divide = [&]
+		{
+			emit_call(&e_, helper_label(h_uldivmod));
+		};
 
 		if (used[h_lmul])
 		{
 			// The high word of a 32-bit product needs only the low halves of
 			// the two cross terms, so three 16-bit multiplies are enough.
 			emit_bind(&e_, helper_label(h_lmul));
-			bytes({0x56, 0x57}); // push si / push di
+			bytes({0x56, 0x57});             // push si / push di
 			bytes({0x89, 0xc6, 0x89, 0xd7}); // mov si,ax / mov di,dx
-			bytes({0xf7, 0xe1}); // mul cx
-			bytes({0x89, 0xc1}); // mov cx,ax
-			bytes({0x89, 0xf8}); // mov ax,di
-			bytes({0xf7, 0xe3}); // mul bx
-			bytes({0x01, 0xc1}); // add cx,ax
-			bytes({0x89, 0xf0}); // mov ax,si
-			bytes({0xf7, 0xe3}); // mul bx
-			bytes({0x01, 0xca}); // add dx,cx
-			bytes({0x5f, 0x5e}); // pop di / pop si
+			bytes({0xf7, 0xe1});             // mul cx
+			bytes({0x89, 0xc1});             // mov cx,ax
+			bytes({0x89, 0xf8});             // mov ax,di
+			bytes({0xf7, 0xe3});             // mul bx
+			bytes({0x01, 0xc1});             // add cx,ax
+			bytes({0x89, 0xf0});             // mov ax,si
+			bytes({0xf7, 0xe3});             // mul bx
+			bytes({0x01, 0xca});             // add dx,cx
+			bytes({0x5f, 0x5e});             // pop di / pop si
 			emit_ret(&e_);
 		}
 
@@ -4622,15 +4628,15 @@ namespace
 		{
 			emit_bind(&e_, helper_label(h_ldiv));
 			emit_byte(&e_, 0x56); // push si
-			bytes({0x31, 0xf6}); // xor si,si
-			bytes({0x85, 0xd2}); // test dx,dx
+			bytes({0x31, 0xf6});  // xor si,si
+			bytes({0x85, 0xd2});  // test dx,dx
 			int positive = branch(cond_greater_equal);
 			bytes({0x83, 0xf6, 0x01}); // xor si,1
 			negate();
 			here(positive);
 			bytes({0x85, 0xc9}); // test cx,cx
 			positive = branch(cond_greater_equal);
-			bytes({0x83, 0xf6, 0x01}); // xor si,1
+			bytes({0x83, 0xf6, 0x01});                         // xor si,1
 			bytes({0xf7, 0xd9, 0xf7, 0xdb, 0x83, 0xd9, 0x00}); // neg cx / neg bx / sbb cx,0
 			here(positive);
 			call_divide();
@@ -4647,8 +4653,8 @@ namespace
 			// The sign of a remainder follows the dividend, not the divisor.
 			emit_bind(&e_, helper_label(h_lmod));
 			emit_byte(&e_, 0x56); // push si
-			bytes({0x31, 0xf6}); // xor si,si
-			bytes({0x85, 0xd2}); // test dx,dx
+			bytes({0x31, 0xf6});  // xor si,si
+			bytes({0x85, 0xd2});  // test dx,dx
 			int positive = branch(cond_greater_equal);
 			bytes({0xbe, 0x01, 0x00}); // mov si,1
 			negate();
@@ -4659,7 +4665,7 @@ namespace
 			here(positive);
 			call_divide();
 			bytes({0x89, 0xd8, 0x89, 0xca}); // mov ax,bx / mov dx,cx
-			bytes({0x85, 0xf6}); // test si,si
+			bytes({0x85, 0xf6});             // test si,si
 			const int done = branch(cond_equal);
 			negate();
 			here(done);
@@ -4672,14 +4678,14 @@ namespace
 		{
 			if (!used[which]) continue;
 			emit_bind(&e_, helper_label(which));
-			bytes({0x88, 0xd9}); // mov cl,bl
+			bytes({0x88, 0xd9});       // mov cl,bl
 			bytes({0x80, 0xe1, 0x1f}); // and cl,31
 			const int done = branch(cond_equal);
 			const int loop = emit_here(&e_);
-			if (which == h_lshl) bytes({0xd1, 0xe0, 0xd1, 0xd2}); // shl ax,1 / rcl dx,1
+			if (which == h_lshl) bytes({0xd1, 0xe0, 0xd1, 0xd2});      // shl ax,1 / rcl dx,1
 			else if (which == h_lshr) bytes({0xd1, 0xea, 0xd1, 0xd8}); // shr dx,1 / rcr ax,1
-			else bytes({0xd1, 0xfa, 0xd1, 0xd8}); // sar dx,1 / rcr ax,1
-			bytes({0xfe, 0xc9}); // dec cl
+			else bytes({0xd1, 0xfa, 0xd1, 0xd8});                      // sar dx,1 / rcr ax,1
+			bytes({0xfe, 0xc9});                                       // dec cl
 			again(cond_not_equal, loop);
 			here(done);
 			emit_ret(&e_);
@@ -4835,8 +4841,7 @@ namespace
 			starts[s.from] = int(i);
 		}
 		if (spans.empty()) return;
-		std::sort(spans.begin(), spans.end(),
-		          [](const span& a, const span& b) { return a.from < b.from; });
+		std::sort(spans.begin(), spans.end(), [](const span& a, const span& b) { return a.from < b.from; });
 
 		// Everything one function refers to, plus what is referred to from
 		// outside any of them: the startup code and the runtime helpers.
@@ -4855,10 +4860,8 @@ namespace
 				if (spans[middle].to <= at) low = middle + 1;
 				else high = middle;
 			}
-			if (low < spans.size() && at >= spans[low].from)
-				edges[spans[low].symbol].push_back(target->second);
-			else
-				roots.push_back(target->second);
+			if (low < spans.size() && at >= spans[low].from) edges[spans[low].symbol].push_back(target->second);
+			else roots.push_back(target->second);
 		};
 
 		for (int i = 0; i < e_.code.count; ++i)
@@ -4869,8 +4872,7 @@ namespace
 			for (int side = 0; side < 2; ++side)
 				if (operands[side]->reference == reference_kind_code) reference(i, operands[side]->target);
 		}
-		for (size_t i = 0; i < function_fixups_.size(); ++i)
-			roots.push_back(function_fixups_[i].function);
+		for (size_t i = 0; i < function_fixups_.size(); ++i) roots.push_back(function_fixups_[i].function);
 
 		std::vector<bool> reached(symbols_.size(), false);
 		std::vector<int> pending = roots;
@@ -4888,8 +4890,7 @@ namespace
 		for (size_t i = 0; i < spans.size(); ++i)
 		{
 			const int which = spans[i].symbol;
-			if (!reached[size_t(which)])
-				emit_drop(&e_, symbols_[size_t(which)].start, symbols_[size_t(which)].finish);
+			if (!reached[size_t(which)]) emit_drop(&e_, symbols_[size_t(which)].start, symbols_[size_t(which)].finish);
 		}
 	}
 
@@ -4922,8 +4923,7 @@ namespace
 		{
 			char message[160] = {};
 			snprintf(message, sizeof(message),
-			         "the program is too large for one segment: %d bytes of code and %d of data",
-			         code_size, data_size);
+			         "the program is too large for one segment: %d bytes of code and %d of data", code_size, data_size);
 			throw compile_error{message, 0, 0};
 		}
 		if (stack_patch_ >= 0) emit_set_deferred(&e_, stack_patch_, stack_top);
@@ -4942,8 +4942,7 @@ namespace
 		{
 			const function_fixup& fixup = function_fixups_[i];
 			const symbol& entry = symbols_[size_t(fixup.function)];
-			if (!entry.defined)
-				throw compile_error{"undefined function: " + std::string(name_text(entry.name)), 0, 0};
+			if (!entry.defined) throw compile_error{"undefined function: " + std::string(name_text(entry.name)), 0, 0};
 			put_word(fixup.position, target_.code_origin + emit_offset_of(&e_, entry.label));
 		}
 
@@ -4973,8 +4972,7 @@ namespace
 			if (emit_offset_of(&e_, entry.finish) - emit_offset_of(&e_, entry.start) > 0) ++count;
 		}
 
-		cc_function* functions = (cc_function*)cc_arena_alloc(&result.arena,
-		                                                      sizeof(cc_function) * size_t(count + 1));
+		cc_function* functions = (cc_function*)cc_arena_alloc(&result.arena, sizeof(cc_function) * size_t(count + 1));
 		result.functions = functions;
 		result.function_count = 0;
 
@@ -4998,8 +4996,8 @@ void cc_result_free(cc_result* result)
 	memset(result, 0, sizeof(*result));
 }
 
-cc_result cc_compile(const char* text, const char* name, cc_sources* sources,
-                     const char* const* defines, int define_count, const cc_options* options)
+cc_result cc_compile(const char* text, const char* name, cc_sources* sources, const char* const* defines,
+                     int define_count, const cc_options* options)
 {
 	cc_result result;
 	cc_names names;

@@ -67,8 +67,7 @@ namespace
 			const HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
 			switch (GetFileType(input))
 			{
-			case FILE_TYPE_CHAR:
-				return _isatty(0) != 0 && _kbhit() != 0;
+			case FILE_TYPE_CHAR: return _isatty(0) != 0 && _kbhit() != 0;
 			case FILE_TYPE_PIPE:
 			{
 				DWORD available = 0;
@@ -81,8 +80,7 @@ namespace
 				return SetFilePointerEx(input, LARGE_INTEGER{}, &at, FILE_CURRENT) && GetFileSizeEx(input, &size) &&
 				       at.QuadPart < size.QuadPart;
 			}
-			default:
-				return false;
+			default: return false;
 			}
 		}
 
@@ -138,12 +136,9 @@ namespace
 			rest += 2;
 		}
 		std::string dos;
-		if (rest[0] == '\\' || rest[0] == '/')
-			dos = std::string("C:") + rest;
-		else if (!lib_directory.empty() && lib_directory.back() == '\\')
-			dos = lib_directory + rest;
-		else
-			dos = lib_directory + "\\" + rest;
+		if (rest[0] == '\\' || rest[0] == '/') dos = std::string("C:") + rest;
+		else if (!lib_directory.empty() && lib_directory.back() == '\\') dos = lib_directory + rest;
+		else dos = lib_directory + "\\" + rest;
 		return lib_host != nullptr && lib_host->to_windows_path(dos.c_str(), host_path, size) ? 1 : 0;
 	}
 
@@ -204,7 +199,7 @@ namespace
 			const char* end = std::strchr(p, ';');
 			const std::string entry(p, end != nullptr ? size_t(end - p) : std::strlen(p));
 			const bool absolute = entry.size() >= 3 && std::isalpha(static_cast<unsigned char>(entry[0])) &&
-				entry[1] == ':' && (entry[2] == '\\' || entry[2] == '/');
+			                      entry[1] == ':' && (entry[2] == '\\' || entry[2] == '/');
 			std::string mapped = entry;
 			if (absolute && (!dos_path_of(root, entry.c_str(), mapped) || !dos_can_name(mapped))) mapped.clear();
 			if (!mapped.empty())
@@ -395,6 +390,7 @@ int run_dos_program(int argc, char** argv)
 	for (const char* variable : {"PATH", "INCLUDE", "LIB", "INIT", "TMP", "TEMP", "COUNTRY"}) add(variable);
 	for (const std::string& assignment : extra) add(assignment);
 	std::vector<const char*> strings;
+	strings.reserve(variables.size());
 	for (const std::string& variable : variables) strings.push_back(variable.c_str());
 
 	machine m;

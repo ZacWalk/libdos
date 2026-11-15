@@ -18,16 +18,16 @@ constexpr uint32_t vga_plane_size = 0x10000;
 // How CPU addresses in the A0000-BFFFF window reach display memory.
 enum class vga_mapping
 {
-	planar, // one address per plane, gated by the write mask and latches
+	planar,   // one address per plane, gated by the write mask and latches
 	odd_even, // address bit 0 picks the plane (text and CGA modes)
-	chain4, // address bits 0-1 pick the plane (mode 13h)
+	chain4,   // address bits 0-1 pick the plane (mode 13h)
 };
 
 enum class vga_render_mode
 {
 	text,
-	cga2, // 640x200 1bpp
-	cga4, // 320x200 2bpp
+	cga2,    // 640x200 1bpp
+	cga4,    // 320x200 2bpp
 	planar4, // EGA/VGA 16 colour
 	linear8, // 256 colour
 };

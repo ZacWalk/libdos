@@ -152,8 +152,7 @@ static void x64_size(x64_sink* out, int width)
 
 static void x64_rex(x64_sink* out, int w, int reg, int index, int base)
 {
-	const int rex = 0x40 | (w != 0 ? 8 : 0) | (reg >= 8 ? 4 : 0) | (index >= 8 ? 2 : 0) |
-		(base >= 8 ? 1 : 0);
+	const int rex = 0x40 | (w != 0 ? 8 : 0) | (reg >= 8 ? 4 : 0) | (index >= 8 ? 2 : 0) | (base >= 8 ? 1 : 0);
 	if (rex != 0x40) x64_put(out, rex);
 }
 
@@ -277,21 +276,18 @@ int emit_encode_x64(const emitter* e, instruction* in, int position, cc_list* in
 	out.in = in;
 	out.into = into;
 	out.count = 0;
-	out.offset_sized = is_offset_register(&in->dest, in->width) ||
-		is_offset_register(&in->source, in->width);
+	out.offset_sized = is_offset_register(&in->dest, in->width) || is_offset_register(&in->source, in->width);
 
 	switch (in->code)
 	{
-	case op_nop:
-		break;
+	case op_nop: break;
 
 	case op_literal:
 	{
 		/* Bytes the generator assembled itself. The 8086 helpers mean nothing
 		 * here, but a hosted program's own startup does. */
 		int i;
-		for (i = 0; i < in->literal_length; ++i)
-			x64_put(&out, ((const uint8_t*)e->literals.items)[in->literal_at + i]);
+		for (i = 0; i < in->literal_length; ++i) x64_put(&out, ((const uint8_t*)e->literals.items)[in->literal_at + i]);
 		break;
 	}
 
@@ -363,8 +359,14 @@ int emit_encode_x64(const emitter* e, instruction* in, int position, cc_list* in
 		x64_modrm(&out, &in->source, host_register(in->dest.reg, in->width), in->width, 0);
 		break;
 
-	case op_add: case op_adc: case op_sub: case op_sbb:
-	case op_and_: case op_or_: case op_xor_: case op_cmp:
+	case op_add:
+	case op_adc:
+	case op_sub:
+	case op_sbb:
+	case op_and_:
+	case op_or_:
+	case op_xor_:
+	case op_cmp:
 	{
 		const int index = arithmetic_index_x64(in->code);
 		if (in->source.kind == operand_kind_immediate)
@@ -445,13 +447,16 @@ int emit_encode_x64(const emitter* e, instruction* in, int position, cc_list* in
 		break;
 	}
 
-	case op_shl: case op_shr: case op_sar: case op_rcl: case op_rcr:
+	case op_shl:
+	case op_shr:
+	case op_sar:
+	case op_rcl:
+	case op_rcr:
 	{
 		const int field = shift_index_x64(in->code);
 		x64_prefix(&out, in->width, &in->dest, 0, 0);
 		/* A count of -1 means CL, the only variable count the machine has. */
-		x64_put(&out, in->source.value < 0 ? (in->width == 1 ? 0xd2 : 0xd3)
-		                                   : (in->width == 1 ? 0xd0 : 0xd1));
+		x64_put(&out, in->source.value < 0 ? (in->width == 1 ? 0xd2 : 0xd3) : (in->width == 1 ? 0xd0 : 0xd1));
 		x64_modrm(&out, &in->dest, field, in->width, 0);
 		break;
 	}
@@ -549,9 +554,7 @@ int emit_encode_x64(const emitter* e, instruction* in, int position, cc_list* in
 		x64_put(&out, 0xd0);
 		break;
 
-	case op_ret:
-		x64_put(&out, 0xc3);
-		break;
+	case op_ret: x64_put(&out, 0xc3); break;
 
 	case op_interrupt:
 	{

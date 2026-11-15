@@ -20,7 +20,7 @@ struct opl_operator
 {
 	double phase = 0;
 	double envelope = 96.0; // attenuation in dB, 96 = silent
-	int state = 0; // 0 off, 1 attack, 2 decay, 3 sustain, 4 release
+	int state = 0;          // 0 off, 1 attack, 2 decay, 3 sustain, 4 release
 	double output = 0;
 	double previous = 0; // for feedback averaging
 	bool key_on = false;

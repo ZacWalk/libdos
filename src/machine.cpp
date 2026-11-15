@@ -18,6 +18,7 @@ namespace
 	constexpr uint8_t callback_eoi = 0xff;
 
 	// Host key to XT scancode. Index is machine_key.
+	// clang-format off
 	const uint8_t scancode_table[] = {
 		0x00, 0x01, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43, 0x44, 0x57, 0x58,
 		0x29, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
@@ -30,6 +31,7 @@ namespace
 		0x52, 0x4f, 0x50, 0x51, 0x4b, 0x4c, 0x4d, 0x47, 0x48, 0x49,
 		0x37, 0x46, 0x00,
 	};
+	// clang-format on
 
 	uint8_t key_scancode(machine_key key)
 	{
@@ -125,8 +127,8 @@ void machine_callback(machine_state& s, uint8_t index)
 	{
 		const cpu_state& c = s.cpu;
 		char text[160] = {};
-		snprintf(text, sizeof(text), "INT %02Xh AX=%04X BX=%04X CX=%04X DX=%04X DS=%04X ES=%04X from %04X:%04X",
-		         index, c.ax(), c.bx(), c.cx(), c.dx(), c.ds(), c.es(),
+		snprintf(text, sizeof(text), "INT %02Xh AX=%04X BX=%04X CX=%04X DX=%04X DS=%04X ES=%04X from %04X:%04X", index,
+		         c.ax(), c.bx(), c.cx(), c.dx(), c.ds(), c.es(),
 		         mem_read16(s, linear_address(c.ss(), uint16_t(c.sp() + 2))),
 		         mem_read16(s, linear_address(c.ss(), c.sp())));
 		s.host->trace(text);
@@ -154,21 +156,23 @@ uint8_t io_read8(machine_state& s, uint16_t port)
 {
 	switch (port)
 	{
-	case 0x20: case 0x21: case 0xa0: case 0xa1:
-		return pic_read(s, port);
-	case 0x40: case 0x41: case 0x42: case 0x43:
-		return pit_read(s, port);
-	case 0x60: case 0x64:
-		return kbd_read(s, port);
+	case 0x20:
+	case 0x21:
+	case 0xa0:
+	case 0xa1: return pic_read(s, port);
+	case 0x40:
+	case 0x41:
+	case 0x42:
+	case 0x43: return pit_read(s, port);
+	case 0x60:
+	case 0x64: return kbd_read(s, port);
 	case 0x61:
 		// Bit 4 is the refresh signal; timing loops watch it move.
 		return uint8_t((s.kbd.port_61 & 0x0f) | ((s.cycles & 0x40) != 0 ? 0x10 : 0x00));
-	case 0x201:
-		return 0xf0; // no joystick attached
-	case 0x388: case 0x389:
-		return opl_read_status(s);
-	case 0x92:
-		return 0x02; // A20 always on
+	case 0x201: return 0xf0; // no joystick attached
+	case 0x388:
+	case 0x389: return opl_read_status(s);
+	case 0x92: return 0x02; // A20 always on
 	default:
 		if (port >= 0x3b0 && port <= 0x3df) return vga_port_read(s, port);
 		return 0xff;
@@ -179,24 +183,24 @@ void io_write8(machine_state& s, uint16_t port, uint8_t value)
 {
 	switch (port)
 	{
-	case 0x20: case 0x21: case 0xa0: case 0xa1:
-		pic_write(s, port, value);
-		return;
-	case 0x40: case 0x41: case 0x42: case 0x43:
-		pit_write(s, port, value);
-		return;
-	case 0x60: case 0x64:
-		kbd_write(s, port, value);
-		return;
+	case 0x20:
+	case 0x21:
+	case 0xa0:
+	case 0xa1: pic_write(s, port, value); return;
+	case 0x40:
+	case 0x41:
+	case 0x42:
+	case 0x43: pit_write(s, port, value); return;
+	case 0x60:
+	case 0x64: kbd_write(s, port, value); return;
 	case 0x61:
 		pit_sync(s); // the gate decides whether channel 2 has been counting
 		s.kbd.port_61 = value;
 		s.pit.channel[2].gate = (value & 1) != 0;
 		sound_queue_write(s, 0x61, value);
 		return;
-	case 0x388: case 0x389:
-		sound_queue_write(s, port, value);
-		return;
+	case 0x388:
+	case 0x389: sound_queue_write(s, port, value); return;
 	default:
 		if (port >= 0x3b0 && port <= 0x3df) vga_port_write(s, port, value);
 		return;
@@ -424,7 +428,10 @@ void machine::start_shell()
 	shell_start(*state_);
 }
 
-bool machine::shell_active() const { return state_->shell.active; }
+bool machine::shell_active() const
+{
+	return state_->shell.active;
+}
 
 bool machine::attach_disk(uint8_t drive, block_device* device, const disk_geometry& geometry, bool extensions)
 {
@@ -461,16 +468,40 @@ bool machine::run_program(const char* name, const char* command_line)
 	return true;
 }
 
-bool machine::exited() const { return state_->exited; }
-uint8_t machine::exit_code() const { return state_->exit_code; }
-bool machine::faulted() const { return state_->faulted; }
-const char* machine::error() const { return state_->error; }
+bool machine::exited() const
+{
+	return state_->exited;
+}
+uint8_t machine::exit_code() const
+{
+	return state_->exit_code;
+}
+bool machine::faulted() const
+{
+	return state_->faulted;
+}
+const char* machine::error() const
+{
+	return state_->error;
+}
 
-const uint32_t* machine::framebuffer() const { return state_->vga.framebuffer; }
-int machine::width() const { return state_->vga.width; }
-int machine::height() const { return state_->vga.height; }
+const uint32_t* machine::framebuffer() const
+{
+	return state_->vga.framebuffer;
+}
+int machine::width() const
+{
+	return state_->vga.width;
+}
+int machine::height() const
+{
+	return state_->vga.height;
+}
 
-void machine::set_render_enabled(bool enabled) { state_->vga.render_enabled = enabled; }
+void machine::set_render_enabled(bool enabled)
+{
+	state_->vga.render_enabled = enabled;
+}
 
 void machine::set_audio_enabled(bool enabled)
 {
@@ -552,5 +583,11 @@ int machine::text_screen(char* out, int out_size) const
 	return written;
 }
 
-machine_state& machine::state() { return *state_; }
-const machine_state& machine::state() const { return *state_; }
+machine_state& machine::state()
+{
+	return *state_;
+}
+const machine_state& machine::state() const
+{
+	return *state_;
+}

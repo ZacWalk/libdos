@@ -12,8 +12,26 @@ struct machine_state;
 
 // Register file order matches the x86 encoding, so a modrm field is a direct
 // index. Segment registers follow the eight general registers.
-enum : int { reg_ax, reg_cx, reg_dx, reg_bx, reg_sp, reg_bp, reg_si, reg_di };
-enum : int { seg_es, seg_cs, seg_ss, seg_ds, seg_fs, seg_gs };
+enum : int
+{
+	reg_ax,
+	reg_cx,
+	reg_dx,
+	reg_bx,
+	reg_sp,
+	reg_bp,
+	reg_si,
+	reg_di
+};
+enum : int
+{
+	seg_es,
+	seg_cs,
+	seg_ss,
+	seg_ds,
+	seg_fs,
+	seg_gs
+};
 constexpr int reg_seg = 8;
 
 constexpr uint16_t flag_cf = 0x0001;

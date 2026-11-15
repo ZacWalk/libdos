@@ -15,14 +15,15 @@
  */
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 typedef enum cc_machine
 {
 	cc_machine_i8088, /* 16-bit, four general registers, 32-bit arithmetic through helpers */
-	cc_machine_i386, /* 32-bit, eight general registers, scaled index addressing */
-	cc_machine_x64 /* 64-bit, sixteen general registers */
+	cc_machine_i386,  /* 32-bit, eight general registers, scaled index addressing */
+	cc_machine_x64    /* 64-bit, sixteen general registers */
 } cc_machine;
 
 /* Which instructions the back end may use, which is a separate question from
@@ -67,7 +68,7 @@ typedef struct cc_target
 
 /* C has no default member initialisers, so the defaults live here. Every
  * target starts from the 8088 and then says how it differs. */
-static void cc_target_init(cc_target* t)
+static inline void cc_target_init(cc_target* t)
 {
 	t->machine = cc_machine_i8088;
 	t->cpu = cc_cpu_i8086;
@@ -88,4 +89,3 @@ static void cc_target_init(cc_target* t)
 #endif
 
 #endif
-

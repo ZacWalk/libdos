@@ -18,40 +18,105 @@
 #include "support.h"
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 typedef enum cc_tok
 {
-	tok_end, tok_identifier, tok_number, tok_string, tok_character,
+	tok_end,
+	tok_identifier,
+	tok_number,
+	tok_string,
+	tok_character,
 
-	tok_kw_int, tok_kw_char, tok_kw_void, tok_kw_unsigned, tok_kw_signed,
-	tok_kw_short, tok_kw_long, tok_kw_if, tok_kw_else, tok_kw_while, tok_kw_for,
-	tok_kw_do, tok_kw_return, tok_kw_break, tok_kw_continue, tok_kw_switch,
-	tok_kw_case, tok_kw_default, tok_kw_struct, tok_kw_union, tok_kw_enum,
-	tok_kw_typedef, tok_kw_sizeof, tok_kw_static, tok_kw_extern, tok_kw_const,
-	tok_kw_goto, tok_kw_qualifier,
+	tok_kw_int,
+	tok_kw_char,
+	tok_kw_void,
+	tok_kw_unsigned,
+	tok_kw_signed,
+	tok_kw_short,
+	tok_kw_long,
+	tok_kw_if,
+	tok_kw_else,
+	tok_kw_while,
+	tok_kw_for,
+	tok_kw_do,
+	tok_kw_return,
+	tok_kw_break,
+	tok_kw_continue,
+	tok_kw_switch,
+	tok_kw_case,
+	tok_kw_default,
+	tok_kw_struct,
+	tok_kw_union,
+	tok_kw_enum,
+	tok_kw_typedef,
+	tok_kw_sizeof,
+	tok_kw_static,
+	tok_kw_extern,
+	tok_kw_const,
+	tok_kw_goto,
+	tok_kw_qualifier,
 
-	tok_l_paren, tok_r_paren, tok_l_brace, tok_r_brace, tok_l_bracket, tok_r_bracket,
-	tok_semicolon, tok_comma, tok_dot, tok_arrow, tok_question, tok_colon,
-	tok_plus, tok_minus, tok_star, tok_slash, tok_percent, tok_amp, tok_pipe,
-	tok_caret, tok_tilde, tok_bang, tok_assign, tok_less, tok_greater, tok_inc,
-	tok_dec, tok_shl, tok_shr, tok_le, tok_ge, tok_eq, tok_ne, tok_and_and,
-	tok_or_or, tok_plus_assign, tok_minus_assign, tok_star_assign,
-	tok_slash_assign, tok_percent_assign, tok_amp_assign, tok_pipe_assign,
-	tok_caret_assign, tok_shl_assign, tok_shr_assign, tok_ellipsis
+	tok_l_paren,
+	tok_r_paren,
+	tok_l_brace,
+	tok_r_brace,
+	tok_l_bracket,
+	tok_r_bracket,
+	tok_semicolon,
+	tok_comma,
+	tok_dot,
+	tok_arrow,
+	tok_question,
+	tok_colon,
+	tok_plus,
+	tok_minus,
+	tok_star,
+	tok_slash,
+	tok_percent,
+	tok_amp,
+	tok_pipe,
+	tok_caret,
+	tok_tilde,
+	tok_bang,
+	tok_assign,
+	tok_less,
+	tok_greater,
+	tok_inc,
+	tok_dec,
+	tok_shl,
+	tok_shr,
+	tok_le,
+	tok_ge,
+	tok_eq,
+	tok_ne,
+	tok_and_and,
+	tok_or_or,
+	tok_plus_assign,
+	tok_minus_assign,
+	tok_star_assign,
+	tok_slash_assign,
+	tok_percent_assign,
+	tok_amp_assign,
+	tok_pipe_assign,
+	tok_caret_assign,
+	tok_shl_assign,
+	tok_shr_assign,
+	tok_ellipsis
 } cc_tok;
 
 typedef struct cc_token
 {
 	cc_tok kind;
-	int name; /* the interned identifier, or zero */
+	int name;         /* the interned identifier, or zero */
 	const char* text; /* that name's one copy, or a string literal's bytes */
-	int length; /* the bytes in a string literal */
-	long value; /* numeric or character constant */
-	double real; /* the value when is_real, which only a constant may be */
+	int length;       /* the bytes in a string literal */
+	long value;       /* numeric or character constant */
+	double real;      /* the value when is_real, which only a constant may be */
 	int is_real;
-	int wide; /* the literal carries an L suffix or does not fit in 16 bits */
+	int wide;             /* the literal carries an L suffix or does not fit in 16 bits */
 	int unsigned_literal; /* the literal carries a U suffix */
 	int line;
 	const char* file;

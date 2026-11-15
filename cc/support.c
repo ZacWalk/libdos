@@ -283,16 +283,13 @@ int cc_intern(cc_names* n, const char* text, int length)
 	if (length < 0) length = (int)strlen(text);
 
 	if (n->bucket_count == 0 && !cc_names_rehash(n, 256)) return 0;
-	if ((n->entries.count + 1) * 10 >= n->bucket_count * 7 &&
-	    !cc_names_rehash(n, n->bucket_count * 2))
-		return 0;
+	if ((n->entries.count + 1) * 10 >= n->bucket_count * 7 && !cc_names_rehash(n, n->bucket_count * 2)) return 0;
 
 	at = cc_hash(text, length) & (unsigned)(n->bucket_count - 1);
 	while (n->buckets[at] != 0)
 	{
 		const char* found = CC_AT(n->entries, char*, n->buckets[at] - 1);
-		if (strncmp(found, text, (size_t)length) == 0 && found[length] == 0)
-			return n->buckets[at];
+		if (strncmp(found, text, (size_t)length) == 0 && found[length] == 0) return n->buckets[at];
 		at = (at + 1) & (unsigned)(n->bucket_count - 1);
 	}
 
@@ -354,9 +351,11 @@ char* cc_normalise_source(cc_arena* a, const void* bytes, size_t size, size_t* l
 	size_t i;
 	int wide = 0; /* 1 little endian, 2 big endian */
 
+	// clang-format off
 	if (size >= 2 && in[0] == 0xff && in[1] == 0xfe) { wide = 1; in += 2; size -= 2; }
 	else if (size >= 2 && in[0] == 0xfe && in[1] == 0xff) { wide = 2; in += 2; size -= 2; }
 	else if (size >= 3 && in[0] == 0xef && in[1] == 0xbb && in[2] == 0xbf) { in += 3; size -= 3; }
+	// clang-format on
 
 	/* Three bytes per UTF-16 unit is the worst case, and a surrogate pair is
 	 * two units for four bytes, so this covers both. */
@@ -367,8 +366,7 @@ char* cc_normalise_source(cc_arena* a, const void* bytes, size_t size, size_t* l
 	{
 		for (i = 0; i + 1 < size; i += 2)
 		{
-			unsigned unit = wide == 1 ? (unsigned)(in[i] | (in[i + 1] << 8))
-			                          : (unsigned)((in[i] << 8) | in[i + 1]);
+			unsigned unit = wide == 1 ? (unsigned)(in[i] | (in[i + 1] << 8)) : (unsigned)((in[i] << 8) | in[i + 1]);
 			if (unit >= 0xd800 && unit < 0xdc00 && i + 3 < size)
 			{
 				unsigned low = wide == 1 ? (unsigned)(in[i + 2] | (in[i + 3] << 8))

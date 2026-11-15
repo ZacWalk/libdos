@@ -60,10 +60,8 @@ namespace
 	disk_stamp make_stamp(time_t when, bool utc)
 	{
 		tm t = {};
-		if (utc)
-			gmtime_s(&t, &when);
-		else
-			localtime_s(&t, &when);
+		if (utc) gmtime_s(&t, &when);
+		else localtime_s(&t, &when);
 		disk_stamp stamp;
 		stamp.time = uint16_t((t.tm_hour & 0x1f) << 11 | (t.tm_min & 0x3f) << 5 | (t.tm_sec / 2 & 0x1f));
 		stamp.date = uint16_t(((t.tm_year - 80) & 0x7f) << 9 | ((t.tm_mon + 1) & 0x0f) << 5 | (t.tm_mday & 0x1f));
@@ -74,9 +72,7 @@ namespace
 	class file_sink final : public disk_sink
 	{
 	public:
-		explicit file_sink(FILE* file) : file(file)
-		{
-		}
+		explicit file_sink(FILE* file) : file(file) {}
 
 		// Sparse, so sectors never written take no space: _chsize_s would
 		// write zeros to the end.
@@ -102,9 +98,7 @@ namespace
 	class file_source final : public disk_source
 	{
 	public:
-		explicit file_source(FILE* file) : file(file)
-		{
-		}
+		explicit file_source(FILE* file) : file(file) {}
 
 		bool read(uint64_t offset, uint8_t* data, size_t length) override
 		{
@@ -130,38 +124,37 @@ namespace
 
 	void usage()
 	{
-		fprintf(stderr,
-		        "dimg - make a bootable DOS disk image, or look inside one\n"
-		        "\n"
-		        "Usage:\n"
-		        "  dimg -o <image> -b <bindir> [options]   make a floppy, or a hard disk with -hd\n"
-		        "  dimg -dir <image>                       list the volumes and the files on them\n"
-		        "  dimg -extract <image> <path> <file>     copy a file out, as C:\\DOS\\FORMAT.COM\n"
-		        "\n"
-		        "Making an image:\n"
-		        "  -o <file>     the image to write\n"
-		        "  -b <dir>      the DOS binaries: MSBOOT.BIN (boot sector at offset 7C00h),\n"
-		        "                FDBOOT.BIN for -hd (master boot record at 600h), IO.SYS,\n"
-		        "                MSDOS.SYS and COMMAND.COM\n"
-		        "  -s <size>     floppy size: 360 or 1440 (default: 360)\n"
-		        "  -f <file>     add a file to the root directory (repeatable)\n"
-		        "  -l <label>    volume label (default: MSDOS4)\n"
-		        "  -nosys        leave out IO.SYS, MSDOS.SYS and COMMAND.COM\n"
-		        "  -t <seconds>  date the files and number the volumes from this time, in\n"
-		        "                seconds since 1970 UTC (default: SOURCE_DATE_EPOCH if set,\n"
-		        "                else the time now)\n"
-		        "  -v            name each file as it is added\n"
-		        "\n"
-		        "Hard disk images:\n"
-		        "  -hd <MB>      a partitioned hard disk of this size instead of a floppy:\n"
-		        "                C: as the primary partition, then logical drives in an\n"
-		        "                extended partition until the disk is full or Z: is reached\n"
-		        "  -p <MB>       largest partition (default and maximum: 2047)\n"
-		        "  -lba          partition types 0Eh and 0Fh instead of 06h and 05h\n"
-		        "  -heads <n>    heads (default 16 up to 504 MB, else 255); 63 sectors/track\n"
-		        "\n"
-		        "IO.SYS and MSDOS.SYS come first in the root directory, as the boot sector\n"
-		        "needs, then the volume label, COMMAND.COM and the files given with -f.\n");
+		fprintf(stderr, "dimg - make a bootable DOS disk image, or look inside one\n"
+		                "\n"
+		                "Usage:\n"
+		                "  dimg -o <image> -b <bindir> [options]   make a floppy, or a hard disk with -hd\n"
+		                "  dimg -dir <image>                       list the volumes and the files on them\n"
+		                "  dimg -extract <image> <path> <file>     copy a file out, as C:\\DOS\\FORMAT.COM\n"
+		                "\n"
+		                "Making an image:\n"
+		                "  -o <file>     the image to write\n"
+		                "  -b <dir>      the DOS binaries: MSBOOT.BIN (boot sector at offset 7C00h),\n"
+		                "                FDBOOT.BIN for -hd (master boot record at 600h), IO.SYS,\n"
+		                "                MSDOS.SYS and COMMAND.COM\n"
+		                "  -s <size>     floppy size: 360 or 1440 (default: 360)\n"
+		                "  -f <file>     add a file to the root directory (repeatable)\n"
+		                "  -l <label>    volume label (default: MSDOS4)\n"
+		                "  -nosys        leave out IO.SYS, MSDOS.SYS and COMMAND.COM\n"
+		                "  -t <seconds>  date the files and number the volumes from this time, in\n"
+		                "                seconds since 1970 UTC (default: SOURCE_DATE_EPOCH if set,\n"
+		                "                else the time now)\n"
+		                "  -v            name each file as it is added\n"
+		                "\n"
+		                "Hard disk images:\n"
+		                "  -hd <MB>      a partitioned hard disk of this size instead of a floppy:\n"
+		                "                C: as the primary partition, then logical drives in an\n"
+		                "                extended partition until the disk is full or Z: is reached\n"
+		                "  -p <MB>       largest partition (default and maximum: 2047)\n"
+		                "  -lba          partition types 0Eh and 0Fh instead of 06h and 05h\n"
+		                "  -heads <n>    heads (default 16 up to 504 MB, else 255); 63 sectors/track\n"
+		                "\n"
+		                "IO.SYS and MSDOS.SYS come first in the root directory, as the boot sector\n"
+		                "needs, then the volume label, COMMAND.COM and the files given with -f.\n");
 	}
 
 	int make_image(const options& o)
@@ -243,8 +236,8 @@ namespace
 			       v.start, v.type, v.sectors_per_cluster);
 		const uint64_t cylinder = uint64_t(report.heads) * report.sectors_per_track;
 		printf("Created %llu MB hard disk: %s\n", report.sectors / 2048, o.output.c_str());
-		printf("  Geometry: %u cylinders, %u heads, %u sectors/track (%llu sectors)\n", report.cylinders,
-		       report.heads, report.sectors_per_track, report.sectors);
+		printf("  Geometry: %u cylinders, %u heads, %u sectors/track (%llu sectors)\n", report.cylinders, report.heads,
+		       report.sectors_per_track, report.sectors);
 		printf("  DOSBox:   imgmount 2 \"%s\" -size 512,%u,%u,%u -fs none\n", o.output.c_str(),
 		       report.sectors_per_track, report.heads, report.cylinders);
 		if (report.cylinders > 1024)
@@ -287,10 +280,8 @@ namespace
 		int result = 0;
 		for (const disk_volume& v : volumes)
 		{
-			if (v.drive)
-				printf("Volume %c: ", v.drive);
-			else
-				printf("Partition type %02Xh, no DOS drive: ", v.type);
+			if (v.drive) printf("Volume %c: ", v.drive);
+			else printf("Partition type %02Xh, no DOS drive: ", v.type);
 			if (!v.formatted)
 			{
 				printf("not FAT12 or FAT16, %llu MB at sector %llu\n\n", v.sectors / 2048, v.start);
@@ -312,10 +303,8 @@ namespace
 			for (const disk_entry& e : entries)
 			{
 				printf("  %-40s ", e.path.c_str());
-				if (e.attributes & 0x10)
-					printf("     <DIR> ");
-				else
-					printf("%10u ", e.size);
+				if (e.attributes & 0x10) printf("     <DIR> ");
+				else printf("%10u ", e.size);
 				print_date(e.date, e.time);
 				printf(" %c%c%c%c\n", e.attributes & 0x01 ? 'R' : '-', e.attributes & 0x02 ? 'H' : '-',
 				       e.attributes & 0x04 ? 'S' : '-', e.attributes & 0x20 ? 'A' : '-');
@@ -351,12 +340,9 @@ namespace
 		}
 		if (volume == nullptr || !volume->formatted)
 		{
-			if (volume != nullptr)
-				fprintf(stderr, "Error: drive %c: in '%s' is not formatted\n", volume->drive, path);
-			else if (letter)
-				fprintf(stderr, "Error: '%s' has no drive %c:\n", path, letter);
-			else
-				fprintf(stderr, "Error: '%s' has no DOS drive\n", path);
+			if (volume != nullptr) fprintf(stderr, "Error: drive %c: in '%s' is not formatted\n", volume->drive, path);
+			else if (letter) fprintf(stderr, "Error: '%s' has no drive %c:\n", path, letter);
+			else fprintf(stderr, "Error: '%s' has no DOS drive\n", path);
 			fclose(file);
 			return 1;
 		}
@@ -405,10 +391,8 @@ int main(int argc, char* argv[])
 	{
 		const std::string arg = argv[i];
 		const bool value = i + 1 < argc;
-		if (arg == "-o" && value)
-			o.output = argv[++i];
-		else if (arg == "-b" && value)
-			o.binaries = argv[++i];
+		if (arg == "-o" && value) o.output = argv[++i];
+		else if (arg == "-b" && value) o.binaries = argv[++i];
 		else if (arg == "-s" && value)
 		{
 			o.floppy_kilobytes = atoi(argv[++i]);
@@ -418,14 +402,10 @@ int main(int argc, char* argv[])
 				return 1;
 			}
 		}
-		else if (arg == "-f" && value)
-			o.extra.push_back(argv[++i]);
-		else if (arg == "-l" && value)
-			o.label = argv[++i];
-		else if (arg == "-hd" && value)
-			o.layout.megabytes = uint32_t(strtoul(argv[++i], nullptr, 10));
-		else if (arg == "-p" && value)
-			o.layout.partition_megabytes = uint32_t(strtoul(argv[++i], nullptr, 10));
+		else if (arg == "-f" && value) o.extra.push_back(argv[++i]);
+		else if (arg == "-l" && value) o.label = argv[++i];
+		else if (arg == "-hd" && value) o.layout.megabytes = uint32_t(strtoul(argv[++i], nullptr, 10));
+		else if (arg == "-p" && value) o.layout.partition_megabytes = uint32_t(strtoul(argv[++i], nullptr, 10));
 		else if (arg == "-heads" && value)
 		{
 			o.layout.heads = uint32_t(strtoul(argv[++i], nullptr, 10));
@@ -440,12 +420,9 @@ int main(int argc, char* argv[])
 			when = time_t(_strtoi64(argv[++i], nullptr, 10));
 			fixed_time = true;
 		}
-		else if (arg == "-lba")
-			o.layout.lba_types = true;
-		else if (arg == "-nosys")
-			o.system = false;
-		else if (arg == "-v")
-			o.verbose = true;
+		else if (arg == "-lba") o.layout.lba_types = true;
+		else if (arg == "-nosys") o.system = false;
+		else if (arg == "-v") o.verbose = true;
 		else if (arg == "-h" || arg == "--help")
 		{
 			usage();

@@ -1,15 +1,15 @@
 // dui by Zac Walker, built on libdesktop's four-library application layer
 //
-// Binds the emulator to the shared ui, render and platform services: the frame,
-// menu, key mapping, audio stream that paces it and the frame loop. The
-// emulator itself never sees a window, and nothing here names an operating system.
+// Runs the emulator in a ui::shell, which brings the window, the menu bar and
+// the keys; the screen is a surface element, and the frame loop is dui's own,
+// paced by the audio stream. The emulator itself never sees a window, and
+// nothing here names an operating system.
 
 #include "libdesktop/core.h"
 #include "libdesktop/platform.h"
 #include "libdesktop/render.h"
 #include "libdesktop/ui.h"
-#include "libdesktop/ui/elements.h"
-#include "libdesktop/ui/menu_bar.h"
+#include "libdesktop/ui/shell.h"
 #include "libdesktop/ui/test_support.h"
 
 // The host's handles stay in its implementation, shared with the CLI.
@@ -27,22 +27,17 @@
 
 namespace
 {
+	constexpr int frames_per_second = 60;
 	constexpr int audio_blocks = 4;
-	constexpr int samples_per_frame = sound_sample_rate / 60;
+	constexpr int samples_per_frame = sound_sample_rate / frames_per_second;
 
-	class dui_app;
-	class dui_frame_host;
-
-	dui_app* g_application = nullptr;
 	ui::frame_ptr g_frame;
-	std::shared_ptr<dui_frame_host> g_reactor;
-	std::shared_ptr<ui::elements> g_elements;
+	std::shared_ptr<ui::surface_element> g_screen;
 	std::unique_ptr<machine> g_emulator;
 	std::unique_ptr<win32_host> g_host;
 	platform::audio_stream_ptr g_audio;
 	std::array<int16_t, samples_per_frame> g_audio_block = {};
 
-	bool g_running = true;
 	bool g_paused = false;
 	bool g_sound_on = true;
 
@@ -51,10 +46,9 @@ namespace
 	// application - is released there, so without this it would stay down in
 	// the machine and turn every later key into Ctrl+key.
 	std::array<bool, 256> g_keys_down = {};
-	std::array<char32_t, 256> g_key_sources = {};
 
+	// The content area the picture was last composed for.
 	core::sizei g_client;
-	core::pointi g_screen_origin;
 
 	// The picture sits in the content element below the drawn menu bar, at a
 	// whole-number scale. A fractional factor has to drop or double individual
@@ -73,143 +67,46 @@ namespace
 
 	picture_layout g_layout;
 
-	// The content surface is uploaded to a kept texture for each repaint, so a
-	// paused or uncovered window is drawn from the same complete frame.
-	core::surface_ptr g_surface;
-	render::texture_ptr g_texture;
+	// What shows of the scaled screen. The content's surface element keeps it in
+	// a texture that each frame updates in place, so a paused or uncovered window
+	// is drawn from the same complete frame.
+	core::surface_ptr g_picture;
 
-	// Menus are retained so accelerators and the menu-bar control use the same
-	// commands. Child menus are built when opened, so checked state is current.
-	std::vector<ui::command_ptr> g_menus;
 	bool g_headless = false;
 	std::string g_target;
 	// Source column for each visible destination column, so scaling costs no
 	// divide per pixel.
 	std::vector<int> g_columns;
 
-	// The legacy config file lived beside the executable but was created only
-	// when a setting was written. Keep reads lazy so a first run stays clean.
-	class lazy_ini_settings final : public platform::setting_file
-	{
-		core::folder_path _folder;
-		core::file_path _path;
-		mutable platform::setting_file_ptr _store;
-
-		platform::setting_file_ptr read_store() const
-		{
-			if (!_store && platform::exists(_path)) _store = platform::create_ini_file_settings(_folder);
-			return _store;
-		}
-
-		platform::setting_file_ptr write_store()
-		{
-			if (!_store) _store = platform::create_ini_file_settings(_folder);
-			return _store;
-		}
-
-	public:
-		explicit lazy_ini_settings(core::folder_path folder) : _folder(std::move(folder)),
-			_path(_folder.combine_file(std::format("{}.ini", core::app_file_stem())))
-		{
-		}
-
-		bool root_created() const override
-		{
-			return _store ? _store->root_created() : platform::exists(_path);
-		}
-
-		bool write(std::string_view section, std::string_view name, uint32_t value) override
-		{
-			const auto store = write_store();
-			return store && store->write(section, name, value);
-		}
-
-		bool write(std::string_view section, std::string_view name, uint64_t value) override
-		{
-			const auto store = write_store();
-			return store && store->write(section, name, value);
-		}
-
-		bool write(std::string_view section, std::string_view name, std::string_view value) override
-		{
-			const auto store = write_store();
-			return store && store->write(section, name, value);
-		}
-
-		bool write(std::string_view section, std::string_view name, core::cspan value) override
-		{
-			const auto store = write_store();
-			return store && store->write(section, name, value);
-		}
-
-		bool read(std::string_view section, std::string_view name, uint32_t& value) const override
-		{
-			const auto store = read_store();
-			return store && store->read(section, name, value);
-		}
-
-		bool read(std::string_view section, std::string_view name, uint64_t& value) const override
-		{
-			const auto store = read_store();
-			return store && store->read(section, name, value);
-		}
-
-		bool read(std::string_view section, std::string_view name, std::string& value) const override
-		{
-			const auto store = read_store();
-			return store && store->read(section, name, value);
-		}
-
-		bool read(std::string_view section, std::string_view name, uint8_t* value, size_t& length) const override
-		{
-			const auto store = read_store();
-			return store && store->read(section, name, value, length);
-		}
-	};
-
-	picture_layout compute_layout();
-	bool compose();
+	picture_layout compute_layout(core::sizei client);
+	bool compose(core::sizei client);
 	void release_key(machine_key key);
 	void release_all_keys();
 	void report(std::string_view message);
 	void update_title();
-	void present();
 	void open_path(const core::file_path& path);
 	void toggle_pause();
 	void toggle_sound();
 	std::vector<ui::command_ptr> build_menus();
 
-	class screen_element final : public ui::element
+	class dui_app final : public ui::shell
 	{
 	public:
-		screen_element() noexcept
-		{
-			flex = ui::flex_item::grow | ui::flex_item::stretch;
-			padding(0);
-		}
+		dui_app() : shell(make_options()) {}
 
-		core::sizei measure(render::measure_context&, int) const override
-		{
-			return {};
-		}
+		bool parse_command_line(std::string_view command_line) override;
+		void system_event(platform::os_event_type event) override;
 
-		void layout(render::measure_context& mc, const core::recti bounds_in) override;
-		void render(render::draw_context& dc, core::pointi element_offset) const override;
-	};
+		std::vector<ui::command_ptr> make_menus() override { return build_menus(); }
+		ui::element_ptr make_content() override;
+		bool start(std::string_view command_line) override;
+		int main_loop() override;
+		void present() override;
+		bool key(char32_t key, platform::key_state keys) override;
+		bool key_up(char32_t key, platform::key_state keys) override;
+		void stop() override;
 
-	class dui_frame_host final : public ui::frame_host
-	{
-		std::shared_ptr<ui::elements> _root;
-
-	public:
-		explicit dui_frame_host(std::shared_ptr<ui::elements> root) : _root(std::move(root))
-		{
-		}
-
-		void on_window_layout(render::measure_context& mc, core::sizei extent, bool is_minimized) override;
 		void on_window_paint(render::draw_context& dc) override;
-		void on_window_destroy() override;
-
 		void on_mouse_move(core::pointi loc, bool is_tracking) override;
 		void on_mouse_left_button_down(core::pointi loc, platform::key_state keys) override;
 		void on_mouse_left_button_up(core::pointi loc, platform::key_state keys) override;
@@ -217,6 +114,7 @@ namespace
 		void on_mouse_middle_button_up(core::pointi loc, platform::key_state keys) override;
 		void on_mouse_right_button_down(core::pointi loc, platform::key_state keys) override;
 		void on_mouse_right_button_up(core::pointi loc, platform::key_state keys) override;
+		void on_mouse_left_button_double_click(core::pointi, platform::key_state) override {}
 		void focus_changed(bool has_focus, const ui::control_ptr& child) override;
 		void activate(bool active) override;
 
@@ -225,65 +123,19 @@ namespace
 		platform::drop_effect drag_drop(platform::clipboard_data& data, platform::key_state keys,
 		                                core::pointi loc) override;
 
-		void visit_elements(const std::function<void(const ui::element_ptr&, core::pointi)>& visit) override
-		{
-			visit(_root, {});
-		}
-
 	private:
-		bool screen_point(core::pointi loc, int& x, int& y) const;
-	};
-
-	class dui_app final : public ui::app, public std::enable_shared_from_this<dui_app>
-	{
-		platform::setting_file_ptr _settings;
-
-	public:
-		dui_app()
-		{
-			g_application = this;
-		}
-
-		~dui_app() override
-		{
-			if (g_application == this) g_application = nullptr;
-		}
-
-		bool pre_init() override { return true; }
-		bool parse_command_line(std::string_view command_line) override;
-		int run_console_mode() override { return 0; }
-		bool load_settings(const platform::setting_file_ptr& store) override;
-		bool init(std::string_view command_line) override;
-		bool owns_loop() const override { return true; }
-		int main_loop() override;
-		void idle() override {}
-		bool can_exit() override { return true; }
-		void exit() override;
-		void final_exit() override {}
-		void system_event(platform::os_event_type event) override;
-
-		bool wants_gpu() const override { return true; }
-		bool key_down(char32_t key, platform::key_state keys) override;
-		bool text_input(std::string_view) override { return false; }
-		ui::focus_mode focus_mode() const override { return ui::focus_mode::none; }
-		void track_menu(const ui::frame_ptr& parent, core::recti button_bounds,
-		                const std::vector<ui::command_ptr>& commands) override
-		{
-			parent->track_menu(button_bounds, commands);
-		}
-
-	private:
+		static ui::shell_options make_options();
 		static machine_key translate_key(char32_t key);
 		static std::vector<std::string> command_line_args(std::string_view command_line);
+		bool screen_point(core::pointi loc, int& x, int& y) const;
 		int run();
 		int run_offscreen();
-		void release_stale_keys();
 	};
 
 	std::string unquote(std::string_view value)
 	{
-		if (value.size() >= 2 && ((value.front() == '"' && value.back() == '"') ||
-		                          (value.front() == '\'' && value.back() == '\'')))
+		if (value.size() >= 2 &&
+		    ((value.front() == '"' && value.back() == '"') || (value.front() == '\'' && value.back() == '\'')))
 		{
 			value.remove_prefix(1);
 			value.remove_suffix(1);
@@ -298,146 +150,117 @@ namespace
 		return result;
 	}
 
-	picture_layout compute_layout()
+	picture_layout compute_layout(const core::sizei client)
 	{
 		picture_layout layout;
 		if (!g_emulator) return layout;
 
 		layout.width = g_emulator->width();
 		layout.height = g_emulator->height();
-		if (layout.width <= 0 || layout.height <= 0 || g_client.cx <= 0 || g_client.cy <= 0)
-			return layout;
+		if (layout.width <= 0 || layout.height <= 0 || client.cx <= 0 || client.cy <= 0) return layout;
 
-		layout.scale_x = std::max(1, g_client.cx / layout.width);
-		layout.scale_y = std::max(1, g_client.cy / layout.height);
+		layout.scale_x = std::max(1, client.cx / layout.width);
+		layout.scale_y = std::max(1, client.cy / layout.height);
 		while (layout.scale_x > layout.scale_y && layout.scale_x > 1) --layout.scale_x;
 		if (layout.scale_y > layout.scale_x * 2) layout.scale_y = layout.scale_x * 2;
 
-		layout.x = (g_client.cx - layout.width * layout.scale_x) / 2;
-		layout.y = (g_client.cy - layout.height * layout.scale_y) / 2;
+		layout.x = (client.cx - layout.width * layout.scale_x) / 2;
+		layout.y = (client.cy - layout.height * layout.scale_y) / 2;
 		return layout;
 	}
 
-	// Rebuilt only when the layout changes: the letterbox is cleared once and
-	// then left alone, because the picture covers the rest of every frame.
-	void rebuild_surface(const picture_layout& layout)
+	// Rebuilt only when the layout changes. The picture is what the content area
+	// shows of the scaled screen: all of it, or its middle in a window too small
+	// for the screen at one to one.
+	void rebuild_picture(const picture_layout& layout)
 	{
-		if (g_client.cx <= 0 || g_client.cy <= 0) return;
-		if (!g_surface) g_surface = std::make_shared<core::surface>();
-		g_surface->alloc(g_client, core::texture_format::RGB);
-		std::memset(g_surface->pixels(), 0, g_surface->size());
-		g_texture.reset();
+		const int first_x = std::max(0, layout.x);
+		const int last_x = std::min(g_client.cx, layout.x + layout.width * layout.scale_x);
+		const int first_y = std::max(0, layout.y);
+		const int last_y = std::min(g_client.cy, layout.y + layout.height * layout.scale_y);
 
-		const int first = std::max(0, layout.x);
-		const int last = std::min(g_client.cx, layout.x + layout.width * layout.scale_x);
+		if (!g_picture) g_picture = std::make_shared<core::surface>();
+		g_picture->alloc({last_x - first_x, last_y - first_y}, core::texture_format::RGB);
 
 		g_columns.clear();
-		for (int dx = first; dx < last; ++dx)
-			g_columns.push_back((dx - layout.x) / layout.scale_x);
+		for (int dx = first_x; dx < last_x; ++dx) g_columns.push_back((dx - layout.x) / layout.scale_x);
 	}
 
-	// Draws the current frame into the surface. False when there is nothing to
+	// Draws the current frame into the picture. False when there is nothing to
 	// show yet.
-	bool compose()
+	bool compose(const core::sizei client)
 	{
-		if (!g_emulator || g_client.cx <= 0 || g_client.cy <= 0) return false;
+		if (!g_emulator || client.cx <= 0 || client.cy <= 0) return false;
 
-		const auto layout = compute_layout();
+		const auto layout = compute_layout(client);
 		if (layout.width <= 0 || layout.height <= 0) return false;
 
-		if (layout != g_layout || !g_surface || g_surface->dimensions() != g_client)
+		if (layout != g_layout || client != g_client || !g_picture)
 		{
 			g_layout = layout;
-			rebuild_surface(layout);
+			g_client = client;
+			rebuild_picture(layout);
 		}
 
 		const uint32_t* source = g_emulator->framebuffer();
 		if (source == nullptr || g_columns.empty()) return false;
 
-		const int first_x = std::max(0, layout.x);
 		const int first_y = std::max(0, layout.y);
-		const int last_y = std::min(g_client.cy, layout.y + layout.height * layout.scale_y);
+		const int rows = g_picture->dimensions().cy;
 
-		for (int dy = first_y; dy < last_y; ++dy)
+		for (int py = 0; py < rows; ++py)
 		{
 			const uint32_t* row = source +
-				static_cast<size_t>((dy - layout.y) / layout.scale_y) * layout.width;
-			uint32_t* out = reinterpret_cast<uint32_t*>(g_surface->pixels_line(dy)) + first_x;
+			                      static_cast<size_t>((first_y + py - layout.y) / layout.scale_y) * layout.width;
+			uint32_t* out = reinterpret_cast<uint32_t*>(g_picture->pixels_line(py));
 			for (const int sx : g_columns) *out++ = row[sx];
 		}
 		return true;
 	}
 
-	void screen_element::layout(render::measure_context& mc, const core::recti bounds_in)
+	// The picture comes scaled already - each axis by its own whole number, which
+	// no single pixel aspect expresses - and never has room for a second multiple,
+	// so by whole multiples the element draws it one to one, centred on black
+	// where the layout places it.
+	ui::element_ptr dui_app::make_content()
 	{
-		element::layout(mc, bounds_in);
-		const auto extent = bounds_in.extent();
-		if (g_client != extent || g_screen_origin != bounds_in.top_left())
-		{
-			g_client = extent;
-			g_screen_origin = bounds_in.top_left();
-			g_layout = {};
-			g_texture.reset();
-		}
+		g_screen = std::make_shared<ui::surface_element>(ui::surface_element::style{.whole_multiples = true});
+		return g_screen;
 	}
 
-	void screen_element::render(render::draw_context& dc, const core::pointi element_offset) const
+	// Each frame is the same picture, so the element updates its texture in place
+	// and presents the picture's region again, painting nothing.
+	void dui_app::present()
 	{
-		if (!g_surface || g_surface->empty()) return;
+		if (compose(content_bounds().extent())) g_screen->present(g_picture, frame());
+	}
 
-		const auto dst = bounds.offset(element_offset);
-		if (!g_texture || g_texture->dimensions() != g_surface->dimensions()) g_texture = dc.create_texture();
-		if (g_texture)
-		{
-			const auto updated = g_texture->update(g_surface);
-			if (updated != render::texture_update_result::failed)
-			{
-				dc.draw_texture(g_texture, dst, 1.0f, render::texture_sampler::point);
-				return;
-			}
-			g_texture.reset();
-		}
-
-		// A software context can still present the CPU surface when a device
-		// refuses a texture, which keeps the offscreen check meaningful.
-		render::draw_surface(dc, g_surface, dst, 1.0f, render::texture_sampler::point);
+	// A repaint composes the frame again at the content's size now, so a window
+	// being sized shows the picture at its new scale. No frame is given: the
+	// paint under way draws it.
+	void dui_app::on_window_paint(render::draw_context& dc)
+	{
+		if (compose(content_bounds().extent())) g_screen->present(g_picture, nullptr);
+		shell::on_window_paint(dc);
 	}
 
 	// Through the same letterbox and scale the picture is drawn
 	// with, so the pointer lands where the user sees it.
-	bool dui_frame_host::screen_point(const core::pointi loc, int& x, int& y) const
+	bool dui_app::screen_point(const core::pointi loc, int& x, int& y) const
 	{
-		if (g_client.is_empty()) return false;
-		const auto screen = core::recti(g_screen_origin, g_client);
-		const auto inside = screen.contains(loc);
-		const auto local_x = loc.x - g_screen_origin.x;
-		const auto local_y = loc.y - g_screen_origin.y;
-		x = std::clamp((local_x - g_layout.x) / std::max(1, g_layout.scale_x), 0,
+		const auto screen = content_bounds();
+		if (screen.is_empty()) return false;
+		x = std::clamp((loc.x - screen.left - g_layout.x) / std::max(1, g_layout.scale_x), 0,
 		               std::max(0, g_layout.width - 1));
-		y = std::clamp((local_y - g_layout.y) / std::max(1, g_layout.scale_y), 0,
+		y = std::clamp((loc.y - screen.top - g_layout.y) / std::max(1, g_layout.scale_y), 0,
 		               std::max(0, g_layout.height - 1));
-		return inside;
+		return screen.contains(loc);
 	}
 
-	void dui_frame_host::on_window_layout(render::measure_context& mc, const core::sizei extent,
-	                                      const bool is_minimized)
-	{
-		if (!is_minimized) _root->layout(mc, core::recti(extent));
-	}
-
-	void dui_frame_host::on_window_paint(render::draw_context& dc)
-	{
-		compose();
-		_root->render(dc, {});
-	}
-
-	void dui_frame_host::on_window_destroy()
-	{
-		release_all_keys();
-		g_running = false;
-	}
-
-	void dui_frame_host::on_mouse_move(const core::pointi loc, bool)
+	// The pointer over the screen is the machine's alone, so none of it goes to
+	// the shell's element host: the content has no controller for it to find,
+	// and a press or a double click that finds none paints the whole window again.
+	void dui_app::on_mouse_move(const core::pointi loc, bool)
 	{
 		if (!g_emulator) return;
 		int x = 0, y = 0;
@@ -445,57 +268,57 @@ namespace
 		g_emulator->mouse_move(x, y);
 	}
 
-	void dui_frame_host::on_mouse_left_button_down(const core::pointi loc, platform::key_state)
+	void dui_app::on_mouse_left_button_down(const core::pointi loc, platform::key_state)
 	{
 		int x = 0, y = 0;
 		if (screen_point(loc, x, y) && g_emulator) g_emulator->mouse_button(0, true);
 	}
 
-	void dui_frame_host::on_mouse_left_button_up(const core::pointi, platform::key_state)
+	void dui_app::on_mouse_left_button_up(const core::pointi, platform::key_state)
 	{
 		if (g_emulator) g_emulator->mouse_button(0, false);
 	}
 
-	void dui_frame_host::on_mouse_middle_button_down(const core::pointi loc, platform::key_state)
+	void dui_app::on_mouse_middle_button_down(const core::pointi loc, platform::key_state)
 	{
 		int x = 0, y = 0;
 		if (screen_point(loc, x, y) && g_emulator) g_emulator->mouse_button(2, true);
 	}
 
-	void dui_frame_host::on_mouse_middle_button_up(const core::pointi, platform::key_state)
+	void dui_app::on_mouse_middle_button_up(const core::pointi, platform::key_state)
 	{
 		if (g_emulator) g_emulator->mouse_button(2, false);
 	}
 
-	void dui_frame_host::on_mouse_right_button_down(const core::pointi loc, platform::key_state)
+	void dui_app::on_mouse_right_button_down(const core::pointi loc, platform::key_state)
 	{
 		int x = 0, y = 0;
 		if (screen_point(loc, x, y) && g_emulator) g_emulator->mouse_button(1, true);
 	}
 
-	void dui_frame_host::on_mouse_right_button_up(const core::pointi, platform::key_state)
+	void dui_app::on_mouse_right_button_up(const core::pointi, platform::key_state)
 	{
 		if (g_emulator) g_emulator->mouse_button(1, false);
 	}
 
-	void dui_frame_host::focus_changed(const bool has_focus, const ui::control_ptr&)
+	void dui_app::focus_changed(const bool has_focus, const ui::control_ptr& child)
 	{
+		shell::focus_changed(has_focus, child);
 		if (!has_focus) release_all_keys();
 	}
 
-	void dui_frame_host::activate(const bool active)
+	void dui_app::activate(const bool active)
 	{
+		shell::activate(active);
 		if (!active) release_all_keys();
 	}
 
-	platform::drop_effect dui_frame_host::drag_over(const platform::clipboard_data& data, platform::key_state,
-	                                                core::pointi)
+	platform::drop_effect dui_app::drag_over(const platform::clipboard_data& data, platform::key_state, core::pointi)
 	{
 		return data.has_drop_files() ? platform::drop_effect::link : platform::drop_effect::none;
 	}
 
-	platform::drop_effect dui_frame_host::drag_drop(platform::clipboard_data& data, platform::key_state,
-	                                                core::pointi)
+	platform::drop_effect dui_app::drag_drop(platform::clipboard_data& data, platform::key_state, core::pointi)
 	{
 		if (!data.has_drop_files()) return platform::drop_effect::none;
 		open_path(data.first_path());
@@ -609,9 +432,8 @@ namespace
 		else stop_audio();
 	}
 
-	ui::command_ptr make_command(std::string_view text, std::function<void()> invoke = {},
-	                             char32_t key = 0, uint32_t key_state = 0, bool checkable = false,
-	                             bool checked = false)
+	ui::command_ptr make_command(std::string_view text, std::function<void()> invoke = {}, char32_t key = 0,
+	                             uint32_t key_state = 0, bool checkable = false, bool checked = false)
 	{
 		auto command = std::make_shared<ui::command>();
 		command->text = text;
@@ -626,17 +448,21 @@ namespace
 		return command;
 	}
 
+	// Child menus are built when opened, so checked state is current.
 	std::vector<ui::command_ptr> build_menus()
 	{
 		auto file = make_command("&File");
 		file->menu = []
 		{
 			std::vector<ui::command_ptr> children;
-			children.push_back(make_command("&Open Program...", open_program, 'O',
-			                               platform::keyboard_accelerator_t::control));
+			children.push_back(
+				make_command("&Open Program...", open_program, 'O', platform::keyboard_accelerator_t::control));
 			children.push_back(make_command("Open &Folder...", open_folder));
 			children.push_back(std::make_shared<ui::command>());
-			children.push_back(make_command("E&xit", [] { if (g_frame) g_frame->close(); }));
+			children.push_back(make_command("E&xit", []
+			{
+				if (g_frame) g_frame->close();
+			}));
 			return children;
 		};
 
@@ -671,12 +497,12 @@ namespace
 		{
 			return std::vector<ui::command_ptr>{make_command("&About dui", []
 			{
-				platform::message_box(nullptr,
-				                      "dui\n\nA DOS program emulator built on libdos: 8086/80186, VGA/EGA/CGA, AdLib and "
-				                      "PC speaker, with DOS and BIOS services mapped rather than emulated.\n\n"
-				                      "https://github.com/ZacWalk/libdos",
-				                      "About dui", {platform::message_box_buttons::ok,
-				                                     platform::message_box_icon::none});
+				platform::message_box(
+					nullptr,
+					"dui\n\nA DOS program emulator built on libdos: 8086/80186, VGA/EGA/CGA, AdLib and "
+					"PC speaker, with DOS and BIOS services mapped rather than emulated.\n\n"
+					"https://github.com/ZacWalk/libdos",
+					"About dui", {platform::message_box_buttons::ok, platform::message_box_icon::none});
 			})};
 		};
 
@@ -691,13 +517,8 @@ namespace
 		if (s.shell.program[0] != 0) what = s.shell.program;
 		else if (s.shell.active) what = "command prompt";
 
-		g_frame->window_text(std::format("dui - {} - mode {:02X}h {}x{}{}", what, s.vga.mode,
-		                                s.vga.width, s.vga.height, g_paused ? " - paused" : ""));
-	}
-
-	void present()
-	{
-		if (g_frame && compose()) g_frame->redraw_now();
+		g_frame->window_text(std::format("dui - {} - mode {:02X}h {}x{}{}", what, s.vga.mode, s.vga.width, s.vga.height,
+		                                 g_paused ? " - paused" : ""));
 	}
 
 	machine_key dui_app::translate_key(const char32_t key)
@@ -756,8 +577,7 @@ namespace
 		if (key == platform::keys::DECIMAL) return machine_key::keypad_period;
 
 		// The digit row runs 1..9 then 0, which is the order of its scancodes.
-		if (key >= '0' && key <= '9')
-			return machine_key(int(machine_key::num1) + ((key - '0' + 9) % 10));
+		if (key >= '0' && key <= '9') return machine_key(int(machine_key::num1) + ((key - '0' + 9) % 10));
 
 		if (key >= 'A' && key <= 'Z')
 		{
@@ -777,15 +597,11 @@ namespace
 		return machine_key::none;
 	}
 
-	void press_key(const machine_key key, const char32_t source)
+	void press_key(const machine_key key)
 	{
 		if (!g_emulator) return;
 		g_emulator->key_down(key);
-		if (key != machine_key::none)
-		{
-			g_keys_down[size_t(key)] = true;
-			g_key_sources[size_t(key)] = source;
-		}
+		if (key != machine_key::none) g_keys_down[size_t(key)] = true;
 	}
 
 	void release_key(const machine_key key)
@@ -793,7 +609,6 @@ namespace
 		if (!g_emulator || key == machine_key::none) return;
 		g_emulator->key_up(key);
 		g_keys_down[size_t(key)] = false;
-		g_key_sources[size_t(key)] = 0;
 	}
 
 	// The window no longer hears about the keys it has, so it lets go of them.
@@ -805,40 +620,38 @@ namespace
 			if (g_keys_down[i]) release_key(machine_key(i));
 	}
 
-	void dui_app::release_stale_keys()
-	{
-		for (size_t i = 0; i < g_keys_down.size(); ++i)
-		{
-			const auto source = g_key_sources[i];
-			if (g_keys_down[i] && source != 0 && !platform::is_key_down_async(source))
-				release_key(machine_key(i));
-		}
-	}
-
-
 	bool dui_app::parse_command_line(const std::string_view command_line)
 	{
 		g_headless = false;
 		g_target.clear();
 		for (const auto& arg : command_line_args(command_line))
 		{
-			if (core::icmp(arg, "-test") == 0 || core::icmp(arg, "/test") == 0)
-				g_headless = true;
-			else if (g_target.empty())
-				g_target = arg;
+			if (core::icmp(arg, "-test") == 0 || core::icmp(arg, "/test") == 0) g_headless = true;
+			else if (g_target.empty()) g_target = arg;
 		}
 
 		// -test is an offscreen GUI run, not platform::run's console branch:
-		// init still has to build the frame and exercise its paint path.
+		// the shell still has to make the window and exercise its paint path.
+		initial_options().offscreen = g_headless;
 		return false;
 	}
 
-	bool dui_app::load_settings(const platform::setting_file_ptr& store)
+	ui::shell_options dui_app::make_options()
 	{
-		(void)store;
-		_settings = std::make_shared<lazy_ini_settings>(
-			platform::known_path(platform::known_folder::running_app_folder));
-		return true;
+		ui::shell_options options;
+		options.client_size = {1280, 800};
+		// Any size: a window too small for the picture crops it.
+		options.minimum_client = {};
+		options.gpu = true;
+		options.accepts_drops = true;
+		// Realtime, so a held key never repeats a menu command. The frames are
+		// paced by main_loop, at this rate when the sound is off.
+		options.steps_per_second = frames_per_second;
+		// A program's music plays on while the window is minimized.
+		options.run_minimized = true;
+		// dui keeps no settings: the window opens centred every time.
+		options.remember_placement = false;
+		return options;
 	}
 
 	core::file_path command_line_path(const std::string_view value)
@@ -852,68 +665,19 @@ namespace
 		return path;
 	}
 
-	void position_default_window(const platform::setting_file_ptr& settings)
+	bool dui_app::start(std::string_view)
 	{
-		if (!g_frame || platform::read_placement(settings, platform::placement_setting_name())) return;
-		// The initial client size is a logical 1280x800 design size. Scale it
-		// after the frame knows the monitor DPI, then centre the resulting outer
-		// rectangle without disturbing a saved placement.
-		constexpr core::sizei design_client{1280, 800};
-		const auto scale = g_frame->scale_factor();
-		const auto current = g_frame->window_bounds();
-		const core::sizei chrome{
-			std::max(0, current.width() - design_client.cx),
-			std::max(0, current.height() - design_client.cy),
-		};
-		const core::sizei client{core::round(design_client.cx * scale), core::round(design_client.cy * scale)};
-		const auto outer = client + chrome;
-		const auto screen = platform::primary_screen_size();
-		const int left = std::max(0, (screen.cx - outer.cx) / 2);
-		const int top = std::max(0, (screen.cy - outer.cy) / 2);
-		g_frame->window_bounds({left, top, left + outer.cx, top + outer.cy}, false);
-	}
-
-	bool dui_app::init(const std::string_view command_line)
-	{
-		parse_command_line(command_line);
-		g_running = true;
+		g_frame = frame();
 		g_paused = false;
 		g_sound_on = !g_headless;
 		g_client = {};
-		g_screen_origin = {};
 		g_layout = {};
-		g_surface.reset();
-		g_texture.reset();
+		g_picture.reset();
 		g_keys_down.fill(false);
-		g_key_sources.fill(0);
 
 		g_emulator = std::make_unique<machine>();
 		g_host = std::make_unique<win32_host>();
 		g_emulator->set_host(g_host.get());
-
-		g_menus = build_menus();
-		auto menu_bar = ui::make_menu_bar(g_menus);
-		menu_bar->flex = ui::flex_item::stretch;
-		auto screen = std::make_shared<screen_element>();
-		g_elements = std::make_shared<ui::elements>(std::vector<ui::element_ptr>{menu_bar, screen});
-		g_elements->padding(0);
-		g_elements->flex_container.direction = ui::flex_direction::column;
-		g_elements->flex_container.wrap = ui::flex_wrap::no_wrap;
-		g_elements->flex_container.align_items = ui::flex_align::stretch;
-
-		g_reactor = std::make_shared<dui_frame_host>(g_elements);
-		ui::frame_style style;
-		style.hardware_accelerated = true;
-		style.drawn_caption = false;
-		style.client_size = {1280, 800};
-		style.offscreen = g_headless;
-		style.can_focus = true;
-		style.can_drop = true;
-		style.resizable = true;
-		g_frame = ui::create_app_frame(shared_from_this(), _settings, g_reactor, style);
-		if (!g_frame) return false;
-		position_default_window(_settings);
-		g_frame->window_text("dui");
 
 		// A self-check is over in a moment; opening the sound device would only add
 		// a second of silence to it.
@@ -941,15 +705,13 @@ namespace
 
 	int dui_app::run()
 	{
-		constexpr double period = 1.0 / 60.0;
+		constexpr double period = 1.0 / frames_per_second;
 		double last = platform::monotonic_seconds();
 		int title_counter = 0;
 
-		while (g_running)
+		while (platform::pump_events())
 		{
-			if (!platform::pump_events()) break;
-			if (!g_running || !g_emulator) break;
-			release_stale_keys();
+			if (!g_emulator) break;
 
 			// EXIT at the prompt is the only thing that ends the session; a
 			// program terminating just returns to the shell.
@@ -991,7 +753,9 @@ namespace
 
 			g_emulator->exec(g_emulator->cycles_per_frame());
 			submit_audio();
-			present();
+			// A minimized window shows nothing; the paint that restores it
+			// composes the frame of the moment.
+			if (!is_minimized()) present();
 
 			if (++title_counter >= 30)
 			{
@@ -1002,70 +766,6 @@ namespace
 		return 0;
 	}
 
-	// Stands in for a graphics context in the self-check and keeps the texture
-	// a repaint hands it.
-	class recording_texture final : public render::texture
-	{
-	public:
-		core::const_surface_ptr surface;
-
-		render::texture_update_result update(const render::video_frame_ptr&) override
-		{
-			return render::texture_update_result::failed;
-		}
-
-		render::texture_update_result update(const core::const_surface_ptr& value) override
-		{
-			const auto result = surface ? render::texture_update_result::tex_updated
-			                           : render::texture_update_result::tex_created;
-			surface = value;
-			if (surface)
-			{
-				_dimensions = surface->dimensions();
-				_src_extent = _dimensions;
-				_format = surface->format();
-				_orientation = surface->orientation();
-				_cs = surface->color_space();
-			}
-			return surface ? result : render::texture_update_result::failed;
-		}
-
-		render::texture_update_result update(core::sizei dims, core::texture_format format,
-		                                     core::orientation orientation, const uint8_t* pixels,
-		                                     size_t stride, size_t buffer_size) override
-		{
-			(void)dims;
-			(void)format;
-			(void)orientation;
-			(void)pixels;
-			(void)stride;
-			(void)buffer_size;
-			return render::texture_update_result::failed;
-		}
-
-		bool is_valid() const override { return surface != nullptr; }
-	};
-
-	struct recording_draw_context final : ui::test::fake_draw_context
-	{
-		render::texture_ptr drawn;
-		core::recti drawn_bounds;
-
-		using ui::test::fake_draw_context::draw_texture;
-
-		render::texture_ptr create_texture() override
-		{
-			return std::make_shared<recording_texture>();
-		}
-
-		void draw_texture(const render::texture_ptr& texture, core::recti dst, float,
-		                 render::texture_sampler) override
-		{
-			drawn = texture;
-			drawn_bounds = dst;
-		}
-	};
-
 	bool lit_surface(const core::const_surface_ptr& surface)
 	{
 		if (!surface || surface->empty()) return false;
@@ -1075,20 +775,21 @@ namespace
 	}
 
 	// Headless check of everything the window contributes: that a mode has a
-	// size, that the scaled picture fits inside the client area, and that
-	// pixels actually reach the surface that gets blitted.
+	// size, that the scaled picture fits inside the client area, that pixels
+	// actually reach the picture that gets drawn, and that a frame updates it
+	// in place.
 	int dui_app::run_offscreen()
 	{
 		constexpr int frames = 120;
 		int failures = 0;
+		int checks = 0;
+		int rendered = 0;
 
-		auto check = [&failures](const bool ok, const char* what)
+		auto check = [&](const bool ok, const char* what)
 		{
-			if (!ok)
-			{
-				++failures;
-				platform::write_stdout(std::format("FAIL: {}\n", what));
-			}
+			++checks;
+			if (!ok) ++failures;
+			platform::write_stdout(std::format("{}: {}\n", ok ? "PASS" : "FAIL", what));
 		};
 
 		for (int i = 0; i < frames; ++i)
@@ -1096,107 +797,125 @@ namespace
 			if (!platform::pump_events()) break;
 			g_emulator->exec(g_emulator->cycles_per_frame());
 			present();
+			++rendered;
 		}
 
+		check(rendered == frames, "the offscreen run completes every emulated frame");
 		check(g_client.cx > 0 && g_client.cy > 0, "the content reported a client area");
 		check(g_layout.width > 0 && g_layout.height > 0, "the machine reported a mode size");
 		check(g_layout.scale_x >= 1 && g_layout.scale_y >= 1, "the picture scale is a whole number");
 		check(g_layout.scale_y <= g_layout.scale_x * 2, "a pixel is no more than twice as tall as wide");
 		check(g_layout.x >= 0 && g_layout.y >= 0, "the picture fits inside the content area");
-		check(g_surface && g_surface->dimensions() == g_client, "the surface covers the content area");
-		// The prompt has drawn by now, so an all-black surface would mean the
+		const core::sizei scaled{g_layout.width * g_layout.scale_x, g_layout.height * g_layout.scale_y};
+		check(g_picture && g_picture->dimensions() == scaled, "the picture is the mode at its scale");
+		// The prompt has drawn by now, so an all-black picture would mean the
 		// framebuffer never reached it.
-		check(lit_surface(g_surface), "the framebuffer reached the surface");
+		check(lit_surface(g_picture), "the framebuffer reached the picture");
 
 		// A repaint has to draw the picture through the render context: a
 		// present outside the paint path would be lost on the next repaint.
-		g_texture.reset();
-		recording_draw_context dc;
-		g_reactor->on_window_paint(dc);
-		const auto recorded = std::dynamic_pointer_cast<recording_texture>(dc.drawn);
-		check(recorded && recorded->surface && recorded->surface->dimensions() == g_client &&
-		      lit_surface(recorded->surface),
+		g_screen->dispatch_event({ui::element_event_type::free_graphics_resources});
+		ui::test::recording_draw_context dc;
+		on_window_paint(dc);
+		const auto drawn = dc.textures.empty() ? ui::test::recording_draw_context::texture_draw{} : dc.textures.back();
+		check(drawn.texture && drawn.texture->surface == g_picture && lit_surface(drawn.texture->surface),
 		      "a repaint draws the picture through the render context");
+		const auto content = content_bounds();
+		check(drawn.bounds == core::recti(core::pointi{content.left + g_layout.x, content.top + g_layout.y}, scaled),
+		      "the picture is drawn unscaled where the layout puts it");
+
+		// The next frame goes into the same texture, and only the picture's
+		// region is presented again: nothing is painted for it.
+		const uint64_t paints = render::ui_perf.paints;
+		const uint64_t redraws = render::ui_perf.redraws;
+		present();
+		platform::pump_events();
+		check(drawn.texture && drawn.texture->updates == 2 && render::ui_perf.redraws == redraws + 1 &&
+		          render::ui_perf.paints == paints,
+		      "a frame updates the picture in place without painting the window");
 
 		// Ctrl+O opens a dialog, which then gets Ctrl's release. Losing the
 		// focus lets go of what is held, so the next key types itself rather
 		// than arriving as Ctrl+key - which the prompt would drop.
 		key_down(platform::keys::CONTROL, {});
-		g_reactor->focus_changed(false, nullptr);
+		focus_changed(false, nullptr);
 		key_down('A', {});
-		// Exercise the same asynchronous physical-key poll used by the real loop;
-		// the synthetic headless press is not held by this desktop keyboard.
-		release_stale_keys();
+		key_up('A', {});
 		for (int i = 0; i < 10; ++i) g_emulator->exec(g_emulator->cycles_per_frame());
 		char screen[4096] = {};
 		g_emulator->text_screen(screen, sizeof(screen));
 		check(std::string_view(screen).find(">a") != std::string_view::npos,
 		      "a key held when the window loses the focus is let go");
+		check(!g_keys_down[size_t(machine_key::a)], "a key's release reaches the machine");
 
 		// A program sees a button held until its release arrives, and the
 		// middle button is the driver's third.
-		const auto buttons = [] { return g_emulator->state().bios.mouse.buttons; };
-		const core::pointi click{g_screen_origin.x + 1, g_screen_origin.y + 1};
-		g_reactor->on_mouse_right_button_down(click, {});
-		g_reactor->on_mouse_middle_button_down(click, {});
+		const auto buttons = []
+		{
+			return g_emulator->state().bios.mouse.buttons;
+		};
+		const core::pointi click{content.left + 1, content.top + 1};
+		on_mouse_right_button_down(click, {});
+		on_mouse_middle_button_down(click, {});
 		check(buttons() == 6, "the right and middle buttons reach the machine");
-		g_reactor->on_mouse_right_button_up(click, {});
-		g_reactor->on_mouse_middle_button_up(click, {});
+		on_mouse_right_button_up(click, {});
+		on_mouse_middle_button_up(click, {});
 		check(buttons() == 0, "the right and middle buttons are let go");
 
 		// The close box and Alt+F4 end the session through the frame.
 		if (g_frame) g_frame->close();
-		check(!g_running, "a close message ends the session");
+		check(!platform::pump_events(), "a close message ends the session");
 
-		platform::write_stdout(std::format("dui: {} (client {}x{}, mode {}x{} at {}x{})\n",
-		                                   failures == 0 ? "PASS" : "FAIL", g_client.cx, g_client.cy,
-		                                   g_layout.width, g_layout.height, g_layout.scale_x, g_layout.scale_y));
+		platform::write_stdout(std::format("dui: {} checks, {} failed, {} frames (client {}x{}, mode {}x{} at {}x{})\n",
+		                                   checks, failures, rendered, g_client.cx, g_client.cy, g_layout.width,
+		                                   g_layout.height, g_layout.scale_x, g_layout.scale_y));
 
 		return failures == 0 ? 0 : 1;
 	}
 
-	bool dui_app::key_down(const char32_t key, const platform::key_state keys)
+	bool dui_app::key(const char32_t key, const platform::key_state keys)
 	{
 		// Alt/F10 belong to the menu bar and the window's own close handling; feeding
 		// them to DOS would turn Alt+F4 into a guest F4 press instead of exiting.
 		if (keys.alt || key == platform::keys::ALT || key == platform::keys::F10) return false;
-		// The old reactor ignored auto-repeated F9 key-downs, so do not toggle
-		// pause again while the key is held.
-		if (key == platform::keys::F9 && keys.repeat) return true;
-		if (ui::dispatch_accelerator(g_menus, key, keys)) return true;
 		const auto machine = translate_key(key);
 		if (machine == machine_key::none) return false;
-		press_key(machine, key);
+		press_key(machine);
 		return true;
 	}
 
+	bool dui_app::key_up(const char32_t key, const platform::key_state keys)
+	{
+		const auto machine = translate_key(key);
+		if (machine != machine_key::none && g_keys_down[size_t(machine)]) release_key(machine);
+		return shell::key_up(key, keys);
+	}
+
+	// dui keeps its own loop rather than the shell's fixed step. With sound on, a
+	// frame is due when the audio device has room for one - the device's clock,
+	// which a wall-clock step drifts from until the queue runs dry or overflows.
 	int dui_app::main_loop()
 	{
 		return g_headless ? run_offscreen() : run();
 	}
 
-	void dui_app::exit()
+	// The screen's texture and the frame must not outlive the renderer, which
+	// shuts down once the shell has let go of its own.
+	void dui_app::stop()
 	{
 		release_all_keys();
 		stop_audio();
 		platform::sound_shutdown();
-		g_texture.reset();
+		g_screen.reset();
 		g_frame.reset();
-		g_reactor.reset();
-		g_elements.reset();
-		g_menus.clear();
 		g_emulator.reset();
 		g_host.reset();
 	}
 
 	void dui_app::system_event(const platform::os_event_type event)
 	{
-		if (event == platform::os_event_type::graphics_device_lost)
-		{
-			g_texture.reset();
-			if (g_frame) g_frame->invalidate();
-		}
-		else if (event == platform::os_event_type::system_suspending)
+		shell::system_event(event);
+		if (event == platform::os_event_type::system_suspending)
 		{
 			stop_audio();
 		}

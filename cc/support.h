@@ -20,7 +20,8 @@
 #include <stddef.h>
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 /* ---- arena ---- */
@@ -38,7 +39,7 @@ typedef struct cc_arena
 {
 	cc_arena_block* block;
 	size_t block_size;
-	size_t total; /* every byte asked for, for reporting */
+	size_t total;  /* every byte asked for, for reporting */
 	int exhausted; /* an allocation failed; nothing here is trustworthy after that */
 } cc_arena;
 

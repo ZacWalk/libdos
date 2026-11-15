@@ -139,6 +139,7 @@ int read_string(machine_state& s, uint16_t segment, uint16_t offset, char* out, 
 
 enum class machine_key : uint8_t
 {
+	// clang-format off
 	none,
 	escape, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12,
 	backtick, num1, num2, num3, num4, num5, num6, num7, num8, num9, num0, minus, equals, backspace,
@@ -150,6 +151,7 @@ enum class machine_key : uint8_t
 	num_lock, keypad_slash, keypad_star, keypad_minus, keypad_plus, keypad_enter, keypad_period,
 	keypad0, keypad1, keypad2, keypad3, keypad4, keypad5, keypad6, keypad7, keypad8, keypad9,
 	print_screen, scroll_lock, pause,
+	// clang-format on
 };
 
 class machine

@@ -18,7 +18,7 @@ struct pit_channel
 	uint16_t reload = 0xffff;
 	uint16_t latched = 0;
 	uint8_t mode = 3;
-	uint8_t access = 3; // 1 = lo, 2 = hi, 3 = lo/hi
+	uint8_t access = 3;      // 1 = lo, 2 = hi, 3 = lo/hi
 	bool write_high = false; // next lo/hi byte is the high one
 	bool read_high = false;
 	bool latch_pending = false;
@@ -31,7 +31,7 @@ struct pit_channel
 struct pit_state
 {
 	pit_channel channel[3];
-	uint64_t ticks = 0; // in 1.193182 MHz units
+	uint64_t ticks = 0;     // in 1.193182 MHz units
 	uint64_t remainder = 0; // cycles not yet converted to ticks
 
 	// Cycles the CPU has run that the counters have not been moved on by, and

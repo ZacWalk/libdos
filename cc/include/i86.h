@@ -13,7 +13,7 @@ unsigned int __seg(void);
 
 #define FP_SEG(p) (__seg())
 #define FP_OFF(p) ((unsigned int)(p))
-#define MK_FP(s, o) ((void *)(o))
+#define MK_FP(s, o) ((void*)(o))
 
 #ifndef __LIBDOS_PORTS__
 #define __LIBDOS_PORTS__

@@ -36,7 +36,7 @@ static void put_unsigned(unsigned long v)
 	}
 }
 
-static void put_text(const char *s)
+static void put_text(const char* s)
 {
 	while (*s != 0)
 	{
@@ -74,7 +74,7 @@ static unsigned char colourmap[256];
 
 static void draw_column(int x, int top, int bottom, fixed_t start, fixed_t step)
 {
-	unsigned char *dest;
+	unsigned char* dest;
 	fixed_t frac;
 	int y;
 
@@ -92,7 +92,7 @@ static void draw_column(int x, int top, int bottom, fixed_t start, fixed_t step)
 
 static void draw_span(int y, int left, int right, unsigned char value)
 {
-	unsigned char *dest;
+	unsigned char* dest;
 	int x;
 
 	dest = &screen[y * WIDTH + left];
@@ -117,7 +117,7 @@ typedef struct
 
 static thing_t things[THINGS];
 
-static void move_thing(thing_t *t)
+static void move_thing(thing_t* t)
 {
 	t->x = t->x + t->momx;
 	t->y = t->y + t->momy;

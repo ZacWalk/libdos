@@ -67,8 +67,10 @@ win32_host::win32_host() : state_(std::make_unique<state>())
 
 win32_host::~win32_host()
 {
-	for (auto& file : state_->files) if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
-	for (auto& search : state_->searches) if (search.handle != INVALID_HANDLE_VALUE) FindClose(search.handle);
+	for (auto& file : state_->files)
+		if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+	for (auto& search : state_->searches)
+		if (search.handle != INVALID_HANDLE_VALUE) FindClose(search.handle);
 }
 
 bool win32_host::set_root(const char* directory)
@@ -122,14 +124,14 @@ int win32_host::file_open(const char* path, int access)
 	if (access == host_open_write) desired = GENERIC_WRITE;
 	else if (access == host_open_read_write) desired = GENERIC_READ | GENERIC_WRITE;
 
-	HANDLE handle = CreateFileA(windows_path, desired, share_all, nullptr,
-	                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	HANDLE handle = CreateFileA(windows_path, desired, share_all, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+	                            nullptr);
 	if (handle == INVALID_HANDLE_VALUE && access != host_open_read)
 	{
 		// Some programs ask for write access to files that are read-only on
 		// the host; fall back rather than failing the open.
-		handle = CreateFileA(windows_path, GENERIC_READ, share_all, nullptr,
-		                     OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		handle = CreateFileA(windows_path, GENERIC_READ, share_all, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+		                     nullptr);
 	}
 	if (handle == INVALID_HANDLE_VALUE) return -1;
 
@@ -151,8 +153,7 @@ int win32_host::file_create(const char* path, uint8_t attributes)
 	char windows_path[MAX_PATH] = {};
 	if (!to_windows_path(path, windows_path, MAX_PATH)) return -1;
 
-	const HANDLE handle = CreateFileA(windows_path, GENERIC_READ | GENERIC_WRITE, share_all, nullptr,
-	                                  CREATE_ALWAYS,
+	const HANDLE handle = CreateFileA(windows_path, GENERIC_READ | GENERIC_WRITE, share_all, nullptr, CREATE_ALWAYS,
 	                                  (attributes & 0x01) ? FILE_ATTRIBUTE_READONLY : FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (handle == INVALID_HANDLE_VALUE) return -1;
 
@@ -308,7 +309,8 @@ int win32_host::find_first(const char* pattern, uint8_t attributes, host_file_in
 
 bool win32_host::find_next(int search, host_file_info& info)
 {
-	if (search < 0 || search >= host_max_searches || state_->searches[search].handle == INVALID_HANDLE_VALUE) return false;
+	if (search < 0 || search >= host_max_searches || state_->searches[search].handle == INVALID_HANDLE_VALUE)
+		return false;
 
 	WIN32_FIND_DATAA found{};
 	while (FindNextFileA(state_->searches[search].handle, &found))

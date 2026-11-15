@@ -29,8 +29,8 @@ struct SREGS
 	unsigned int es, cs, ss, ds;
 };
 
-int int86(int number, union REGS *in, union REGS *out);
-int int86x(int number, union REGS *in, union REGS *out, struct SREGS *segments);
+int int86(int number, union REGS* in, union REGS* out);
+int int86x(int number, union REGS* in, union REGS* out, struct SREGS* segments);
 
 // An interrupt vector, as the segment and offset DOS reports it.
 struct dos_vector
@@ -42,7 +42,7 @@ struct dos_vector
 struct dos_vector _dos_getvect(int vector);
 void _dos_setvect(int vector, struct dos_vector handler);
 
-int _dos_allocmem(unsigned int paragraphs, unsigned int *segment);
+int _dos_allocmem(unsigned int paragraphs, unsigned int* segment);
 int _dos_freemem(unsigned int segment);
 
 #endif

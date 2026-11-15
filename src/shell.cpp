@@ -39,7 +39,10 @@ namespace
 		write_text(s, prompt);
 	}
 
-	char upper(char c) { return c >= 'a' && c <= 'z' ? char(c - 32) : c; }
+	char upper(char c)
+	{
+		return c >= 'a' && c <= 'z' ? char(c - 32) : c;
+	}
 
 	bool equals(const char* a, const char* b)
 	{
@@ -60,7 +63,10 @@ namespace
 		}
 	}
 
-	void screen_clear(machine_state& s, void*) { vga_set_mode(s, 3); }
+	void screen_clear(machine_state& s, void*)
+	{
+		vga_set_mode(s, 3);
+	}
 
 	// The prompt cannot stop for an answer, so a question stays open: the
 	// next line typed answers it, and a yes runs the command again.
@@ -97,8 +103,8 @@ namespace
 		char text[96] = {};
 		snprintf(text, sizeof(text), "%6u bytes total conventional memory", 640u * 1024);
 		write_line(s, text);
-		snprintf(text, sizeof(text), "%6u bytes free, largest block %u bytes",
-		         unsigned(free_paragraphs) * 16, unsigned(largest) * 16);
+		snprintf(text, sizeof(text), "%6u bytes free, largest block %u bytes", unsigned(free_paragraphs) * 16,
+		         unsigned(largest) * 16);
 		write_line(s, text);
 	}
 

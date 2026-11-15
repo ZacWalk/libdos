@@ -17,7 +17,10 @@
 
 namespace
 {
-	char upper(char c) { return c >= 'a' && c <= 'z' ? char(c - 32) : c; }
+	char upper(char c)
+	{
+		return c >= 'a' && c <= 'z' ? char(c - 32) : c;
+	}
 
 	bool equals(const char* a, const char* b)
 	{
@@ -28,7 +31,10 @@ namespace
 		}
 	}
 
-	bool is_blank(char c) { return c == ' ' || c == '\t'; }
+	bool is_blank(char c)
+	{
+		return c == ' ' || c == '\t';
+	}
 
 	const char* skip_blanks(const char* p)
 	{
@@ -74,9 +80,9 @@ namespace
 	}
 
 	const char* const builtin_names[] = {
-		"attrib", "break", "cd", "chdir", "cls", "copy", "ctty", "date", "del", "dir", "echo", "erase", "exit",
-		"goto", "md", "mkdir", "path", "pause", "rd", "rem", "ren", "rename", "rmdir", "set", "shift", "time",
-		"type", "ver", "verify", "vol",
+		"attrib", "break",  "cd",    "chdir", "cls",   "copy",  "ctty", "date",  "del",    "dir",
+		"echo",   "erase",  "exit",  "goto",  "md",    "mkdir", "path", "pause", "rd",     "rem",
+		"ren",    "rename", "rmdir", "set",   "shift", "time",  "type", "ver",   "verify", "vol",
 	};
 
 	bool is_builtin(const char* name)
@@ -116,7 +122,10 @@ namespace
 		}
 	};
 
-	bool has_wildcards(const char* path) { return std::strpbrk(path, "*?") != nullptr; }
+	bool has_wildcards(const char* path)
+	{
+		return std::strpbrk(path, "*?") != nullptr;
+	}
 
 	const char* name_of(const char* path)
 	{
@@ -127,7 +136,10 @@ namespace
 	}
 
 	// The directory part of a resolved path, with its trailing backslash.
-	std::string directory_of(const char* path) { return std::string(path, size_t(name_of(path) - path)); }
+	std::string directory_of(const char* path)
+	{
+		return std::string(path, size_t(name_of(path) - path));
+	}
 
 	std::string resolve(machine_state& s, const std::string& path)
 	{
@@ -161,8 +173,7 @@ namespace
 		do
 		{
 			if (!info.directory) out.push_back(directory + info.name);
-		}
-		while (s.host->find_next(search, info));
+		} while (s.host->find_next(search, info));
 		s.host->find_close(search);
 		return out;
 	}
@@ -272,7 +283,8 @@ namespace
 		int copied = 0;
 		if (join)
 		{
-			if (into_directory) destination += (destination.back() == '\\' ? "" : "\\") + std::string(name_of(sources[0].c_str()));
+			if (into_directory)
+				destination += (destination.back() == '\\' ? "" : "\\") + std::string(name_of(sources[0].c_str()));
 			const int to = s.host->file_create(destination.c_str(), 0);
 			if (to < 0)
 			{
@@ -302,7 +314,8 @@ namespace
 			for (const std::string& source : sources)
 			{
 				std::string target = destination;
-				if (into_directory) target += (target.back() == '\\' ? "" : "\\") + std::string(name_of(source.c_str()));
+				if (into_directory)
+					target += (target.back() == '\\' ? "" : "\\") + std::string(name_of(source.c_str()));
 				if (equals(target.c_str(), source.c_str()))
 				{
 					p.error("File cannot be copied onto itself");
@@ -454,7 +467,8 @@ namespace
 			return 1;
 		}
 		const int drive = path[0] - 'A';
-		snprintf(s.dos.cwd[drive >= 0 && drive < 3 ? drive : 2], sizeof(s.dos.cwd[0]), "%s", path.size() > 3 ? path.c_str() + 2 : "");
+		snprintf(s.dos.cwd[drive >= 0 && drive < 3 ? drive : 2], sizeof(s.dos.cwd[0]), "%s",
+		         path.size() > 3 ? path.c_str() + 2 : "");
 		return 0;
 	}
 
@@ -657,8 +671,7 @@ namespace
 			         unsigned(1980 + (info.dos_date >> 9)), unsigned((info.dos_time >> 11) & 0x1f),
 			         unsigned((info.dos_time >> 5) & 0x3f));
 			p.line(row);
-		}
-		while (s.host->find_next(search, info));
+		} while (s.host->find_next(search, info));
 		s.host->find_close(search);
 
 		char bytes[24] = {};
@@ -695,8 +708,8 @@ namespace
 		return 0;
 	}
 
-	void clock_now(machine_state& s, int& year, int& month, int& day, int& weekday, int& hour, int& minute,
-	               int& second, int& hundredths)
+	void clock_now(machine_state& s, int& year, int& month, int& day, int& weekday, int& hour, int& minute, int& second,
+	               int& hundredths)
 	{
 		year = 1990;
 		month = day = 1;
@@ -732,7 +745,7 @@ namespace
 		uint8_t probe = 0;
 		const int file = dos_handle_file(s, 1);
 		const bool screen = file >= 0 && s.dos.files[file].device == dos_device_con &&
-			(s.host == nullptr || s.host->console_read(&probe, 0) < 0);
+		                    (s.host == nullptr || s.host->console_read(&probe, 0) < 0);
 		if (screen) vga_set_mode(s, 3);
 	}
 
@@ -880,7 +893,8 @@ namespace
 		for (const std::string& item : items)
 		{
 			std::string expanded = command;
-			for (size_t at = expanded.find(variable); at != std::string::npos; at = expanded.find(variable, at + item.size()))
+			for (size_t at = expanded.find(variable); at != std::string::npos;
+			     at = expanded.find(variable, at + item.size()))
 				expanded.replace(at, variable.size(), item);
 			char name[64] = {};
 			const char* rest = nullptr;
@@ -1117,8 +1131,7 @@ bool command_builtin(machine_state& s, const char* name, const char* argument, c
 		char text[64] = {};
 		if (equals(name, "date"))
 			snprintf(text, sizeof(text), "Current date is %s %02d-%02d-%04d", days[weekday % 7], month, day, year);
-		else
-			snprintf(text, sizeof(text), "Current time is %2d:%02d:%02d.%02d", hour, minute, second, hundredths);
+		else snprintf(text, sizeof(text), "Current time is %2d:%02d:%02d.%02d", hour, minute, second, hundredths);
 		p.line(text);
 	}
 	else if (equals(name, "break")) exit_code = command_switch("BREAK", argument, s.dos.ctrl_break, p);
@@ -1135,7 +1148,7 @@ bool command_builtin(machine_state& s, const char* name, const char* argument, c
 		const int file = dos_handle_file(s, 0);
 		uint8_t probe = 0;
 		const bool keyboard = file >= 0 && s.dos.files[file].device == dos_device_con &&
-			(s.host == nullptr || s.host->console_read(&probe, 0) < 0);
+		                      (s.host == nullptr || s.host->console_read(&probe, 0) < 0);
 		if (!keyboard) dos_read_handle(s, 0, &key, 1);
 		p.line();
 	}

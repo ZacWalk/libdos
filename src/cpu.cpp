@@ -16,6 +16,7 @@
 
 namespace
 {
+	// clang-format off
 	const uint8_t parity_table[256] = {
 		4, 0, 0, 4, 0, 4, 4, 0, 0, 4, 4, 0, 4, 0, 0, 4,
 		0, 4, 4, 0, 4, 0, 0, 4, 4, 0, 0, 4, 0, 4, 4, 0,
@@ -34,6 +35,7 @@ namespace
 		0, 4, 4, 0, 4, 0, 0, 4, 4, 0, 0, 4, 0, 4, 4, 0,
 		4, 0, 0, 4, 0, 4, 4, 0, 0, 4, 4, 0, 4, 0, 0, 4,
 	};
+	// clang-format on
 
 	// One decoded instruction. Everything that has to survive between
 	// repetitions of a string instruction lives in cpu_state instead.
@@ -57,9 +59,7 @@ namespace
 		uint16_t saved_cs = 0;
 		int cycles = 4;
 
-		x86(machine_state& state) : s(state), c(state.cpu)
-		{
-		}
+		x86(machine_state& state) : s(state), c(state.cpu) {}
 
 		void undefined(const char* what)
 		{
@@ -83,10 +83,10 @@ namespace
 				{
 					for (int opcode = 0; opcode < 256; ++opcode)
 					{
-						const bool not_8086 = opcode == 0x0f || (opcode >= 0x60 && opcode <= 0x6f) ||
-							opcode == 0xc0 || opcode == 0xc1 || opcode == 0xc8 || opcode == 0xc9;
+						const bool not_8086 = opcode == 0x0f || (opcode >= 0x60 && opcode <= 0x6f) || opcode == 0xc0 ||
+						                      opcode == 0xc1 || opcode == 0xc8 || opcode == 0xc9;
 						const bool not_bare_xt = (opcode >= 0xd8 && opcode <= 0xdf) || opcode == 0x9b ||
-							opcode == 0xf0 || opcode == 0xf4;
+						                         opcode == 0xf0 || opcode == 0xf4;
 						rejected[int(cpu_model::i80186)][opcode] = opcode == 0x0f || (opcode >= 0x64 && opcode <= 0x67);
 						rejected[int(cpu_model::i8086)][opcode] = not_8086;
 						rejected[int(cpu_model::i8086_strict)][opcode] = not_8086 || not_bare_xt;
@@ -122,7 +122,7 @@ namespace
 		uint16_t read_word(uint16_t offset, int seg)
 		{
 			return uint16_t(mem_read8(s, physical(offset, seg)) |
-				(mem_read8(s, physical(uint16_t(offset + 1), seg)) << 8));
+			                (mem_read8(s, physical(uint16_t(offset + 1), seg)) << 8));
 		}
 
 		void write_byte(uint8_t value, uint16_t offset, int seg) { mem_write8(s, physical(offset, seg), value); }
@@ -133,7 +133,10 @@ namespace
 			mem_write8(s, physical(uint16_t(offset + 1), seg), uint8_t(value >> 8));
 		}
 
-		uint16_t read_wb(uint16_t offset, int seg) { return word_size ? read_word(offset, seg) : read_byte(offset, seg); }
+		uint16_t read_wb(uint16_t offset, int seg)
+		{
+			return word_size ? read_word(offset, seg) : read_byte(offset, seg);
+		}
 
 		void write_wb(uint16_t value, uint16_t offset, int seg)
 		{
@@ -201,6 +204,7 @@ namespace
 		void set_of(bool v) { c.set_flag(flag_of, v); }
 		void set_if(bool v) { c.set_flag(flag_if, v); }
 		void set_df(bool v) { c.set_flag(flag_df, v); }
+		// clang-format off
 		void set_ca() { set_cf(true); set_af(true); }
 		void clear_ca() { set_cf(false); set_af(false); }
 		void clear_cao() { clear_ca(); set_of(false); }
@@ -209,6 +213,7 @@ namespace
 		void set_zf() { c.set_flag(flag_zf, (data & (word_size ? 0xffff : 0xff)) == 0); }
 		void set_sf() { c.set_flag(flag_sf, (data & (word_size ? 0x8000 : 0x80)) != 0); }
 		void set_pzs() { set_pf(); set_zf(); set_sf(); }
+		// clang-format on
 
 		void bitwise(uint16_t value)
 		{
@@ -224,9 +229,11 @@ namespace
 			bitwise(uint16_t(destination & source));
 		}
 
+		// clang-format off
 		void do_af() { set_af(((data ^ source ^ destination) & 0x10) != 0); }
 		void do_cf() { set_cf((data & (word_size ? 0x10000 : 0x100)) != 0); }
 		void set_capzs() { set_pzs(); do_af(); do_cf(); }
+		// clang-format on
 
 		void set_of_add()
 		{
@@ -260,24 +267,20 @@ namespace
 		{
 			switch (alu_operation)
 			{
-			case 0: add();
-				break;
-			case 1: bitwise(uint16_t(destination | source));
-				break;
-			case 2: source += cf() ? 1 : 0;
+			case 0: add(); break;
+			case 1: bitwise(uint16_t(destination | source)); break;
+			case 2:
+				source += cf() ? 1 : 0;
 				add();
 				break;
-			case 3: source += cf() ? 1 : 0;
+			case 3:
+				source += cf() ? 1 : 0;
 				sub();
 				break;
-			case 4: test_op(uint16_t(destination), uint16_t(source));
-				break;
-			case 5: sub();
-				break;
-			case 6: bitwise(uint16_t(destination ^ source));
-				break;
-			default: sub();
-				break; // CMP
+			case 4: test_op(uint16_t(destination), uint16_t(source)); break;
+			case 5: sub(); break;
+			case 6: bitwise(uint16_t(destination ^ source)); break;
+			default: sub(); break; // CMP
 			}
 		}
 
@@ -354,6 +357,7 @@ namespace
 			use_memory = true;
 			switch (mod_rm & 7)
 			{
+				// clang-format off
 			case 0: segment = seg_ds; address = uint16_t(c.bx() + c.si()); break;
 			case 1: segment = seg_ds; address = uint16_t(c.bx() + c.di()); break;
 			case 2: segment = seg_ss; address = uint16_t(c.bp() + c.si()); break;
@@ -362,6 +366,7 @@ namespace
 			case 5: segment = seg_ds; address = c.di(); break;
 			case 6: segment = seg_ss; address = c.bp(); break;
 			default: segment = seg_ds; address = c.bx(); break;
+				// clang-format on
 			}
 			switch (mod_rm & 0xc0)
 			{
@@ -612,9 +617,7 @@ namespace
 				cycles += 3;
 				return;
 			}
-			const uint32_t pair = left
-				? (uint32_t(value) << 16) | other
-				: (uint32_t(other) << 16) | value;
+			const uint32_t pair = left ? (uint32_t(value) << 16) | other : (uint32_t(other) << 16) | value;
 			const uint32_t shifted = left ? pair << count : pair >> count;
 			set_cf(((left ? value >> (16 - count) : value >> (count - 1)) & 1) != 0);
 			destination = value;
@@ -667,6 +670,7 @@ namespace
 
 		switch (opcode)
 		{
+			// clang-format off
 		case 0x00: case 0x01: case 0x02: case 0x03:
 		case 0x08: case 0x09: case 0x0a: case 0x0b:
 		case 0x10: case 0x11: case 0x12: case 0x13:
@@ -675,6 +679,7 @@ namespace
 		case 0x28: case 0x29: case 0x2a: case 0x2b:
 		case 0x30: case 0x31: case 0x32: case 0x33:
 		case 0x38: case 0x39: case 0x3a: case 0x3b: // alu rm,r
+			// clang-format on
 			data = read_ea();
 			if (!source_is_rm)
 			{
@@ -695,10 +700,12 @@ namespace
 			}
 			break;
 
+			// clang-format off
 		case 0x04: case 0x05: case 0x0c: case 0x0d:
 		case 0x14: case 0x15: case 0x1c: case 0x1d:
 		case 0x24: case 0x25: case 0x2c: case 0x2d:
 		case 0x34: case 0x35: case 0x3c: case 0x3d: // alu accum,imm
+			// clang-format on
 			destination = get_accum();
 			source = fetch(word_size);
 			alu_operation = operation;
@@ -706,21 +713,30 @@ namespace
 			if (alu_operation != 7) set_accum();
 			break;
 
-		case 0x06: case 0x0e: case 0x16: case 0x1e: // PUSH segreg
+		case 0x06:
+		case 0x0e:
+		case 0x16:
+		case 0x1e: // PUSH segreg
 			push(c.regs[reg_seg + operation]);
 			break;
 
-		case 0x07: case 0x17: case 0x1f: // POP segreg
+		case 0x07:
+		case 0x17:
+		case 0x1f: // POP segreg
 			c.regs[reg_seg + operation] = pop();
 			break;
 
-		case 0x26: case 0x2e: case 0x36: case 0x3e: // segment override
+		case 0x26:
+		case 0x2e:
+		case 0x36:
+		case 0x3e: // segment override
 			c.segment_override = operation - 4;
 			c.prefix = true;
 			cycles = 2;
 			break;
 
-		case 0x64: case 0x65: // FS/GS override (80386)
+		case 0x64:
+		case 0x65: // FS/GS override (80386)
 			c.segment_override = opcode == 0x64 ? seg_fs : seg_gs;
 			c.prefix = true;
 			cycles = 2;
@@ -757,26 +773,32 @@ namespace
 			c.set_al(uint8_t(c.al() & 0x0f));
 			break;
 
+			// clang-format off
 		case 0x40: case 0x41: case 0x42: case 0x43:
 		case 0x44: case 0x45: case 0x46: case 0x47:
 		case 0x48: case 0x49: case 0x4a: case 0x4b:
 		case 0x4c: case 0x4d: case 0x4e: case 0x4f: // INC/DEC rw
+			// clang-format on
 			destination = c.regs[opcode & 7];
 			word_size = true;
 			c.regs[opcode & 7] = inc_dec((opcode & 8) != 0);
 			cycles = 3;
 			break;
 
+			// clang-format off
 		case 0x50: case 0x51: case 0x52: case 0x53:
 		case 0x54: case 0x55: case 0x56: case 0x57: // PUSH rw
+			// clang-format on
 			// An 8086 pushes SP as it is after the decrement; later chips push
 			// the value it had, and a program can tell them apart by it.
 			push(opcode == 0x54 && s.model >= cpu_model::i8086 ? uint16_t(c.sp() - 2) : c.regs[opcode & 7]);
 			cycles = 11;
 			break;
 
+			// clang-format off
 		case 0x58: case 0x59: case 0x5a: case 0x5b:
 		case 0x5c: case 0x5d: case 0x5e: case 0x5f: // POP rw
+			// clang-format on
 			c.regs[opcode & 7] = pop();
 			cycles = 8;
 			break;
@@ -829,18 +851,19 @@ namespace
 			imul_immediate(sign_extend(fetch_byte()));
 			break;
 
-		case 0x6c: case 0x6d: // INSB/INSW (80186)
+		case 0x6c:
+		case 0x6d: // INSB/INSW (80186)
 			if (c.rep == 0 || c.cx() != 0)
 			{
-				const uint16_t v = word_size
-					? uint16_t(io_read8(s, c.dx()) | (io_read8(s, uint16_t(c.dx() + 1)) << 8))
-					: io_read8(s, c.dx());
+				const uint16_t v = word_size ? uint16_t(io_read8(s, c.dx()) | (io_read8(s, uint16_t(c.dx() + 1)) << 8))
+				                             : io_read8(s, c.dx());
 				stos(v);
 			}
 			do_rep(false);
 			break;
 
-		case 0x6e: case 0x6f: // OUTSB/OUTSW (80186)
+		case 0x6e:
+		case 0x6f: // OUTSB/OUTSW (80186)
 			if (c.rep == 0 || c.cx() != 0)
 			{
 				const uint16_t v = lods();
@@ -850,14 +873,19 @@ namespace
 			do_rep(false);
 			break;
 
+			// clang-format off
 		case 0x70: case 0x71: case 0x72: case 0x73:
 		case 0x74: case 0x75: case 0x76: case 0x77:
 		case 0x78: case 0x79: case 0x7a: case 0x7b:
 		case 0x7c: case 0x7d: case 0x7e: case 0x7f: // Jcc
+			// clang-format on
 			jump_short(fetch_byte(), test_condition(opcode));
 			break;
 
-		case 0x80: case 0x81: case 0x82: case 0x83: // alu rm,imm
+		case 0x80:
+		case 0x81:
+		case 0x82:
+		case 0x83: // alu rm,imm
 			destination = read_ea();
 			data = fetch(opcode == 0x81);
 			source = opcode == 0x83 ? sign_extend(uint8_t(data)) : data;
@@ -866,23 +894,27 @@ namespace
 			if (alu_operation != 7) write_ea_again(uint16_t(data));
 			break;
 
-		case 0x84: case 0x85: // TEST rm,r
+		case 0x84:
+		case 0x85: // TEST rm,r
 			data = read_ea();
 			test_op(uint16_t(data), get_reg());
 			break;
 
-		case 0x86: case 0x87: // XCHG rm,r
+		case 0x86:
+		case 0x87: // XCHG rm,r
 			data = read_ea();
 			write_ea_again(get_reg());
 			set_reg(uint16_t(data));
 			break;
 
-		case 0x88: case 0x89: // MOV rm,r
+		case 0x88:
+		case 0x89: // MOV rm,r
 			effective_address();
 			write_ea_again(get_reg());
 			break;
 
-		case 0x8a: case 0x8b: // MOV r,rm
+		case 0x8a:
+		case 0x8b: // MOV r,rm
 			set_reg(read_ea());
 			break;
 
@@ -910,8 +942,10 @@ namespace
 			write_ea(pop());
 			break;
 
+			// clang-format off
 		case 0x90: case 0x91: case 0x92: case 0x93:
 		case 0x94: case 0x95: case 0x96: case 0x97: // XCHG AX,rw
+			// clang-format on
 			data = c.ax();
 			c.set_ax(c.regs[opcode & 7]);
 			c.regs[opcode & 7] = uint16_t(data);
@@ -952,24 +986,28 @@ namespace
 			c.set_ah(uint8_t(c.flags & 0xd7));
 			break;
 
-		case 0xa0: case 0xa1: // MOV accum,[imm]
+		case 0xa0:
+		case 0xa1: // MOV accum,[imm]
 			segment = seg_ds;
 			data = read_wb(fetch_word(), -1);
 			set_accum();
 			break;
 
-		case 0xa2: case 0xa3: // MOV [imm],accum
+		case 0xa2:
+		case 0xa3: // MOV [imm],accum
 			segment = seg_ds;
 			write_wb(get_accum(), fetch_word(), -1);
 			break;
 
-		case 0xa4: case 0xa5: // MOVS
+		case 0xa4:
+		case 0xa5: // MOVS
 			if (c.rep == 0 || c.cx() != 0) stos(lods());
 			do_rep(false);
 			cycles = 18;
 			break;
 
-		case 0xa6: case 0xa7: // CMPS
+		case 0xa6:
+		case 0xa7: // CMPS
 			if (c.rep == 0 || c.cx() != 0)
 			{
 				destination = lods();
@@ -980,18 +1018,21 @@ namespace
 			cycles = 22;
 			break;
 
-		case 0xa8: case 0xa9: // TEST accum,imm
+		case 0xa8:
+		case 0xa9: // TEST accum,imm
 			data = fetch(word_size);
 			test_op(get_accum(), uint16_t(data));
 			break;
 
-		case 0xaa: case 0xab: // STOS
+		case 0xaa:
+		case 0xab: // STOS
 			if (c.rep == 0 || c.cx() != 0) stos(get_accum());
 			do_rep(false);
 			cycles = 11;
 			break;
 
-		case 0xac: case 0xad: // LODS
+		case 0xac:
+		case 0xad: // LODS
 			if (c.rep == 0 || c.cx() != 0)
 			{
 				data = lods();
@@ -1001,7 +1042,8 @@ namespace
 			cycles = 12;
 			break;
 
-		case 0xae: case 0xaf: // SCAS
+		case 0xae:
+		case 0xaf: // SCAS
 			if (c.rep == 0 || c.cx() != 0)
 			{
 				destination = get_accum();
@@ -1012,17 +1054,22 @@ namespace
 			cycles = 15;
 			break;
 
+			// clang-format off
 		case 0xb0: case 0xb1: case 0xb2: case 0xb3:
 		case 0xb4: case 0xb5: case 0xb6: case 0xb7: // MOV rb,imm
+			// clang-format on
 			c.set_reg8(opcode & 7, fetch_byte());
 			break;
 
+			// clang-format off
 		case 0xb8: case 0xb9: case 0xba: case 0xbb:
 		case 0xbc: case 0xbd: case 0xbe: case 0xbf: // MOV rw,imm
+			// clang-format on
 			c.regs[opcode & 7] = fetch_word();
 			break;
 
-		case 0xc0: case 0xc1: // shift rm,imm8 (80186)
+		case 0xc0:
+		case 0xc1: // shift rm,imm8 (80186)
 			word_size = (opcode & 1) != 0;
 			data = read_ea();
 			source = fetch_byte() & 0x1f;
@@ -1030,7 +1077,10 @@ namespace
 			write_ea_again(uint16_t(data));
 			break;
 
-		case 0xc2: case 0xc3: case 0xca: case 0xcb: // RET
+		case 0xc2:
+		case 0xc3:
+		case 0xca:
+		case 0xcb: // RET
 			saved_ip = pop();
 			saved_cs = (opcode & 8) == 0 ? c.cs() : pop();
 			if (!word_size) c.set_sp(uint16_t(c.sp() + fetch_word()));
@@ -1038,7 +1088,8 @@ namespace
 			cycles = 20;
 			break;
 
-		case 0xc4: case 0xc5: // LES / LDS
+		case 0xc4:
+		case 0xc5: // LES / LDS
 			word_size = true;
 			effective_address();
 			far_load();
@@ -1046,7 +1097,8 @@ namespace
 			c.regs[reg_seg + ((opcode & 1) == 0 ? seg_es : seg_ds)] = saved_cs;
 			break;
 
-		case 0xc6: case 0xc7: // MOV rm,imm
+		case 0xc6:
+		case 0xc7: // MOV rm,imm
 			effective_address();
 			write_ea_again(fetch(word_size));
 			break;
@@ -1096,7 +1148,10 @@ namespace
 			cycles = 24;
 			break;
 
-		case 0xd0: case 0xd1: case 0xd2: case 0xd3: // shift rm,1 / rm,CL
+		case 0xd0:
+		case 0xd1:
+		case 0xd2:
+		case 0xd3: // shift rm,1 / rm,CL
 			data = read_ea();
 			// An 8086 shifts by all of CL; from the 80186 on, by CL mod 32.
 			source = (opcode & 2) == 0 ? 1 : (s.model >= cpu_model::i8086 ? c.cl() : (c.cl() & 0x1f));
@@ -1136,14 +1191,18 @@ namespace
 			c.set_al(read_byte(uint16_t(c.bx() + c.al()), -1));
 			break;
 
+			// clang-format off
 		case 0xd8: case 0xd9: case 0xda: case 0xdb:
 		case 0xdc: case 0xdd: case 0xde: case 0xdf: // x87 escape
+			// clang-format on
 			// No coprocessor: consume the operand bytes and carry on. Programs
 			// that need one check for it first and pick a software path.
 			effective_address();
 			break;
 
-		case 0xe0: case 0xe1: case 0xe2: // LOOPcc
+		case 0xe0:
+		case 0xe1:
+		case 0xe2: // LOOPcc
 			c.set_cx(uint16_t(c.cx() - 1));
 			taken = c.cx() != 0;
 			if (opcode == 0xe0 && zf()) taken = false;
@@ -1155,7 +1214,8 @@ namespace
 			jump_short(fetch_byte(), c.cx() == 0);
 			break;
 
-		case 0xe4: case 0xe5: // IN imm8
+		case 0xe4:
+		case 0xe5: // IN imm8
 		{
 			const uint16_t port = fetch_byte();
 			data = word_size ? uint16_t(io_read8(s, port) | (io_read8(s, uint16_t(port + 1)) << 8)) : io_read8(s, port);
@@ -1164,7 +1224,8 @@ namespace
 			break;
 		}
 
-		case 0xe6: case 0xe7: // OUT imm8
+		case 0xe6:
+		case 0xe7: // OUT imm8
 		{
 			const uint16_t port = fetch_byte();
 			io_write8(s, port, uint8_t(get_accum()));
@@ -1196,15 +1257,16 @@ namespace
 			jump_short(fetch_byte(), true);
 			break;
 
-		case 0xec: case 0xed: // IN DX
-			data = word_size
-				? uint16_t(io_read8(s, c.dx()) | (io_read8(s, uint16_t(c.dx() + 1)) << 8))
-				: io_read8(s, c.dx());
+		case 0xec:
+		case 0xed: // IN DX
+			data = word_size ? uint16_t(io_read8(s, c.dx()) | (io_read8(s, uint16_t(c.dx() + 1)) << 8))
+			                 : io_read8(s, c.dx());
 			set_accum();
 			cycles = 8;
 			break;
 
-		case 0xee: case 0xef: // OUT DX
+		case 0xee:
+		case 0xef: // OUT DX
 			io_write8(s, c.dx(), uint8_t(get_accum()));
 			if (word_size) io_write8(s, uint16_t(c.dx() + 1), uint8_t(get_accum() >> 8));
 			cycles = 8;
@@ -1231,11 +1293,13 @@ namespace
 			c.flags ^= flag_cf;
 			break;
 
-		case 0xf6: case 0xf7: // group 3
+		case 0xf6:
+		case 0xf7: // group 3
 			data = read_ea();
 			switch (mod_rm_reg())
 			{
-			case 0: case 1: // TEST rm,imm
+			case 0:
+			case 1: // TEST rm,imm
 				test_op(uint16_t(data), fetch(word_size));
 				break;
 			case 2: // NOT
@@ -1247,7 +1311,8 @@ namespace
 				sub();
 				write_ea_again(uint16_t(data));
 				break;
-			case 4: case 5: // MUL / IMUL
+			case 4:
+			case 5: // MUL / IMUL
 				source = data;
 				destination = get_accum();
 				data = destination;
@@ -1333,23 +1398,28 @@ namespace
 			}
 			break;
 
-		case 0xf8: case 0xf9: // CLC / STC
+		case 0xf8:
+		case 0xf9: // CLC / STC
 			set_cf(word_size);
 			break;
 
-		case 0xfa: case 0xfb: // CLI / STI
+		case 0xfa:
+		case 0xfb: // CLI / STI
 			set_if(word_size);
 			break;
 
-		case 0xfc: case 0xfd: // CLD / STD
+		case 0xfc:
+		case 0xfd: // CLD / STD
 			set_df(word_size);
 			break;
 
-		case 0xfe: case 0xff: // group 4/5
+		case 0xfe:
+		case 0xff: // group 4/5
 			effective_address();
 			switch (mod_rm_reg())
 			{
-			case 0: case 1: // INC / DEC rm
+			case 0:
+			case 1: // INC / DEC rm
 				destination = read_ea_again();
 				write_ea_again(inc_dec(mod_rm_reg() != 0));
 				break;
@@ -1375,9 +1445,7 @@ namespace
 				push(read_ea_again());
 				cycles = 16;
 				break;
-			default:
-				undefined("invalid group 5 operation");
-				break;
+			default: undefined("invalid group 5 operation"); break;
 			}
 			break;
 
@@ -1393,27 +1461,31 @@ namespace
 				else undefined("unsupported 0F 01 operation");
 				break;
 
+				// clang-format off
 			case 0x80: case 0x81: case 0x82: case 0x83:
 			case 0x84: case 0x85: case 0x86: case 0x87:
 			case 0x88: case 0x89: case 0x8a: case 0x8b:
 			case 0x8c: case 0x8d: case 0x8e: case 0x8f: // near Jcc
-			{
-				// An 8086 has no near conditional jump, so a compiler had to
-				// branch over a near JMP. A 386 does, and 16-bit code built
-				// for one is full of them.
-				const uint16_t rel = fetch_word();
-				if (test_condition(second))
+				// clang-format on
 				{
-					jump(uint16_t(c.ip + rel));
-					cycles += 12;
+					// An 8086 has no near conditional jump, so a compiler had to
+					// branch over a near JMP. A 386 does, and 16-bit code built
+					// for one is full of them.
+					const uint16_t rel = fetch_word();
+					if (test_condition(second))
+					{
+						jump(uint16_t(c.ip + rel));
+						cycles += 12;
+					}
+					break;
 				}
-				break;
-			}
 
+				// clang-format off
 			case 0x90: case 0x91: case 0x92: case 0x93:
 			case 0x94: case 0x95: case 0x96: case 0x97:
 			case 0x98: case 0x99: case 0x9a: case 0x9b:
 			case 0x9c: case 0x9d: case 0x9e: case 0x9f: // SETcc rm8
+				// clang-format on
 				word_size = false;
 				effective_address();
 				write_ea_again(test_condition(second) ? 1 : 0);
@@ -1424,7 +1496,10 @@ namespace
 			case 0xa8: push(c.gs()); break;
 			case 0xa9: c.set_gs(pop()); break;
 
-			case 0xa3: case 0xab: case 0xb3: case 0xbb: // BT/BTS/BTR/BTC rm,r
+			case 0xa3:
+			case 0xab:
+			case 0xb3:
+			case 0xbb: // BT/BTS/BTR/BTC rm,r
 				effective_address();
 				bit_operation((second >> 3) & 3, int16_t(get_reg()));
 				break;
@@ -1439,7 +1514,10 @@ namespace
 				break;
 			}
 
-			case 0xa4: case 0xa5: case 0xac: case 0xad: // SHLD/SHRD
+			case 0xa4:
+			case 0xa5:
+			case 0xac:
+			case 0xad: // SHLD/SHRD
 			{
 				effective_address();
 				const uint16_t other = get_reg();
@@ -1460,7 +1538,9 @@ namespace
 				break;
 			}
 
-			case 0xb2: case 0xb4: case 0xb5: // LSS/LFS/LGS
+			case 0xb2:
+			case 0xb4:
+			case 0xb5: // LSS/LFS/LGS
 			{
 				effective_address();
 				far_load();
@@ -1470,8 +1550,10 @@ namespace
 				break;
 			}
 
-			case 0xb6: case 0xb7: // MOVZX
-			case 0xbe: case 0xbf: // MOVSX
+			case 0xb6:
+			case 0xb7: // MOVZX
+			case 0xbe:
+			case 0xbf: // MOVSX
 			{
 				word_size = (second & 1) != 0;
 				const uint16_t value = read_ea();
@@ -1481,7 +1563,8 @@ namespace
 				break;
 			}
 
-			case 0xbc: case 0xbd: // BSF/BSR
+			case 0xbc:
+			case 0xbd: // BSF/BSR
 			{
 				const uint16_t value = uint16_t(read_ea());
 				c.set_flag(flag_zf, value == 0);
@@ -1496,9 +1579,7 @@ namespace
 				break;
 			}
 
-			default:
-				undefined("unsupported 0F opcode");
-				break;
+			default: undefined("unsupported 0F opcode"); break;
 			}
 			break;
 		}

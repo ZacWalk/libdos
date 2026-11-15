@@ -15,6 +15,7 @@ namespace
 {
 	// Scancode set 1 to ASCII. Index is the make code; 0 means the key has no
 	// character and INT 16h reports it as an extended key.
+	// clang-format off
 	const uint8_t ascii_plain[0x59] = {
 		0, 27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', 8, 9,
 		'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', 13, 0, 'a', 's',
@@ -32,9 +33,16 @@ namespace
 		0, 0, 0, 0, 0, 0, 0, '7', '8', '9', '-', '4', '5', '6', '+', '1',
 		'2', '3', '0', '.', 0, 0, 0, 0, 0,
 	};
+	// clang-format on
 
-	uint16_t buffer_head(machine_state& s) { return read16(s, bda_segment, bda_keyboard_head); }
-	uint16_t buffer_tail(machine_state& s) { return read16(s, bda_segment, bda_keyboard_tail); }
+	uint16_t buffer_head(machine_state& s)
+	{
+		return read16(s, bda_segment, bda_keyboard_head);
+	}
+	uint16_t buffer_tail(machine_state& s)
+	{
+		return read16(s, bda_segment, bda_keyboard_tail);
+	}
 
 	uint16_t next_slot(uint16_t offset)
 	{
@@ -43,9 +51,15 @@ namespace
 		return offset;
 	}
 
-	void set_carry(machine_state& s, bool on) { cpu_set_iret_flag(s, flag_cf, on); }
+	void set_carry(machine_state& s, bool on)
+	{
+		cpu_set_iret_flag(s, flag_cf, on);
+	}
 
-	void set_zero(machine_state& s, bool on) { cpu_set_iret_flag(s, flag_zf, on); }
+	void set_zero(machine_state& s, bool on)
+	{
+		cpu_set_iret_flag(s, flag_zf, on);
+	}
 
 	// Where boot mode's ROM keeps its tables: the IBM PC's own addresses.
 	constexpr uint16_t rom_diskette_table = 0xefc7;
@@ -92,12 +106,14 @@ void bios_reset_pc(machine_state& s)
 	rom[0xfff0] = callback_opcode;
 	rom[0xfff1] = callback_power_on;
 	rom[0xfff2] = 0xf4; // HLT
+	// NOLINTNEXTLINE(bugprone-not-null-terminated-result): the ROM's date is 8 bytes with no terminator
 	std::memcpy(rom + 0xfff5, "10/27/82", 8);
 	rom[0xfffe] = 0xff; // model: IBM PC
 
 	// The 5150's diskette parameters and 6845 tables, which DOS copies and patches.
 	static const uint8_t diskette[11] = {0xdf, 0x02, 0x25, 0x02, 0x09, 0x2a, 0xff, 0x50, 0xf6, 0x0f, 0x02};
 	std::memcpy(rom + rom_diskette_table, diskette, sizeof(diskette));
+	// clang-format off
 	static const uint8_t video[88] = {
 		0x38, 0x28, 0x2d, 0x0a, 0x1f, 0x06, 0x19, 0x1c, 0x02, 0x07, 0x06, 0x07, 0x00, 0x00, 0x00, 0x00,
 		0x71, 0x50, 0x5a, 0x0a, 0x1f, 0x06, 0x19, 0x1c, 0x02, 0x07, 0x06, 0x07, 0x00, 0x00, 0x00, 0x00,
@@ -106,6 +122,7 @@ void bios_reset_pc(machine_state& s)
 		0x00, 0x08, 0x00, 0x10, 0x00, 0x40, 0x00, 0x40, 0x28, 0x28, 0x50, 0x50, 0x28, 0x28, 0x50, 0x50,
 		0x2c, 0x28, 0x2d, 0x29, 0x2a, 0x2e, 0x1e, 0x29,
 	};
+	// clang-format on
 	std::memcpy(rom + rom_video_table, video, sizeof(video));
 	write16(s, 0, 0x1d * 4, rom_video_table);
 	write16(s, 0, 0x1d * 4 + 2, 0xf000);
@@ -199,19 +216,18 @@ void bios_keyboard_interrupt(machine_state& s)
 
 	switch (make)
 	{
-	case 0x2a: flags = uint8_t(release ? (flags & ~0x02) : (flags | 0x02));
+	case 0x2a: flags = uint8_t(release ? (flags & ~0x02) : (flags | 0x02)); break;
+	case 0x36: flags = uint8_t(release ? (flags & ~0x01) : (flags | 0x01)); break;
+	case 0x1d: flags = uint8_t(release ? (flags & ~0x04) : (flags | 0x04)); break;
+	case 0x38: flags = uint8_t(release ? (flags & ~0x08) : (flags | 0x08)); break;
+	case 0x3a:
+		if (!release) flags = uint8_t(flags ^ 0x40);
 		break;
-	case 0x36: flags = uint8_t(release ? (flags & ~0x01) : (flags | 0x01));
+	case 0x45:
+		if (!release) flags = uint8_t(flags ^ 0x20);
 		break;
-	case 0x1d: flags = uint8_t(release ? (flags & ~0x04) : (flags | 0x04));
-		break;
-	case 0x38: flags = uint8_t(release ? (flags & ~0x08) : (flags | 0x08));
-		break;
-	case 0x3a: if (!release) flags = uint8_t(flags ^ 0x40);
-		break;
-	case 0x45: if (!release) flags = uint8_t(flags ^ 0x20);
-		break;
-	case 0x46: if (!release) flags = uint8_t(flags ^ 0x10);
+	case 0x46:
+		if (!release) flags = uint8_t(flags ^ 0x10);
 		break;
 	default: break;
 	}
@@ -221,7 +237,13 @@ void bios_keyboard_interrupt(machine_state& s)
 	// puts them in the buffer, where a program would read them as keys.
 	switch (make)
 	{
-	case 0x1d: case 0x2a: case 0x36: case 0x38: case 0x3a: case 0x45: case 0x46: return;
+	case 0x1d:
+	case 0x2a:
+	case 0x36:
+	case 0x38:
+	case 0x3a:
+	case 0x45:
+	case 0x46: return;
 	default: break;
 	}
 	if (release || make >= 0x59) return;
@@ -277,6 +299,7 @@ void bios_keyboard_interrupt(machine_state& s)
 		{
 			switch (make)
 			{
+				// clang-format off
 			case 0x01: ascii = 0x1b; break; // Esc
 			case 0x07: ascii = 0x1e; break; // 6
 			case 0x0c: ascii = 0x1f; break; // -
@@ -289,6 +312,7 @@ void bios_keyboard_interrupt(machine_state& s)
 			case 0x37: scancode = 0x96; ascii = 0; break; // keypad *
 			case 0x39: ascii = 0x20; break; // Space
 			default: ascii = 0; break;
+				// clang-format on
 			}
 		}
 	}
@@ -304,9 +328,7 @@ namespace
 
 		switch (c.ah())
 		{
-		case 0x00:
-			vga_set_mode(s, c.al());
-			break;
+		case 0x00: vga_set_mode(s, c.al()); break;
 
 		case 0x01:
 			v.cursor_start = uint8_t(c.ch() & 0x1f);
@@ -339,9 +361,7 @@ namespace
 			write8(s, bda_segment, 0x62, v.page);
 			break;
 
-		case 0x06:
-			vga_scroll_up(s, c.al(), c.bh(), c.cl(), c.ch(), c.dl(), c.dh());
-			break;
+		case 0x06: vga_scroll_up(s, c.al(), c.bh(), c.cl(), c.ch(), c.dl(), c.dh()); break;
 
 		case 0x07:
 			// Scroll down: modelled as a clear when a whole window is asked
@@ -353,7 +373,7 @@ namespace
 		{
 			const uint8_t page = c.bh() < 8 ? c.bh() : 0;
 			const uint32_t cell = (v.display_start + uint32_t(v.cursor_y[page] * v.text_columns + v.cursor_x[page])) &
-				(vga_plane_size - 1);
+			                      (vga_plane_size - 1);
 			c.set_al(v.mem[cell * 4 + 0]);
 			c.set_ah(v.mem[cell * 4 + 1]);
 			break;
@@ -365,7 +385,7 @@ namespace
 			const uint8_t page = c.bh() < 8 ? c.bh() : 0;
 			const uint8_t x = v.cursor_x[page];
 			const uint8_t y = v.cursor_y[page];
-			for (uint16_t i = 0; i < (c.cx() == 0 ? 1 : c.cx()); ++i)
+			for (int i = 0; i < (c.cx() == 0 ? 1 : c.cx()); ++i)
 				vga_write_char(s, page, c.al(), c.bl(), c.ah() == 0x09);
 			v.cursor_x[page] = x;
 			v.cursor_y[page] = y;
@@ -378,13 +398,9 @@ namespace
 			else v.cga_color_select = uint8_t((v.cga_color_select & ~0x20) | ((c.bl() & 1) << 5));
 			break;
 
-		case 0x0c:
-			vga_set_pixel(s, int(c.cx()), int(c.dx()), c.al());
-			break;
+		case 0x0c: vga_set_pixel(s, int(c.cx()), int(c.dx()), c.al()); break;
 
-		case 0x0d:
-			c.set_al(vga_get_pixel(s, int(c.cx()), int(c.dx())));
-			break;
+		case 0x0d: c.set_al(vga_get_pixel(s, int(c.cx()), int(c.dx()))); break;
 
 		case 0x0e:
 			vga_write_char(s, v.page, c.al(), c.bl(), v.render_mode != vga_render_mode::text);
@@ -400,19 +416,14 @@ namespace
 		case 0x10:
 			switch (c.al())
 			{
-			case 0x00: v.attr[c.bl() & 0x1f] = c.bh();
-				break;
-			case 0x01: v.attr[0x11] = c.bh();
-				break;
+			case 0x00: v.attr[c.bl() & 0x1f] = c.bh(); break;
+			case 0x01: v.attr[0x11] = c.bh(); break;
 			case 0x02:
 				for (int i = 0; i < 17; ++i) v.attr[i] = read8(s, c.es(), uint16_t(c.dx() + i));
 				break;
-			case 0x03: v.attr[0x10] = uint8_t((v.attr[0x10] & ~0x08) | ((c.bl() & 1) << 3));
-				break;
-			case 0x07: c.set_bh(v.attr[c.bl() & 0x1f]);
-				break;
-			case 0x08: c.set_bh(v.attr[0x11]);
-				break;
+			case 0x03: v.attr[0x10] = uint8_t((v.attr[0x10] & ~0x08) | ((c.bl() & 1) << 3)); break;
+			case 0x07: c.set_bh(v.attr[c.bl() & 0x1f]); break;
+			case 0x08: c.set_bh(v.attr[0x11]); break;
 			case 0x10:
 				v.dac[c.bx() & 0xff][0] = uint8_t(c.dh() & 0x3f);
 				v.dac[c.bx() & 0xff][1] = uint8_t(c.ch() & 0x3f);
@@ -450,7 +461,8 @@ namespace
 		case 0x11:
 			switch (c.al())
 			{
-			case 0x00: case 0x10: // load user font
+			case 0x00:
+			case 0x10: // load user font
 				for (uint16_t i = 0; i < c.cx(); ++i)
 				{
 					const int ch = (c.dx() + i) & 0xff;
@@ -458,11 +470,14 @@ namespace
 						v.font[ch * 32 + row] = read8(s, c.es(), uint16_t(c.bp() + i * c.bh() + row));
 				}
 				break;
-			case 0x01: case 0x11: case 0x04: case 0x14: // ROM 8x14 / 8x16
-			case 0x02: case 0x12: // ROM 8x8
+			case 0x01:
+			case 0x11:
+			case 0x04:
+			case 0x14: // ROM 8x14 / 8x16
+			case 0x02:
+			case 0x12: // ROM 8x8
 				for (int ch = 0; ch < 256; ++ch)
-					for (int row = 0; row < 8; ++row)
-						v.font[ch * 32 + row] = rom_font_8x8[ch * 8 + row];
+					for (int row = 0; row < 8; ++row) v.font[ch * 32 + row] = rom_font_8x8[ch * 8 + row];
 				v.char_height = 8;
 				break;
 			case 0x30:
@@ -483,15 +498,12 @@ namespace
 				c.set_bl(3); // 256 KiB of display memory
 				c.set_cx(0x0009);
 				break;
-			case 0x30:
-				c.set_al(0x12);
-				break;
-			case 0x31: case 0x32: case 0x33: case 0x34:
-				c.set_al(0x12);
-				break;
-			default:
-				c.set_al(0);
-				break;
+			case 0x30: c.set_al(0x12); break;
+			case 0x31:
+			case 0x32:
+			case 0x33:
+			case 0x34: c.set_al(0x12); break;
+			default: c.set_al(0); break;
 			}
 			break;
 
@@ -546,8 +558,7 @@ namespace
 			c.set_ax(0x0100);
 			break;
 
-		default:
-			break;
+		default: break;
 		}
 	}
 
@@ -567,10 +578,10 @@ namespace
 			c.set_ax(0xffff);
 			c.set_bx(2);
 			break;
-		case 0x0001: if (m.visible < 0) ++m.visible;
+		case 0x0001:
+			if (m.visible < 0) ++m.visible;
 			break;
-		case 0x0002: --m.visible;
-			break;
+		case 0x0002: --m.visible; break;
 		case 0x0003:
 			c.set_bx(uint16_t(m.buttons));
 			c.set_cx(uint16_t(m.x));
@@ -636,8 +647,7 @@ namespace
 			c.set_bx(0x0400); // PS/2 style
 			c.set_cx(0x0000);
 			break;
-		default:
-			break;
+		default: break;
 		}
 	}
 }
@@ -718,7 +728,8 @@ namespace
 		// there at all is a bad command.
 		const uint8_t absent = !hard && index >= 0 && index < floppy_count(s) ? 0x80 : 0x01;
 
-		const auto finish = [&](uint8_t status) {
+		const auto finish = [&](uint8_t status)
+		{
 			c.set_ah(status);
 			set_carry(s, status != 0);
 			if (drive != nullptr) drive->status = status;
@@ -727,15 +738,17 @@ namespace
 
 		switch (function)
 		{
-		case 0x00: case 0x0d: case 0x11: // reset, reset hard disk, recalibrate
+		case 0x00:
+		case 0x0d:
+		case 0x11: // reset, reset hard disk, recalibrate
 			finish(0);
 			return;
 
-		case 0x01:
-			finish(drive != nullptr ? drive->status : read8(s, bda_segment, hard ? 0x74 : 0x41));
-			return;
+		case 0x01: finish(drive != nullptr ? drive->status : read8(s, bda_segment, hard ? 0x74 : 0x41)); return;
 
-		case 0x02: case 0x03: case 0x04: // read, write, verify
+		case 0x02:
+		case 0x03:
+		case 0x04: // read, write, verify
 		{
 			if (drive == nullptr)
 			{
@@ -824,7 +837,9 @@ namespace
 			return;
 		}
 
-		case 0x0c: case 0x10: case 0x14: // seek, test ready, controller diagnostic
+		case 0x0c:
+		case 0x10:
+		case 0x14: // seek, test ready, controller diagnostic
 			finish(hard ? (drive != nullptr ? 0 : 0x01) : 0x01);
 			return;
 
@@ -850,7 +865,7 @@ namespace
 			if (extended && c.bx() == 0x55aa)
 			{
 				c.set_bx(0xaa55);
-				c.set_ah(0x21); // EDD 1.1
+				c.set_ah(0x21);   // EDD 1.1
 				c.set_cx(0x0001); // the fixed disk access calls: 42h-44h, 47h and 48h
 				set_carry(s, false);
 				return;
@@ -858,7 +873,10 @@ namespace
 			finish(0x01);
 			return;
 
-		case 0x42: case 0x43: case 0x44: case 0x47: // read, write, verify, seek by LBA
+		case 0x42:
+		case 0x43:
+		case 0x44:
+		case 0x47: // read, write, verify, seek by LBA
 		{
 			// DS:SI is the disk address packet: its size, a count of sectors,
 			// the buffer and the first sector. The count comes back as done.
@@ -946,17 +964,11 @@ bool bios_interrupt(machine_state& s, uint8_t vector)
 		pic_write(s, 0x20, 0x20);
 		return true;
 
-	case 0x10:
-		video_interrupt(s);
-		return true;
+	case 0x10: video_interrupt(s); return true;
 
-	case 0x11:
-		c.set_ax(s.bios.equipment);
-		return true;
+	case 0x11: c.set_ax(s.bios.equipment); return true;
 
-	case 0x12:
-		c.set_ax(s.bios.memory_kb);
-		return true;
+	case 0x12: c.set_ax(s.bios.memory_kb); return true;
 
 	case 0x13:
 		if (s.boot_mode)
@@ -1001,7 +1013,8 @@ bool bios_interrupt(machine_state& s, uint8_t vector)
 	case 0x16:
 		switch (c.ah())
 		{
-		case 0x00: case 0x10:
+		case 0x00:
+		case 0x10:
 		{
 			uint16_t key = 0;
 			if (!bios_pop_key(s, key))
@@ -1012,7 +1025,8 @@ bool bios_interrupt(machine_state& s, uint8_t vector)
 			c.set_ax(key);
 			return true;
 		}
-		case 0x01: case 0x11:
+		case 0x01:
+		case 0x11:
 		{
 			uint16_t key = 0;
 			if (!bios_peek_key(s, key))
@@ -1025,7 +1039,8 @@ bool bios_interrupt(machine_state& s, uint8_t vector)
 			c.set_ax(key);
 			return true;
 		}
-		case 0x02: case 0x12:
+		case 0x02:
+		case 0x12:
 			c.set_al(read8(s, bda_segment, bda_keyboard_flags));
 			if (c.ah() == 0x12) c.set_ah(read8(s, bda_segment, 0x18));
 			return true;
@@ -1033,10 +1048,8 @@ bool bios_interrupt(machine_state& s, uint8_t vector)
 			bios_push_key(s, c.ch(), c.cl());
 			c.set_al(0);
 			return true;
-		case 0x03:
-			return true;
-		default:
-			return true;
+		case 0x03: return true;
+		default: return true;
 		}
 
 	case 0x1a:
@@ -1067,7 +1080,10 @@ bool bios_interrupt(machine_state& s, uint8_t vector)
 			}
 			int year = 1990, month = 1, day = 1, weekday = 1, hour = 0, minute = 0, second = 0, hundredths = 0;
 			if (s.host) s.host->clock(year, month, day, weekday, hour, minute, second, hundredths);
-			const auto bcd = [](int value) { return uint8_t(((value / 10) << 4) | (value % 10)); };
+			const auto bcd = [](int value)
+			{
+				return uint8_t(((value / 10) << 4) | (value % 10));
+			};
 			if (c.ah() == 0x02)
 			{
 				c.set_ch(bcd(hour));
@@ -1085,9 +1101,7 @@ bool bios_interrupt(machine_state& s, uint8_t vector)
 			set_carry(s, false);
 			return true;
 		}
-		default:
-			set_carry(s, true);
-			return true;
+		default: set_carry(s, true); return true;
 		}
 
 	case 0x19:
@@ -1095,11 +1109,8 @@ bool bios_interrupt(machine_state& s, uint8_t vector)
 		bios_bootstrap(s);
 		return true;
 
-	case 0x33:
-		mouse_interrupt(s);
-		return true;
+	case 0x33: mouse_interrupt(s); return true;
 
-	default:
-		return false;
+	default: return false;
 	}
 }

@@ -42,10 +42,7 @@ namespace
 			return sectors_ > 0;
 		}
 
-		uint64_t sectors() override
-		{
-			return sectors_;
-		}
+		uint64_t sectors() override { return sectors_; }
 
 		bool read(uint64_t lba, uint8_t* data, uint32_t count) override
 		{
@@ -88,10 +85,7 @@ namespace
 		std::string console;
 		bool tracing = false;
 
-		void video_text(uint8_t character) override
-		{
-			console.push_back(char(character));
-		}
+		void video_text(uint8_t character) override { console.push_back(char(character)); }
 
 		void trace(const char* text) override
 		{
@@ -117,7 +111,7 @@ namespace
 		};
 
 		kind what = kind::expect;
-		std::string text; // what an expect waits for
+		std::string text;            // what an expect waits for
 		std::vector<keystroke> keys; // what a type step types
 		double timeout = 0;
 	};
@@ -129,7 +123,7 @@ namespace
 			uint64_t sectors;
 			disk_geometry geometry;
 		} formats[] = {
-			{320, {40, 1, 8}}, {360, {40, 1, 9}}, {640, {40, 2, 8}}, {720, {40, 2, 9}},
+			{320, {40, 1, 8}},  {360, {40, 1, 9}},   {640, {40, 2, 8}},   {720, {40, 2, 9}},
 			{1440, {80, 2, 9}}, {2400, {80, 2, 15}}, {2880, {80, 2, 18}}, {5760, {80, 2, 36}},
 		};
 		for (const auto& format : formats)
@@ -193,7 +187,7 @@ namespace
 		default: break;
 		}
 		static const char* const rows[] = {
-			"1234567890-=", "qwertyuiop[]", "asdfghjkl;'`", "\\zxcvbnm,./",
+			"1234567890-=", "qwertyuiop[]", "asdfghjkl;'`",  "\\zxcvbnm,./",
 			"!@#$%^&*()_+", "QWERTYUIOP{}", "ASDFGHJKL:\"~", "|ZXCVBNM<>?",
 		};
 		static const uint8_t first[] = {0x02, 0x10, 0x1e, 0x2b};
@@ -221,6 +215,7 @@ namespace
 	// --key's names: the keys that are not characters.
 	bool named_key(const char* name, keystroke& key)
 	{
+		// clang-format off
 		static const struct
 		{
 			const char* name;
@@ -231,6 +226,7 @@ namespace
 			{"f1", {0x3b, 0}}, {"f2", {0x3c, 0}}, {"f3", {0x3d, 0}}, {"f4", {0x3e, 0}}, {"f5", {0x3f, 0}},
 			{"f6", {0x40, 0}}, {"f7", {0x41, 0}}, {"f8", {0x42, 0}}, {"f9", {0x43, 0}}, {"f10", {0x44, 0}},
 		};
+		// clang-format on
 		for (const auto& entry : names)
 		{
 			if (_stricmp(entry.name, name) != 0) continue;
@@ -261,31 +257,30 @@ namespace
 
 void boot_usage()
 {
-	printf(
-		"Boot mode: an IBM PC with no DOS of its own, booting from disk images\n"
-		"  demu --boot [drives] [options] [steps]\n\n"
-		"  -a <image>, -b <image>  floppies in A: and B: (160 KB to 2.88 MB)\n"
-		"  -c <image>, -d <image>  hard disks C: and D:\n"
-		"  --from a|c        drive to boot (default A: if it has a floppy, else C:)\n"
-		"  --chs <h>,<s>     hard disk heads (1-256) and sectors per track (1-63); by\n"
-		"                    default the partition table's, else 16 heads up to\n"
-		"                    504 MB and 255 above, with 63 sectors\n"
-		"  --no-lba          no INT 13h extensions (AH=41h-48h) on the hard disks\n"
-		"  --snapshot        keep what is written in memory; the images stay as they were\n"
-		"  --cpu <model>     8086 (default: an IBM PC's 8088), 8086-strict, 186 or 386\n"
-		"  --trace           report BIOS calls on stderr\n"
-		"  --screen          print the screen at the end\n"
-		"  --log <file>      write all the console's output to a file\n\n"
-		"Steps, carried out in order:\n"
-		"  --expect <text>   wait until the console writes <text>, after the last match\n"
-		"  --type <text>     type <text> as it is\n"
-		"  --line <text>     type <text> and press Enter\n"
-		"  --key <name>      press enter, esc, tab, backspace, up, down, left, right\n"
-		"                    or f1-f10\n"
-		"  --reboot          power off and on again, keeping the disks\n"
-		"  --timeout <s>     emulated seconds the --expect steps after it wait (default 120)\n\n"
-		"Exits 0 when every step has happened, 1 if an --expect timed out and 2 if\n"
-		"the machine stopped - an instruction an 8088 does not have, say.\n");
+	printf("Boot mode: an IBM PC with no DOS of its own, booting from disk images\n"
+	       "  demu --boot [drives] [options] [steps]\n\n"
+	       "  -a <image>, -b <image>  floppies in A: and B: (160 KB to 2.88 MB)\n"
+	       "  -c <image>, -d <image>  hard disks C: and D:\n"
+	       "  --from a|c        drive to boot (default A: if it has a floppy, else C:)\n"
+	       "  --chs <h>,<s>     hard disk heads (1-256) and sectors per track (1-63); by\n"
+	       "                    default the partition table's, else 16 heads up to\n"
+	       "                    504 MB and 255 above, with 63 sectors\n"
+	       "  --no-lba          no INT 13h extensions (AH=41h-48h) on the hard disks\n"
+	       "  --snapshot        keep what is written in memory; the images stay as they were\n"
+	       "  --cpu <model>     8086 (default: an IBM PC's 8088), 8086-strict, 186 or 386\n"
+	       "  --trace           report BIOS calls on stderr\n"
+	       "  --screen          print the screen at the end\n"
+	       "  --log <file>      write all the console's output to a file\n\n"
+	       "Steps, carried out in order:\n"
+	       "  --expect <text>   wait until the console writes <text>, after the last match\n"
+	       "  --type <text>     type <text> as it is\n"
+	       "  --line <text>     type <text> and press Enter\n"
+	       "  --key <name>      press enter, esc, tab, backspace, up, down, left, right\n"
+	       "                    or f1-f10\n"
+	       "  --reboot          power off and on again, keeping the disks\n"
+	       "  --timeout <s>     emulated seconds the --expect steps after it wait (default 120)\n\n"
+	       "Exits 0 when every step has happened, 1 if an --expect timed out and 2 if\n"
+	       "the machine stopped - an instruction an 8088 does not have, say.\n");
 }
 
 int run_boot(int argc, char** argv)
@@ -313,8 +308,7 @@ int run_boot(int argc, char** argv)
 			static const uint8_t numbers[] = {0x00, 0x01, 0x80, 0x81};
 			drives.push_back({numbers[arg[1] - 'a'], argv[++i]});
 		}
-		else if (strcmp(arg, "--from") == 0 && value)
-			from = char(argv[++i][0] | 0x20);
+		else if (strcmp(arg, "--from") == 0 && value) from = char(argv[++i][0] | 0x20);
 		else if (strcmp(arg, "--chs") == 0 && value)
 		{
 			if (sscanf_s(argv[++i], "%u,%u", &heads, &sectors_per_track) != 2 || heads < 1 || heads > 256 ||
@@ -324,10 +318,8 @@ int run_boot(int argc, char** argv)
 				return 2;
 			}
 		}
-		else if (strcmp(arg, "--no-lba") == 0)
-			lba = false;
-		else if (strcmp(arg, "--snapshot") == 0)
-			snapshot = true;
+		else if (strcmp(arg, "--no-lba") == 0) lba = false;
+		else if (strcmp(arg, "--snapshot") == 0) snapshot = true;
 		else if (strcmp(arg, "--cpu") == 0 && value)
 		{
 			const char* name = argv[++i];
@@ -341,12 +333,9 @@ int run_boot(int argc, char** argv)
 				return 2;
 			}
 		}
-		else if (strcmp(arg, "--trace") == 0)
-			trace = true;
-		else if (strcmp(arg, "--screen") == 0)
-			screen = true;
-		else if (strcmp(arg, "--log") == 0 && value)
-			log_path = argv[++i];
+		else if (strcmp(arg, "--trace") == 0) trace = true;
+		else if (strcmp(arg, "--screen") == 0) screen = true;
+		else if (strcmp(arg, "--log") == 0 && value) log_path = argv[++i];
 		else if (strcmp(arg, "--expect") == 0 && value)
 		{
 			step wait;
@@ -386,8 +375,7 @@ int run_boot(int argc, char** argv)
 			reboot.timeout = timeout;
 			steps.push_back(reboot);
 		}
-		else if (strcmp(arg, "--timeout") == 0 && value)
-			timeout = atof(argv[++i]);
+		else if (strcmp(arg, "--timeout") == 0 && value) timeout = atof(argv[++i]);
 		else
 		{
 			fprintf(stderr, "unknown boot option %s\n\n", arg);
@@ -418,8 +406,7 @@ int run_boot(int argc, char** argv)
 		}
 		const bool hard = (option.number & 0x80) != 0;
 		disk_geometry geometry;
-		if (hard)
-			geometry = hard_disk_geometry(*image, heads, sectors_per_track);
+		if (hard) geometry = hard_disk_geometry(*image, heads, sectors_per_track);
 		else if (!floppy_geometry(image->sectors(), geometry))
 		{
 			fprintf(stderr, "%s is not the size of a floppy\n", option.path);
@@ -432,7 +419,8 @@ int run_boot(int argc, char** argv)
 	const uint8_t boot_drive = from == 'c' || (from == 0 && !floppy) ? 0x80 : 0x00;
 
 	// The log is written however the run ends: it matters most when it fails.
-	const auto finish = [&](int code) {
+	const auto finish = [&](int code)
+	{
 		if (log_path != nullptr)
 		{
 			FILE* log = nullptr;
@@ -446,7 +434,8 @@ int run_boot(int argc, char** argv)
 		}
 		return code;
 	};
-	const auto stopped = [&]() {
+	const auto stopped = [&]()
+	{
 		fprintf(stderr, "demu: the machine stopped at %04X:%04X: %s\n", s.cpu.cs(), s.cpu.ip, m.error());
 		print_screen(m, stderr);
 		return finish(2);
@@ -462,7 +451,8 @@ int run_boot(int argc, char** argv)
 	size_t seen = 0;
 	uint64_t quiet_since = 0;
 	const uint64_t quiet = ibm_pc_hz / 20;
-	const auto feed = [&]() {
+	const auto feed = [&]()
+	{
 		if (host.console.size() != seen)
 		{
 			seen = host.console.size();
@@ -478,7 +468,8 @@ int run_boot(int argc, char** argv)
 
 	// Runs until the program has read every key typed so far, for up to
 	// `seconds` of emulated time; false if it has not.
-	const auto drain = [&](double seconds) {
+	const auto drain = [&](double seconds)
+	{
 		const uint64_t limit = s.cycles + uint64_t(seconds * ibm_pc_hz);
 		while ((typed < keys.size() || !keyboard_empty(s)) && s.cycles < limit && !m.faulted())
 		{
@@ -487,7 +478,8 @@ int run_boot(int argc, char** argv)
 		}
 		return typed >= keys.size() && keyboard_empty(s);
 	};
-	const auto unread = [&]() {
+	const auto unread = [&]()
+	{
 		fprintf(stderr, "demu: %zu typed keys were never read; the screen:\n",
 		        keys.size() - typed + (keyboard_empty(s) ? 0 : 1));
 		print_screen(m, stderr);

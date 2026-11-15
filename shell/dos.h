@@ -35,7 +35,7 @@ void putch(int c)
 	__int21(0x0200, 0, 0, c);
 }
 
-void puts(char *s)
+void puts(char* s)
 {
 	while (*s != 0)
 	{
@@ -45,7 +45,7 @@ void puts(char *s)
 	}
 }
 
-void putln(char *s)
+void putln(char* s)
 {
 	puts(s);
 	puts("\n");
@@ -150,7 +150,7 @@ int key_waiting(void)
 
 /* ---- strings ---- */
 
-int strlen(char *s)
+int strlen(char* s)
 {
 	int n;
 	n = 0;
@@ -158,7 +158,7 @@ int strlen(char *s)
 	return n;
 }
 
-void strcpy(char *to, char *from)
+void strcpy(char* to, char* from)
 {
 	while (*from != 0)
 	{
@@ -169,7 +169,7 @@ void strcpy(char *to, char *from)
 	*to = 0;
 }
 
-void strcat(char *to, char *from)
+void strcat(char* to, char* from)
 {
 	while (*to != 0) to = to + 1;
 	strcpy(to, from);
@@ -182,7 +182,7 @@ char upper(char c)
 }
 
 /* Compares ignoring case, the way DOS matches command names. */
-int match(char *a, char *b)
+int match(char* a, char* b)
 {
 	while (*a != 0 && upper(*a) == upper(*b))
 	{
@@ -194,7 +194,7 @@ int match(char *a, char *b)
 
 /* ---- files and directories ---- */
 
-int dos_open(char *path, int mode)
+int dos_open(char* path, int mode)
 {
 	return __int21(0x3d00 | mode, 0, 0, (int)path);
 }
@@ -204,35 +204,35 @@ int dos_close(int handle)
 	return __int21(0x3e00, handle, 0, 0);
 }
 
-int dos_read(int handle, char *buffer, int length)
+int dos_read(int handle, char* buffer, int length)
 {
 	return __int21(0x3f00, handle, length, (int)buffer);
 }
 
-int dos_write(int handle, char *buffer, int length)
+int dos_write(int handle, char* buffer, int length)
 {
 	return __int21(0x4000, handle, length, (int)buffer);
 }
 
-int dos_delete(char *path)
+int dos_delete(char* path)
 {
 	__int21(0x4100, 0, 0, (int)path);
 	return __cf == 0;
 }
 
-int dos_chdir(char *path)
+int dos_chdir(char* path)
 {
 	__int21(0x3b00, 0, 0, (int)path);
 	return __cf == 0;
 }
 
-int dos_mkdir(char *path)
+int dos_mkdir(char* path)
 {
 	__int21(0x3900, 0, 0, (int)path);
 	return __cf == 0;
 }
 
-int dos_rmdir(char *path)
+int dos_rmdir(char* path)
 {
 	__int21(0x3a00, 0, 0, (int)path);
 	return __cf == 0;
@@ -240,12 +240,12 @@ int dos_rmdir(char *path)
 
 /* Writes the current directory of the default drive into `into`, without the
  * leading backslash that DOS leaves off. */
-void dos_getcwd(char *into)
+void dos_getcwd(char* into)
 {
 	__int21si(0x4700, 0, 0, 0, (int)into);
 }
 
-int dos_find_first(char *pattern, int attributes)
+int dos_find_first(char* pattern, int attributes)
 {
 	__int21(0x4e00, 0, attributes, (int)pattern);
 	return __cf == 0;
@@ -258,7 +258,7 @@ int dos_find_next(void)
 }
 
 /* Runs another program and waits for it. Returns 1 if it started. */
-int dos_exec(char *path, char *tail)
+int dos_exec(char* path, char* tail)
 {
 	unsigned parameters[7];
 
@@ -280,6 +280,7 @@ int dos_exit_code(void)
 
 /* The disk transfer area, where a directory search leaves its result. The
  * default is PSP:0080, and a .COM program's data segment is its PSP. */
+// clang-format off
 #define DTA_ATTRIBUTES ((char *)0x95)
 #define DTA_TIME       ((unsigned *)0x96)
 #define DTA_DATE       ((unsigned *)0x98)
@@ -291,5 +292,6 @@ int dos_exit_code(void)
  * search overwrites it, so copy it before searching. */
 #define TAIL_LENGTH    ((char *)0x80)
 #define TAIL_TEXT      ((char *)0x81)
+// clang-format on
 
 #endif

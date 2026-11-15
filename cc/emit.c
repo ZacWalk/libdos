@@ -23,6 +23,7 @@ static condition_codes codes_for(condition c)
 	condition_codes codes;
 	switch (c)
 	{
+		// clang-format off
 	case cond_equal: codes.taken = 0x74; codes.inverse = 0x75; break;
 	case cond_not_equal: codes.taken = 0x75; codes.inverse = 0x74; break;
 	case cond_less: codes.taken = 0x7c; codes.inverse = 0x7d; break;
@@ -33,6 +34,7 @@ static condition_codes codes_for(condition c)
 	case cond_below_equal: codes.taken = 0x76; codes.inverse = 0x77; break;
 	case cond_above: codes.taken = 0x77; codes.inverse = 0x76; break;
 	default: codes.taken = 0x73; codes.inverse = 0x72; break;
+		// clang-format on
 	}
 	return codes;
 }
@@ -427,14 +429,12 @@ static int encode_8086(const emitter* e, instruction* in, int position, cc_list*
 
 	switch (in->code)
 	{
-	case op_nop:
-		break;
+	case op_nop: break;
 
 	case op_literal:
 	{
 		int i;
-		for (i = 0; i < in->literal_length; ++i)
-			put(&out, ((const uint8_t*)e->literals.items)[in->literal_at + i]);
+		for (i = 0; i < in->literal_length; ++i) put(&out, ((const uint8_t*)e->literals.items)[in->literal_at + i]);
 		break;
 	}
 
@@ -447,18 +447,16 @@ static int encode_8086(const emitter* e, instruction* in, int position, cc_list*
 			break;
 		}
 		/* The accumulator reaches an absolute address in one byte less. */
-		if (in->dest.kind == operand_kind_reg && in->dest.reg == reg_a &&
-		    in->source.kind == operand_kind_memory && in->source.reg == reg_none &&
-		    in->source.index == reg_none)
+		if (in->dest.kind == operand_kind_reg && in->dest.reg == reg_a && in->source.kind == operand_kind_memory &&
+		    in->source.reg == reg_none && in->source.index == reg_none)
 		{
 			put(&out, 0xa0 + w);
 			in->fixup = out.count;
 			put_word(&out, value_of(e, &in->source));
 			break;
 		}
-		if (in->source.kind == operand_kind_reg && in->source.reg == reg_a &&
-		    in->dest.kind == operand_kind_memory && in->dest.reg == reg_none &&
-		    in->dest.index == reg_none)
+		if (in->source.kind == operand_kind_reg && in->source.reg == reg_a && in->dest.kind == operand_kind_memory &&
+		    in->dest.reg == reg_none && in->dest.index == reg_none)
 		{
 			put(&out, 0xa2 + w);
 			in->fixup = out.count;
@@ -495,8 +493,14 @@ static int encode_8086(const emitter* e, instruction* in, int position, cc_list*
 		modrm(&out, &in->source, in->dest.reg);
 		break;
 
-	case op_add: case op_adc: case op_sub: case op_sbb:
-	case op_and_: case op_or_: case op_xor_: case op_cmp:
+	case op_add:
+	case op_adc:
+	case op_sub:
+	case op_sbb:
+	case op_and_:
+	case op_or_:
+	case op_xor_:
+	case op_cmp:
 	{
 		const int index = arithmetic_index(in->code);
 		if (in->source.kind == operand_kind_immediate)
@@ -505,8 +509,7 @@ static int encode_8086(const emitter* e, instruction* in, int position, cc_list*
 			const int plain = in->source.reference == reference_kind_none;
 			/* The accumulator has a short form, and so does an operand that
 			 * fits in a sign-extended byte. */
-			if (in->dest.kind == operand_kind_reg && in->dest.reg == reg_a &&
-			    (w == 0 || !plain || !is_byte(value)))
+			if (in->dest.kind == operand_kind_reg && in->dest.reg == reg_a && (w == 0 || !plain || !is_byte(value)))
 			{
 				put(&out, (index << 3) | 0x04 | w);
 				if (w != 0) put_word(&out, value);
@@ -593,12 +596,16 @@ static int encode_8086(const emitter* e, instruction* in, int position, cc_list*
 		break;
 	}
 
-	case op_shl: case op_shr: case op_sar: case op_rcl: case op_rcr:
+	case op_shl:
+	case op_shr:
+	case op_sar:
+	case op_rcl:
+	case op_rcr:
 	{
 		const int field = shift_index(in->code);
 		const int32_t by = in->source.value;
 		if (by < 0) put(&out, 0xd2 + w); /* by CL */
-		else put(&out, 0xd0 + w); /* by one */
+		else put(&out, 0xd0 + w);        /* by one */
 		modrm(&out, &in->dest, field);
 		break;
 	}
@@ -720,8 +727,7 @@ static int encode_8086(const emitter* e, instruction* in, int position, cc_list*
 
 	/* An immediate that stands for an address is the last word written; a
 	 * displacement recorded its own position as it went. */
-	if (in->dest.kind == operand_kind_immediate && in->dest.reference != reference_kind_none)
-		in->fixup = out.count - 2;
+	if (in->dest.kind == operand_kind_immediate && in->dest.reference != reference_kind_none) in->fixup = out.count - 2;
 	else if (in->source.kind == operand_kind_immediate && in->source.reference != reference_kind_none)
 		in->fixup = out.count - 2;
 
@@ -735,8 +741,7 @@ int emit_encode(const emitter* e, instruction* in, int position, cc_list* into)
 {
 	in->fixup = 0;
 	in->fixup_width = 2;
-	return e->machine == cc_machine_x64 ? emit_encode_x64(e, in, position, into)
-	                                    : encode_8086(e, in, position, into);
+	return e->machine == cc_machine_x64 ? emit_encode_x64(e, in, position, into) : encode_8086(e, in, position, into);
 }
 
 /* How long a branch is before the layout pass has tried to shorten it. */
@@ -926,8 +931,7 @@ int emit_resolve(emitter* e, int code_base, int data_base)
 			int value = 0;
 
 			if (o->reference == reference_kind_none) continue;
-			if (o->reference == reference_kind_deferred)
-				value = ((const int32_t*)e->deferred.items)[o->target];
+			if (o->reference == reference_kind_deferred) value = ((const int32_t*)e->deferred.items)[o->target];
 			else if (o->reference == reference_kind_data) value = data_base + o->target;
 			else
 			{

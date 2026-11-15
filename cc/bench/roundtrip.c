@@ -9,7 +9,7 @@ static void put(int c)
 	__int21(0x0200, 0, 0, c);
 }
 
-static void put_text(const char *s)
+static void put_text(const char* s)
 {
 	while (*s != 0)
 	{

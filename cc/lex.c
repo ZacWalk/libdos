@@ -18,9 +18,9 @@ typedef struct cc_macro
 {
 	int name;
 	int function_like;
-	int expanding; /* guards against a macro expanding itself */
+	int expanding;      /* guards against a macro expanding itself */
 	cc_list parameters; /* int, interned */
-	cc_list body; /* cc_token */
+	cc_list body;       /* cc_token */
 } cc_macro;
 
 /* One source file being scanned. Includes push another of these. */
@@ -39,11 +39,11 @@ typedef struct cc_preprocessor
 	cc_token_stream* out;
 	cc_arena* arena;
 	cc_names* names;
-	cc_list stack; /* cc_scanner */
-	cc_list macros; /* cc_macro */
-	cc_map by_name; /* interned name to macro index, or -1 once undefined */
+	cc_list stack;      /* cc_scanner */
+	cc_list macros;     /* cc_macro */
+	cc_map by_name;     /* interned name to macro index, or -1 once undefined */
 	cc_list conditions; /* int, one per open #if, non-zero when taking the branch */
-	cc_map keywords; /* interned name to cc_tok */
+	cc_map keywords;    /* interned name to cc_tok */
 
 	/* The words the preprocessor itself reacts to, interned once. */
 	int n_hash, n_include, n_define, n_undef, n_if, n_ifdef, n_ifndef;
@@ -56,6 +56,7 @@ typedef struct cc_keyword
 	cc_tok kind;
 } cc_keyword;
 
+// clang-format off
 static const cc_keyword cc_keywords[] = {
 	{"int", tok_kw_int}, {"char", tok_kw_char}, {"void", tok_kw_void},
 	{"unsigned", tok_kw_unsigned}, {"signed", tok_kw_signed}, {"short", tok_kw_short},
@@ -75,6 +76,7 @@ static const cc_keyword cc_keywords[] = {
 	{"__far", tok_kw_qualifier}, {"__near", tok_kw_qualifier}, {"__huge", tok_kw_qualifier},
 	{"_far", tok_kw_qualifier}, {"_near", tok_kw_qualifier}, {"_huge", tok_kw_qualifier}
 };
+// clang-format on
 
 typedef struct cc_punctuator
 {
@@ -82,6 +84,7 @@ typedef struct cc_punctuator
 	cc_tok kind;
 } cc_punctuator;
 
+// clang-format off
 static const cc_punctuator cc_punctuators[] = {
 	{"...", tok_ellipsis},
 	{"<<=", tok_shl_assign}, {">>=", tok_shr_assign},
@@ -98,6 +101,7 @@ static const cc_punctuator cc_punctuators[] = {
 	{"&", tok_amp}, {"|", tok_pipe}, {"^", tok_caret}, {"~", tok_tilde},
 	{"!", tok_bang}, {"=", tok_assign}, {"<", tok_less}, {">", tok_greater}
 };
+// clang-format on
 
 static int is_identifier_start(char c)
 {
@@ -238,8 +242,7 @@ static int skip_space(cc_preprocessor* p, int* at_line_start)
 			{
 				const int opened = s->line;
 				s->position += 2;
-				while (s->position + 1 < s->length &&
-				       !(s->text[s->position] == '*' && s->text[s->position + 1] == '/'))
+				while (s->position + 1 < s->length && !(s->text[s->position] == '*' && s->text[s->position + 1] == '/'))
 				{
 					if (s->text[s->position] == '\n') ++s->line;
 					++s->position;
@@ -304,8 +307,7 @@ static int next_raw(cc_preprocessor* p, cc_token* token, int* at_line_start, int
 		const size_t start = s->position;
 		int keyword = 0;
 		while (s->position < s->length && is_identifier(s->text[s->position])) ++s->position;
-		if (!intern_token_name(p, token, s->text + start, (int)(s->position - start)))
-			return fail(p, "out of memory");
+		if (!intern_token_name(p, token, s->text + start, (int)(s->position - start))) return fail(p, "out of memory");
 		token->kind = tok_identifier;
 		if (cc_map_find(&p->keywords, token->name, &keyword)) token->kind = (cc_tok)keyword;
 		*have = 1;
@@ -319,9 +321,9 @@ static int next_raw(cc_preprocessor* p, cc_token* token, int* at_line_start, int
 
 		/* A decimal run followed by a point or an exponent is a real, which
 		 * this compiler only ever evaluates at compile time. */
-		const int decimal = c != '0' || s->position + 1 >= s->length ||
-			is_digit(s->text[s->position + 1]) || s->text[s->position + 1] == '.' ||
-			s->text[s->position + 1] == 'e' || s->text[s->position + 1] == 'E';
+		const int decimal = c != '0' || s->position + 1 >= s->length || is_digit(s->text[s->position + 1]) ||
+		                    s->text[s->position + 1] == '.' || s->text[s->position + 1] == 'e' ||
+		                    s->text[s->position + 1] == 'E';
 		if (decimal || c == '.')
 		{
 			size_t scan = s->position;
@@ -336,8 +338,7 @@ static int next_raw(cc_preprocessor* p, cc_token* token, int* at_line_start, int
 			if (scan < s->length && (s->text[scan] == 'e' || s->text[scan] == 'E'))
 			{
 				size_t exponent = scan + 1;
-				if (exponent < s->length && (s->text[exponent] == '+' || s->text[exponent] == '-'))
-					++exponent;
+				if (exponent < s->length && (s->text[exponent] == '+' || s->text[exponent] == '-')) ++exponent;
 				if (exponent < s->length && is_digit(s->text[exponent]))
 				{
 					real = 1;
@@ -350,9 +351,9 @@ static int next_raw(cc_preprocessor* p, cc_token* token, int* at_line_start, int
 				token->real = strtod(s->text + s->position, NULL);
 				token->is_real = 1;
 				s->position = scan;
-				while (s->position < s->length && (s->text[s->position] == 'f' ||
-				       s->text[s->position] == 'F' || s->text[s->position] == 'l' ||
-				       s->text[s->position] == 'L')) ++s->position;
+				while (s->position < s->length && (s->text[s->position] == 'f' || s->text[s->position] == 'F' ||
+				                                   s->text[s->position] == 'l' || s->text[s->position] == 'L'))
+					++s->position;
 				token->kind = tok_number;
 				*have = 1;
 				return 1;
@@ -397,7 +398,7 @@ static int next_raw(cc_preprocessor* p, cc_token* token, int* at_line_start, int
 		}
 
 		while (s->position < s->length && (s->text[s->position] == 'u' || s->text[s->position] == 'U' ||
-		       s->text[s->position] == 'l' || s->text[s->position] == 'L'))
+		                                   s->text[s->position] == 'l' || s->text[s->position] == 'L'))
 		{
 			const char suffix = s->text[s->position++];
 			if (suffix == 'u' || suffix == 'U') token->unsigned_literal = 1;
@@ -455,7 +456,7 @@ static int next_raw(cc_preprocessor* p, cc_token* token, int* at_line_start, int
 		{
 			char d = s->text[s->position++];
 			if (d == '\\' && s->position < s->length) d = escape_of(s->text[s->position++]);
-			value = d;
+			value = d; /* NOLINT(bugprone-signed-char-misuse): cc's char is signed, so a constant's value is too */
 		}
 		if (s->position >= s->length) return fail(p, "unterminated character constant");
 		++s->position;
@@ -468,8 +469,7 @@ static int next_raw(cc_preprocessor* p, cc_token* token, int* at_line_start, int
 	for (i = 0; i < sizeof(cc_punctuators) / sizeof(cc_punctuators[0]); ++i)
 	{
 		const size_t length = strlen(cc_punctuators[i].text);
-		if (s->position + length <= s->length &&
-		    strncmp(s->text + s->position, cc_punctuators[i].text, length) == 0)
+		if (s->position + length <= s->length && strncmp(s->text + s->position, cc_punctuators[i].text, length) == 0)
 		{
 			s->position += length;
 			token->kind = cc_punctuators[i].kind;
@@ -527,8 +527,7 @@ static int include_file(cc_preprocessor* p)
 	cc_scanner* included;
 	const char* file;
 
-	while (s->position < s->length && (s->text[s->position] == ' ' || s->text[s->position] == '\t'))
-		++s->position;
+	while (s->position < s->length && (s->text[s->position] == ' ' || s->text[s->position] == '\t')) ++s->position;
 	if (s->position >= s->length) return fail(p, "#include needs a file name");
 
 	open = s->text[s->position];
@@ -544,8 +543,7 @@ static int include_file(cc_preprocessor* p)
 	if (s->position >= s->length) return fail(p, "unterminated #include");
 	++s->position;
 
-	if (p->sources == NULL || p->sources->load == NULL ||
-	    !p->sources->load(p->sources, name, &bytes, &size))
+	if (p->sources == NULL || p->sources->load == NULL || !p->sources->load(p->sources, name, &bytes, &size))
 		return fail(p, "cannot find the included file");
 	if (p->stack.count > 16) return fail(p, "#include nested too deeply");
 
@@ -692,6 +690,7 @@ static long evaluate_condition(cc_preprocessor* p, const cc_list* tokens, int* a
 		kind = token_at(tokens, *at)->kind;
 		switch (kind)
 		{
+			// clang-format off
 		case tok_or_or: level = 1; break;
 		case tok_and_and: level = 2; break;
 		case tok_pipe: level = 3; break;
@@ -702,6 +701,7 @@ static long evaluate_condition(cc_preprocessor* p, const cc_list* tokens, int* a
 		case tok_plus: case tok_minus: level = 9; break;
 		case tok_star: case tok_slash: case tok_percent: level = 10; break;
 		default: return left;
+			// clang-format on
 		}
 		if (level <= precedence) return left;
 		++*at;
@@ -799,19 +799,17 @@ static void expand_object_macros(cc_preprocessor* p, cc_list* tokens, int protec
 			 * would lose the question being asked. */
 			if (protect_defined && token->kind == tok_identifier && token->name == p->n_defined)
 			{
-				const int span = i + 1 < tokens->count &&
-					token_at(tokens, i + 1)->kind == tok_l_paren ? 3 : 1;
+				const int span = i + 1 < tokens->count && token_at(tokens, i + 1)->kind == tok_l_paren ? 3 : 1;
 				int j;
-				for (j = 0; j <= span && i + j < tokens->count; ++j)
-					token_list_add(&expanded, token_at(tokens, i + j));
+				for (j = 0; j <= span && i + j < tokens->count; ++j) token_list_add(&expanded, token_at(tokens, i + j));
 				i += span;
 				continue;
 			}
 
 			found = token->kind == tok_identifier ? macro_find(p, token->name) : NULL;
 
-			if (found != NULL && found->function_like && !found->expanding &&
-			    i + 1 < tokens->count && token_at(tokens, i + 1)->kind == tok_l_paren)
+			if (found != NULL && found->function_like && !found->expanding && i + 1 < tokens->count &&
+			    token_at(tokens, i + 1)->kind == tok_l_paren)
 			{
 				cc_list arguments; /* cc_list, one per argument */
 				cc_list* argument;
@@ -874,10 +872,10 @@ static void expand_object_macros(cc_preprocessor* p, cc_list* tokens, int protec
 								source = (cc_list*)cc_list_at(&arguments, q);
 								for (a = 0; a < source->count; ++a)
 								{
-									cc_token argument = *token_at(source, a);
-									argument.line = token->line;
-									argument.file = token->file;
-									token_list_add(&expanded, &argument);
+									cc_token copy = *token_at(source, a);
+									copy.line = token->line;
+									copy.file = token->file;
+									token_list_add(&expanded, &copy);
 								}
 								substituted = 1;
 								break;
@@ -898,8 +896,7 @@ static void expand_object_macros(cc_preprocessor* p, cc_list* tokens, int protec
 					changed = 1;
 				}
 
-				for (index = 0; index < arguments.count; ++index)
-					cc_list_free((cc_list*)cc_list_at(&arguments, index));
+				for (index = 0; index < arguments.count; ++index) cc_list_free((cc_list*)cc_list_at(&arguments, index));
 				cc_list_free(&arguments);
 				if (matched) continue;
 			}
@@ -991,8 +988,7 @@ static int directive(cc_preprocessor* p)
 		if (have && identifier.name != 0) cc_map_set(&p->by_name, identifier.name, -1);
 		return 1;
 	}
-	if (name.name == p->n_ifdef || name.name == p->n_ifndef || name.name == p->n_if)
-		return conditional(p, name.name);
+	if (name.name == p->n_ifdef || name.name == p->n_ifndef || name.name == p->n_if) return conditional(p, name.name);
 	if (name.name == p->n_else)
 	{
 		if (p->conditions.count == 0) return fail(p, "#else without #if");
@@ -1092,15 +1088,13 @@ static int expand(cc_preprocessor* p, const cc_token* name, cc_list* out)
 		{
 			if (!next_raw(p, &token, &at_line_start, &have))
 			{
-				for (index = 0; index < arguments.count; ++index)
-					cc_list_free((cc_list*)cc_list_at(&arguments, index));
+				for (index = 0; index < arguments.count; ++index) cc_list_free((cc_list*)cc_list_at(&arguments, index));
 				cc_list_free(&arguments);
 				return 0;
 			}
 			if (!have)
 			{
-				for (index = 0; index < arguments.count; ++index)
-					cc_list_free((cc_list*)cc_list_at(&arguments, index));
+				for (index = 0; index < arguments.count; ++index) cc_list_free((cc_list*)cc_list_at(&arguments, index));
 				cc_list_free(&arguments);
 				return fail(p, "unterminated macro argument list");
 			}
@@ -1120,16 +1114,14 @@ static int expand(cc_preprocessor* p, const cc_token* name, cc_list* out)
 			token_list_add(argument, &token);
 		}
 
-		if (arguments.count == 1 && ((cc_list*)cc_list_at(&arguments, 0))->count == 0 &&
-		    entry->parameters.count == 0)
+		if (arguments.count == 1 && ((cc_list*)cc_list_at(&arguments, 0))->count == 0 && entry->parameters.count == 0)
 		{
 			cc_list_free((cc_list*)cc_list_at(&arguments, 0));
 			arguments.count = 0;
 		}
 		if (arguments.count != entry->parameters.count)
 		{
-			for (index = 0; index < arguments.count; ++index)
-				cc_list_free((cc_list*)cc_list_at(&arguments, index));
+			for (index = 0; index < arguments.count; ++index) cc_list_free((cc_list*)cc_list_at(&arguments, index));
 			cc_list_free(&arguments);
 			return fail(p, "wrong number of macro arguments");
 		}
@@ -1204,8 +1196,7 @@ static int expand(cc_preprocessor* p, const cc_token* name, cc_list* out)
 	entry->expanding = 0;
 	if (have_arguments || arguments.count > 0)
 	{
-		for (index = 0; index < arguments.count; ++index)
-			cc_list_free((cc_list*)cc_list_at(&arguments, index));
+		for (index = 0; index < arguments.count; ++index) cc_list_free((cc_list*)cc_list_at(&arguments, index));
 	}
 	cc_list_free(&arguments);
 	return 1;
@@ -1216,8 +1207,7 @@ static int intern_word(cc_preprocessor* p, const char* text)
 	return cc_intern(p->names, text, -1);
 }
 
-static int run(cc_preprocessor* p, const char* text, const char* name,
-               const char* const* defines, int define_count)
+static int run(cc_preprocessor* p, const char* text, const char* name, const char* const* defines, int define_count)
 {
 	cc_scanner* first;
 	cc_macro* entry;
@@ -1351,8 +1341,7 @@ static int run(cc_preprocessor* p, const char* text, const char* name,
 		cc_token* previous = kept > 0 ? token_at(&p->out->tokens, kept - 1) : NULL;
 		if (previous != NULL && token->kind == tok_string && previous->kind == tok_string)
 		{
-			char* joined = (char*)cc_arena_alloc(p->arena, (size_t)previous->length +
-			                                     (size_t)token->length + 1);
+			char* joined = (char*)cc_arena_alloc(p->arena, (size_t)previous->length + (size_t)token->length + 1);
 			if (joined == NULL) return fail(p, "out of memory");
 			memcpy(joined, previous->text, (size_t)previous->length);
 			memcpy(joined + previous->length, token->text, (size_t)token->length);

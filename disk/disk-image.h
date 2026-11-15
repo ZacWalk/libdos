@@ -54,8 +54,8 @@ struct disk_volume
 {
 	uint64_t start = 0; // the sector holding its boot sector
 	uint64_t sectors = 0;
-	uint8_t type = 0; // its partition type; 0 on a floppy
-	char drive = 0; // the letter DOS 4.0 gives it, or 0 for a partition DOS does not use
+	uint8_t type = 0;       // its partition type; 0 on a floppy
+	char drive = 0;         // the letter DOS 4.0 gives it, or 0 for a partition DOS does not use
 	bool formatted = false; // a FAT12 or FAT16 boot sector; the rest is unknown if not
 	bool fat16 = false;
 	std::string label;
@@ -85,8 +85,8 @@ struct disk_layout
 {
 	uint32_t megabytes = 0;
 	uint32_t partition_megabytes = 2047; // the largest volume, capped where FAT16 stops
-	uint32_t heads = 0; // 0 for 16 up to 504 MB and 255 above; 63 sectors a track either way
-	bool lba_types = false; // partition types 0Eh and 0Fh rather than 06h and 05h
+	uint32_t heads = 0;                  // 0 for 16 up to 504 MB and 255 above; 63 sectors a track either way
+	bool lba_types = false;              // partition types 0Eh and 0Fh rather than 06h and 05h
 };
 
 // A hard disk in whole cylinders, behind FDISK's `master_boot` record: C:, the
@@ -95,8 +95,8 @@ struct disk_layout
 // extended partition, up to Z:. Partitions start and end on a cylinder as FDISK
 // makes them, and each volume is laid out as FORMAT lays one out.
 bool disk_build_hard_disk(const disk_layout& layout, const uint8_t* master_boot, const uint8_t* boot_sector,
-                          const std::vector<disk_file>& files, const std::string& label,
-                          const disk_stamp& stamp, disk_sink& sink, disk_report& report, std::string& error);
+                          const std::vector<disk_file>& files, const std::string& label, const disk_stamp& stamp,
+                          disk_sink& sink, disk_report& report, std::string& error);
 
 // The volumes on an image: a floppy's one, or a hard disk's partitions - the
 // primary ones in table order, then the extended partition's chain. Each has
@@ -115,12 +115,11 @@ struct disk_entry
 };
 
 // Every file and directory on a formatted volume, a directory before what is in it.
-bool disk_list(disk_source& source, const disk_volume& volume, std::vector<disk_entry>& entries,
-               std::string& error);
+bool disk_list(disk_source& source, const disk_volume& volume, std::vector<disk_entry>& entries, std::string& error);
 
 // A file's bytes, by its path on the volume: "\COMMAND.COM" or "DOS/FORMAT.COM".
-bool disk_read_file(disk_source& source, const disk_volume& volume, const std::string& path,
-                    std::vector<uint8_t>& data, std::string& error);
+bool disk_read_file(disk_source& source, const disk_volume& volume, const std::string& path, std::vector<uint8_t>& data,
+                    std::string& error);
 
 // The 11 bytes a directory entry names a file with: up to eight of its name and
 // three of its extension, upper case and padded with spaces.

@@ -43,7 +43,7 @@ struct bios_drive
 	block_device* device = nullptr;
 	disk_geometry geometry;
 	bool extensions = false; // the LBA calls, AH=41h-48h; hard disks only
-	uint8_t status = 0; // the last call's, for AH=01h
+	uint8_t status = 0;      // the last call's, for AH=01h
 };
 
 // Floppies 00h and 01h, then hard disks 80h and 81h.

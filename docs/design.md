@@ -1,25 +1,15 @@
 # libdos design
 
-How the emulator is put together and why. For what is *not* built yet, see
-[todo.md](todo.md). For build and usage, see the [README](../README.md).
+How the emulator is put together and why. What each directory holds, and how
+to build and use it, is in the [README](../README.md); the C compiler has its
+own document, [cc.md](cc.md).
 
 ## Shape
 
-The pieces, with a hard boundary between `src/` and the rest:
-
-| | |
-|---|---|
-| `src/` | The emulator. Platform independent: no Windows headers, no file system, no threads. Builds `libdos`. |
-| `host/` | The Windows side of `host_services`: one directory presented as the emulated drive. |
-| `app/` | dui, a `ui::app` over libdesktop's four libraries. Owns the frame, drawn menu, picture texture, sound and input mapping. |
-| `cli/` | demu, a console harness that drives the library headlessly and doubles as the debugger; the runner that builds MS-DOS with its 1988 toolchain (`runner.cpp`, with LIB's stand-in in `lib-omf.c`); and boot mode's headless runner (`boot.cpp`). |
-| `cc/` | A C compiler targeting 16-bit DOS. Platform independent, and like `src/` it opens no files. |
-| `shell/` | A DOS command interpreter written in C and built by `cc/`. |
-| `disk/` | Bootable DOS disk images and a reader for them. Platform independent, and it opens no files. |
-| `dimg/` | dimg, the command line for `disk/`. |
-
-`machine` is the embeddable façade; `machine_state` is the whole machine as
-plain data. `machine` owns exactly one `machine_state` and is non-copyable.
+`src/` is the emulator, behind a hard boundary from the hosts, the tools and
+the compiler. `machine` is the embeddable façade; `machine_state` is the whole
+machine as plain data. `machine` owns exactly one `machine_state` and is
+non-copyable.
 
 The library never opens a file. `host_services` (in `src/host.h`) is the only
 way out: a host implements it and decides what `C:\` means. That is what makes
@@ -160,7 +150,7 @@ rather than CL mod 32, and segment register fields 4-7 repeat ES-DS. They also
 stop at an encoding that means nothing, where the default only notes it.
 `i8086_strict` additionally refuses the instructions an XT with no coprocessor
 has no business executing - x87 escapes, `WAIT`, `LOCK` and `HLT` - which is
-what the original 1988 build tools are run under, as demu always ran them.
+what demu runs the original 1988 build tools under.
 
 ## Video
 
@@ -177,12 +167,10 @@ three addressing modes cheap:
   because EGA games use every one of them.
 
 `vga_render` turns whatever the mode is into a 32-bit frame buffer at the
-mode's **native resolution**; the host scales. The library never scales, and
-the host only ever scales by a whole number - a fractional factor has to drop
-or double individual rows, which is exactly what makes an emulated screen look
-uneven. The two axes get their own factor, bounded so a pixel is at least
-square and at most twice as tall as it is wide; that fills the window for a
-200-line mode without distorting one that is already 4:3.
+mode's **native resolution**. The library never scales; the host does, and dui
+only by a whole number on each axis - a fractional factor has to drop or
+double individual rows, which is exactly what makes an emulated screen look
+uneven.
 
 The character generator is a 256 x 32-byte table seeded from `rom-font.cpp`
 and replaceable through INT 10h AX=1100h, so a program that uploads its own
@@ -190,19 +178,23 @@ font gets it. The font itself is 8x8: codes 0-127 are the IBM PC BIOS glyphs
 and the line-drawing and shading sets above 127 are generated from the edges
 each character reaches, since geometry beats a traced bitmap. Text modes are
 therefore 8x8 cells - 640x200 for 80x25 - rather than the VGA's 8x16, which
-keeps every glyph pixel square once the host has scaled it.
+keeps every glyph pixel square once the host has scaled it. Of the upper half
+of code page 437 only the shading, block and line-drawing characters are
+drawn, with A0h-A5h borrowing their unaccented letters; the other codes above
+127 are blank.
 
-`exec` calls it at the point in the budget where the emulated vertical retrace
-falls, not at the end. A game that waits for retrace before drawing has
-finished by then, so what the host presents is a whole frame rather than a
-half-drawn one. The retrace period is the VGA's ~70 Hz while a host asks for
-60 frames a second, so a budget can span two of them; `exec` samples at the
-*last* retrace inside the budget, because taking the first leaves the picture
-ageing by a varying fraction of a frame and that reads as judder. The host in
-turn composes the picture and its letterbox into an off-screen DIB and presents
-it with a single `BitBlt`, and marks itself per-monitor DPI aware so Windows
-does not stretch the window as a bitmap. Both of those are the difference
-between a steady picture and a flickering, soft one.
+`exec` calls `vga_render` at the point in the budget where the emulated
+vertical retrace falls, not at the end. A game that waits for retrace before
+drawing has finished by then, so what the host presents is a whole frame
+rather than a half-drawn one. The retrace period is the VGA's ~70 Hz while a
+host asks for 60 frames a second, so a budget can span two of them; `exec`
+samples at the *last* retrace inside the budget, because taking the first
+leaves the picture ageing by a varying fraction of a frame and that reads as
+judder. dui in turn composes the scaled picture into one surface, which a
+libdesktop surface element keeps in a texture and draws point-sampled on black:
+each frame updates the texture in place and presents only the picture's region
+again, and every repaint - a paused or uncovered window's too - shows a whole
+frame.
 
 Colour goes attribute → attribute palette register → DAC. The DAC default
 depends on the mode, and this matters: a VGA in a 16-colour or text mode loads
@@ -219,8 +211,8 @@ IRQ 0 at whatever rate the program programmed is the whole point: DOS games
 reprogram it for music and animation, and hard-coding 18.2 Hz makes them run at
 the wrong speed.
 
-The counters are not moved on after every instruction, though: that cost a
-quarter of the time a compiler took to run. `exec` adds each instruction's
+The counters are not moved on after every instruction, though, because that
+is a large share of the interpreter's time. `exec` adds each instruction's
 cycles to `pit.pending` and calls `pit_sync` only when they reach `pit.due`,
 the number of cycles until channel 0 next reaches zero. That raises IRQ 0 on
 exactly the instruction stepping every time would, because stepping is
@@ -364,61 +356,6 @@ a C runtime finds `argv[0]`; and PSP:0002 is the end of the block it was given,
 which is what a C runtime sizes its data segment and heap from. AL=03h loads an
 overlay at a segment the caller owns, relocated by the factor it gives.
 
-## The C compiler
-
-`cc/` compiles C to a DOS `.COM`. It is here because the DOS-side programs this
-project wants - a shell, test programs - are far easier to write in C than in
-hand-assembled bytes, and because compiling a program here and running it there
-exercises the CPU, the loader and the DOS layer against each other.
-
-The shape is Tiny C Compiler's: one pass, no syntax tree, code emitted as the
-parser goes. None of TCC's code is used - it is LGPL and this is not - only the
-idea that a useful C compiler needs no intermediate representation.
-
-The parser carries a small `value` describing where the result of the
-expression it just parsed lives: a compile-time constant, AX, a frame slot, a
-data address, or "the address is in AX". `load` turns any of those into a value
-in AX and `store` puts AX back. There is no register allocator: a binary
-operator pushes its left operand, evaluates the right into AX, then pops the
-left back into AX with the right in CX. That is bigger code than a real
-compiler emits and it is correct by construction.
-
-A 32-bit value follows the same scheme one register wider: it lives in DX:AX
-with CX:BX holding the second operand. Add, subtract and the bitwise operators
-are a pair of instructions inline; multiply, both divides, both remainders, the
-three shifts and the two comparisons call a helper. The helpers are emitted
-*after* the program and only if something called them, so a program that never
-uses a `long` pays nothing for them.
-
-Five things are worth knowing:
-
-- **Arguments are generated backwards.** cdecl needs them pushed right to left,
-  and because the parser walks a token vector rather than a stream it can find
-  the argument spans first and then generate them in reverse by seeking.
-- **An 8086 has no near conditional jump.** Every conditional branch is a short
-  jump over an unconditional near one, so nothing has to know in advance
-  whether a target is within 127 bytes.
-- **`switch` is dispatched after the body.** The switch jumps forward to a
-  compare chain emitted once the case labels have been seen, which is the
-  single-pass way to get a jump table's semantics without a second pass.
-- **Constant folding needs the right operand before it can decide.** The parser
-  marks its position, generates the left operand speculatively, parses the
-  right, and if both turn out constant it discards the generated code and folds.
-  That is what lets `16*FRACUNIT` or `sizeof(a)/sizeof(a[0])` reach an array
-  bound or a case label.
-- **Structures are packed to the byte.** An 8086 has no alignment requirement,
-  and a structure read straight off disk has to match the file.
-
-The emitted program starts by shrinking its own memory block through AH=4Ah,
-so that a program it starts has somewhere to load. The runtime is five
-interrupt thunks (`__int21`, `__int21si`, `__int10`, and `__int13` and
-`__int13si` for the BIOS disk services, which put DI back, since AH=08h hands
-back ES:DI and a function may keep a variable there) and `__seg`, and a thunk
-the program never calls is not laid out; everything else is ordinary C. There
-is no linker, so a program that wants the C library in `cc/lib/libc.c`
-includes it rather than linking against it, and the headers in `cc/include`
-are declarations only.
-
 ## Disk images
 
 `disk/` makes the disks a real DOS boots from, which is a different job from
@@ -457,18 +394,18 @@ plus a disassembly window. It is strictly side-effect free: it reads emulated
 memory directly rather than through the bus, so looking at a machine can never
 acknowledge an interrupt out from under a program.
 
-The disassembler in `debug.cpp` is shared by demu and dui, and demu's
-`--trace-tail` uses it to keep a ring of the last instructions executed.
+The disassembler in `debug.cpp` is demu's: `--disasm`, the window `--state`
+prints, and the ring of the last instructions executed that `--trace-tail`
+keeps.
 
 ## Rules that keep this working
 
-1. `src/` stays platform independent. No `windows.h`, no file access, no
-   `wchar_t` in new API.
-2. `mem_read8`/`mem_write8` are the only path to memory, and `host_services` -
+1. `mem_read8`/`mem_write8` are the only path to memory, and `host_services` -
    with, in boot mode, the `block_device`s a host attaches - the only path to
    the outside world.
-3. Nothing in the emulator blocks. A service that cannot answer yet rewinds the
+2. Nothing in the emulator blocks. A service that cannot answer yet rewinds the
    caller and returns.
-4. State a program can observe lives in emulated memory, not in C++ fields.
-5. `cli/main.cpp` is the contract. A green build proves nothing; run
-   `.\dd.ps1 test --label libdos`.
+3. State a program can observe lives in emulated memory, not in C++ fields.
+
+The directory boundaries `src/` sits inside, and the tests that are its
+contract, are in [AGENTS.md](../AGENTS.md).

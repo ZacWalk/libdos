@@ -30,7 +30,7 @@ constexpr uint8_t dos_device_nul = 4;
 // and with it the file position - exactly as on DOS.
 struct dos_file
 {
-	int references = 0; // handles pointing here, in every process; 0 = free
+	int references = 0;     // handles pointing here, in every process; 0 = free
 	bool permanent = false; // the standard devices are never released
 	int host_handle = -1;
 	uint8_t device = dos_device_none;
@@ -42,7 +42,7 @@ struct dos_search
 {
 	bool used = false;
 	int host_search = -1;
-	uint32_t stamp = 0; // also kept in the DTA, so a search that was closed is not mistaken for its successor
+	uint32_t stamp = 0;     // also kept in the DTA, so a search that was closed is not mistaken for its successor
 	uint32_t last_used = 0; // when the program last stepped it: the longest idle makes way for a new one
 };
 
@@ -74,9 +74,9 @@ struct dos_state
 	uint16_t environment_segment = 0;
 	uint16_t first_mcb = 0;
 	uint16_t load_segment = 0;
-	uint32_t dta = 0; // segment:offset, packed seg << 16 | offset
+	uint32_t dta = 0;          // segment:offset, packed seg << 16 | offset
 	uint8_t current_drive = 2; // 0 = A:
-	char cwd[3][64] = {}; // per-drive current directory, "\GAMES\WL" with no trailing backslash
+	char cwd[3][64] = {};      // per-drive current directory, "\GAMES\WL" with no trailing backslash
 	uint8_t return_code = 0;
 	uint8_t return_type = 0;
 	bool terminated = false;
@@ -140,8 +140,7 @@ int dos_handle_file(machine_state& s, uint16_t handle);
 
 // Opens (or creates, or opens for appending) a file - or a device such as NUL
 // - as a system file table entry with no handle yet. -1 if it cannot be.
-int dos_open_file(machine_state& s, const char* path, int access, bool create, bool append,
-                  uint8_t attributes = 0);
+int dos_open_file(machine_state& s, const char* path, int access, bool create, bool append, uint8_t attributes = 0);
 
 // Points a handle of the current process at a system file table entry and
 // returns the one it pointed at before, or -1; `file` -1 closes the handle.
@@ -156,8 +155,8 @@ void dos_release_file(machine_state& s, int file);
 // after its INT when the child ends. `environment` is the block to copy for
 // the child, 0 for the parent's own. A child's handles 0 and 1 can be pointed
 // elsewhere (-1 inherits them). On failure returns false with the DOS error.
-bool dos_start_child(machine_state& s, const char* path, const char* tail, uint16_t environment, int input,
-                     int output, uint8_t& error);
+bool dos_start_child(machine_state& s, const char* path, const char* tail, uint16_t environment, int input, int output,
+                     uint8_t& error);
 
 // The value of `name` in an environment block (0 for the current process's),
 // copied into `out`; false if it is not set.

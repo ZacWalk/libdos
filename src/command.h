@@ -35,9 +35,9 @@ bool command_builtin(machine_state& s, const char* name, const char* argument, c
 
 enum class command_result
 {
-	done, // a built-in or a native program ran, and the return code is set
-	started, // a program was started as a child of the caller
-	failed, // nothing could be done; `error` is the DOS error
+	done,          // a built-in or a native program ran, and the return code is set
+	started,       // a program was started as a child of the caller
+	failed,        // nothing could be done; `error` is the DOS error
 	not_a_command, // no /C in the tail: the caller loads COMMAND.COM itself
 };
 

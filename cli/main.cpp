@@ -84,7 +84,8 @@ namespace
 	void split_path(const char* path, char* directory, int directory_size, char* name, int name_size)
 	{
 		const char* last = path;
-		for (const char* p = path; *p != 0; ++p) if (*p == '\\' || *p == '/') last = p + 1;
+		for (const char* p = path; *p != 0; ++p)
+			if (*p == '\\' || *p == '/') last = p + 1;
 		const int length = int(last - path);
 		if (length == 0) snprintf(directory, size_t(directory_size), ".");
 		else snprintf(directory, size_t(directory_size), "%.*s", length - 1 > 0 ? length - 1 : 1, path);
@@ -133,7 +134,8 @@ namespace
 		return true;
 	}
 
-	bool write_wav(const char* path, const int16_t* samples, uint32_t count)	{
+	bool write_wav(const char* path, const int16_t* samples, uint32_t count)
+	{
 		FILE* file = nullptr;
 		if (fopen_s(&file, path, "wb") != 0 || file == nullptr) return false;
 
@@ -179,7 +181,8 @@ namespace
 		switch (c)
 		{
 		case ' ': return machine_key::space;
-		case '\n': case '\r': return machine_key::enter;
+		case '\n':
+		case '\r': return machine_key::enter;
 		case 27: return machine_key::escape;
 		default: return machine_key::none;
 		}
@@ -322,9 +325,7 @@ namespace
 
 		{
 			// xor ax,ax / je near +3 / mov ax,2222h / mov ax,1111h
-			const uint8_t code[] = {
-				0x31, 0xc0, 0x0f, 0x84, 0x03, 0x00, 0xb8, 0x22, 0x22, 0xb8, 0x11, 0x11
-			};
+			const uint8_t code[] = {0x31, 0xc0, 0x0f, 0x84, 0x03, 0x00, 0xb8, 0x22, 0x22, 0xb8, 0x11, 0x11};
 			load_code(m, code, sizeof(code));
 			step(m, 3);
 			check_equal(m.state().cpu.ax(), 0x1111, "near jcc taken");
@@ -332,9 +333,7 @@ namespace
 
 		{
 			// mov ax,5 / cmp ax,5 / sete bl / setne bh
-			const uint8_t code[] = {
-				0xb8, 0x05, 0x00, 0x3d, 0x05, 0x00, 0x0f, 0x94, 0xc3, 0x0f, 0x95, 0xc7
-			};
+			const uint8_t code[] = {0xb8, 0x05, 0x00, 0x3d, 0x05, 0x00, 0x0f, 0x94, 0xc3, 0x0f, 0x95, 0xc7};
 			load_code(m, code, sizeof(code));
 			step(m, 4);
 			check_equal(m.state().cpu.bl(), 1, "sete");
@@ -352,9 +351,7 @@ namespace
 
 		{
 			// mov ax,0 / bts ax,5 / bt ax,5
-			const uint8_t code[] = {
-				0xb8, 0x00, 0x00, 0x0f, 0xba, 0xe8, 0x05, 0x0f, 0xba, 0xe0, 0x05
-			};
+			const uint8_t code[] = {0xb8, 0x00, 0x00, 0x0f, 0xba, 0xe8, 0x05, 0x0f, 0xba, 0xe0, 0x05};
 			load_code(m, code, sizeof(code));
 			step(m, 2);
 			check_equal(m.state().cpu.ax(), 0x0020, "bts sets the bit");
@@ -374,9 +371,7 @@ namespace
 
 		{
 			// mov ax,1234h / mov bx,5678h / shld ax,bx,4
-			const uint8_t code[] = {
-				0xb8, 0x34, 0x12, 0xbb, 0x78, 0x56, 0x0f, 0xa4, 0xd8, 0x04
-			};
+			const uint8_t code[] = {0xb8, 0x34, 0x12, 0xbb, 0x78, 0x56, 0x0f, 0xa4, 0xd8, 0x04};
 			load_code(m, code, sizeof(code));
 			step(m, 3);
 			check_equal(m.state().cpu.ax(), 0x2345, "shld");
@@ -384,9 +379,7 @@ namespace
 
 		{
 			// mov ax,1234h / mov bx,5678h / shrd ax,bx,4
-			const uint8_t code[] = {
-				0xb8, 0x34, 0x12, 0xbb, 0x78, 0x56, 0x0f, 0xac, 0xd8, 0x04
-			};
+			const uint8_t code[] = {0xb8, 0x34, 0x12, 0xbb, 0x78, 0x56, 0x0f, 0xac, 0xd8, 0x04};
 			load_code(m, code, sizeof(code));
 			step(m, 3);
 			check_equal(m.state().cpu.ax(), 0x8123, "shrd");
@@ -418,9 +411,7 @@ namespace
 
 		{
 			// mov ax,4321h / mov fs,ax / push fs / pop gs
-			const uint8_t code[] = {
-				0xb8, 0x21, 0x43, 0x8e, 0xe0, 0x0f, 0xa0, 0x0f, 0xa9
-			};
+			const uint8_t code[] = {0xb8, 0x21, 0x43, 0x8e, 0xe0, 0x0f, 0xa0, 0x0f, 0xa9};
 			load_code(m, code, sizeof(code));
 			step(m, 4);
 			check_equal(m.state().cpu.fs(), 0x4321, "mov fs,ax");
@@ -563,10 +554,10 @@ namespace
 		};
 		image[0] = 'M';
 		image[1] = 'Z';
-		set_word(0x02, 39); // bytes in last block
-		set_word(0x04, 1); // blocks
-		set_word(0x06, 1); // relocations
-		set_word(0x08, 2); // header paragraphs
+		set_word(0x02, 39);   // bytes in last block
+		set_word(0x04, 1);    // blocks
+		set_word(0x06, 1);    // relocations
+		set_word(0x08, 2);    // header paragraphs
 		set_word(0x0a, 0x10); // minimum extra paragraphs
 		set_word(0x0c, 0xffff);
 		set_word(0x0e, 0x0000); // ss
@@ -576,8 +567,8 @@ namespace
 		set_word(0x18, 0x001c); // relocation table
 		set_word(0x1c, 0x0001); // relocation offset
 		set_word(0x1e, 0x0000); // relocation segment
-		image[0x20] = 0xb8; // mov ax,0000 (relocated)
-		image[0x23] = 0xb4; // mov ah,4Ch
+		image[0x20] = 0xb8;     // mov ax,0000 (relocated)
+		image[0x23] = 0xb4;     // mov ah,4Ch
 		image[0x24] = 0x4c;
 		image[0x25] = 0xcd; // int 21h
 		image[0x26] = 0x21;
@@ -603,10 +594,12 @@ namespace
 		machine m;
 
 		// mov ah,9 / mov dx,010Ch / int 21h / mov ax,4C00h / int 21h / "HELLO$"
+		// clang-format off
 		const uint8_t com[] = {
 			0xb4, 0x09, 0xba, 0x0c, 0x01, 0xcd, 0x21, 0xb8, 0x00, 0x4c, 0xcd, 0x21,
 			'H', 'E', 'L', 'L', 'O', '$'
 		};
+		// clang-format on
 		check(m.load_program(com, sizeof(com), "C:\\HELLO.COM", ""), "the test program loads");
 		m.exec(200000);
 		check(m.exited(), "the program terminated");
@@ -623,18 +616,20 @@ namespace
 	void test_line_input()
 	{
 		// Reads a line into the buffer at 0123h twice, then writes the second with AH=40h.
+		// clang-format off
 		std::vector<uint8_t> com = {
 			0xba, 0x23, 0x01, 0xb4, 0x0a, 0xcd, 0x21, 0xba, 0x23, 0x01, 0xb4, 0x0a, 0xcd, 0x21,
 			0xb4, 0x40, 0xbb, 0x01, 0x00, 0x8a, 0x0e, 0x24, 0x01, 0xb5, 0x00, 0xba, 0x25, 0x01,
 			0xcd, 0x21, 0xb8, 0x00, 0x4c, 0xcd, 0x21,
 		};
+		// clang-format on
 		com.push_back(20); // capacity; the count and the text follow
 		com.resize(com.size() + 22, 0);
 
 		machine m;
 		check(m.load_program(com.data(), uint32_t(com.size()), "C:\\READ.COM", ""), "the line input program loads");
 		const machine_key typed[] = {
-			machine_key::a, machine_key::b, machine_key::c, machine_key::enter,
+			machine_key::a, machine_key::b, machine_key::c,     machine_key::enter,
 			machine_key::x, machine_key::y, machine_key::enter,
 		};
 		for (const machine_key key : typed)
@@ -657,12 +652,14 @@ namespace
 	void test_console_keys()
 	{
 		// Three reads with AH=08h, stored at 0200h, 0201h and 0202h.
+		// clang-format off
 		const uint8_t com[] = {
 			0xb4, 0x08, 0xcd, 0x21, 0xa2, 0x00, 0x02,
 			0xb4, 0x08, 0xcd, 0x21, 0xa2, 0x01, 0x02,
 			0xb4, 0x08, 0xcd, 0x21, 0xa2, 0x02, 0x02,
 			0xb8, 0x00, 0x4c, 0xcd, 0x21,
 		};
+		// clang-format on
 		machine m;
 		check(m.load_program(com, sizeof(com), "C:\\GETCH.COM", ""), "the getch program loads");
 		const uint16_t psp = m.state().dos.psp_segment;
@@ -693,11 +690,13 @@ namespace
 		check_equal(io_read8(s, 0x388), 0xc0, "an AdLib answers the detection sequence");
 
 		// A note through channel 0 has to produce something audible.
+		// clang-format off
 		const uint8_t writes[][2] = {
 			{0x20, 0x01}, {0x23, 0x01}, {0x40, 0x10}, {0x43, 0x00},
 			{0x60, 0xf0}, {0x63, 0xf0}, {0x80, 0x77}, {0x83, 0x77},
 			{0xa0, 0x98}, {0xb0, 0x31}, {0xc0, 0x01},
 		};
+		// clang-format on
 		for (const auto& write : writes)
 		{
 			io_write8(s, 0x388, write[0]);
@@ -785,7 +784,7 @@ namespace
 		}
 
 		int file_create(const char*, uint8_t) override { return -1; }
-		void file_close(int) override { }
+		void file_close(int) override {}
 
 		int file_read(int, uint8_t* buffer, int length) override
 		{
@@ -809,7 +808,7 @@ namespace
 		bool file_set_attributes(const char*, uint8_t) override { return false; }
 		int find_first(const char*, uint8_t, host_file_info&) override { return -1; }
 		bool find_next(int, host_file_info&) override { return false; }
-		void find_close(int) override { }
+		void find_close(int) override {}
 		bool make_directory(const char*) override { return false; }
 		bool remove_directory(const char*) override { return false; }
 		bool directory_exists(const char*) override { return false; }
@@ -852,16 +851,20 @@ namespace
 		{
 			// mov ah,9 / mov dx,010Ch / int 21h / mov ax,4C05h / int 21h / "HELLO$"
 			memory_host host;
+			// clang-format off
 			host.add("C:\\HELLO.COM", {0xb4, 0x09, 0xba, 0x0c, 0x01, 0xcd, 0x21, 0xb8, 0x05, 0x4c, 0xcd, 0x21,
 			                           'H', 'E', 'L', 'L', 'O', '$'});
-			check(run_from_prompt(host, "hello\r", screen, sizeof(screen)), "a program run from the prompt returns to it");
+			// clang-format on
+			check(run_from_prompt(host, "hello\r", screen, sizeof(screen)),
+			      "a program run from the prompt returns to it");
 			check(strstr(screen, "HELLO") != nullptr, "a text program's output is still on screen when it ends");
 			check(strstr(screen, "exit code 5") != nullptr, "the exit code is reported");
 		}
 		{
 			memory_host host;
 			host.add("C:\\TINY.COM", {0x90});
-			check(run_from_prompt(host, "tiny\r", screen, sizeof(screen)), "a program that will not load leaves the prompt");
+			check(run_from_prompt(host, "tiny\r", screen, sizeof(screen)),
+			      "a program that will not load leaves the prompt");
 			check(strstr(screen, "too small") != nullptr, "the reason it would not load is shown");
 			check(strstr(screen, "C:\\>C:\\>") == nullptr, "the prompt is shown once");
 			check(strstr(screen, "Type HELP") == nullptr, "the banner is not shown again");
@@ -870,8 +873,8 @@ namespace
 			// Writes its own command tail to stdout: mov ah,40h / mov bx,1 /
 			// mov cl,[0080h] / mov ch,0 / mov dx,0081h / int 21h / mov ax,4C00h / int 21h
 			memory_host host;
-			host.add("C:\\ARGS.COM", {0xb4, 0x40, 0xbb, 0x01, 0x00, 0x8a, 0x0e, 0x80, 0x00, 0xb5, 0x00, 0xba, 0x81,
-			                          0x00, 0xcd, 0x21, 0xb8, 0x00, 0x4c, 0xcd, 0x21});
+			host.add("C:\\ARGS.COM", {0xb4, 0x40, 0xbb, 0x01, 0x00, 0x8a, 0x0e, 0x80, 0x00, 0xb5, 0x00,
+			                          0xba, 0x81, 0x00, 0xcd, 0x21, 0xb8, 0x00, 0x4c, 0xcd, 0x21});
 			run_from_prompt(host, "args one two\r", screen, sizeof(screen));
 			check(strstr(screen, "one two") != nullptr, "a program run from the prompt gets its command line");
 		}
@@ -883,7 +886,10 @@ namespace
 		cc_sources base;
 	};
 
-	int load_nothing(cc_sources*, const char*, const void**, size_t*) { return 0; }
+	int load_nothing(cc_sources*, const char*, const void**, size_t*)
+	{
+		return 0;
+	}
 
 	no_sources make_no_sources()
 	{
@@ -1003,9 +1009,9 @@ namespace
 		{
 			size_t length = 0;
 			const char* text = cc_normalise_source(&arena, "a\r\nb\rc\n", 7, &length);
-			check(text != nullptr && strcmp(text, "a\nb\nc\n") == 0 && length == 6,
-			      "line endings become one thing");
+			check(text != nullptr && strcmp(text, "a\nb\nc\n") == 0 && length == 6, "line endings become one thing");
 
+			// clang-format off
 			text = cc_normalise_source(&arena, "\xef\xbb\xbf" "int x;", 9, &length);
 			check(strcmp(text, "int x;") == 0, "a UTF-8 byte order mark is dropped");
 
@@ -1017,6 +1023,7 @@ namespace
 			check(strcmp(text, "int =") == 0, "UTF-16 becomes UTF-8");
 
 			const char pair[] = "\xff\xfe" "\x3d\xd8\x00\xde";
+			// clang-format on
 			text = cc_normalise_source(&arena, pair, 6, &length);
 			check(length == 4 && (unsigned char)text[0] == 0xf0, "a surrogate pair becomes four bytes");
 		}
@@ -1075,41 +1082,40 @@ namespace
 			check(screen.find("C42") != std::string::npos, "structure members work");
 			check(screen.find("D100") != std::string::npos, "arrays and pointer parameters work");
 			check(screen.find("E2") != std::string::npos, "switch picks the right case");
-			check(screen.find("F") != std::string::npos, "the preprocessor defines __DOS__");
+			check(screen.find('F') != std::string::npos, "the preprocessor defines __DOS__");
 		}
 
 		// 32-bit arithmetic, which an 8086 has no instruction for: everything
 		// harder than an add goes through a helper the compiler emits.
-		const char* wide =
-			"int __int21(int ax, int bx, int cx, int dx);\n"
-			"void putch(int c) { __int21(0x0200, 0, 0, c); }\n"
-			"void puts(char *s) { while (*s) { putch(*s); s = s + 1; } }\n"
-			"void putl(long v) {\n"
-			"  char d[12]; int at;\n"
-			"  if (v < 0) { putch('-'); v = -v; }\n"
-			"  if (v == 0) { putch('0'); return; }\n"
-			"  at = 0;\n"
-			"  while (v != 0) { d[at] = (char)('0' + (int)(v % 10)); v = v / 10; at = at + 1; }\n"
-			"  while (at > 0) { at = at - 1; putch(d[at]); }\n"
-			"}\n"
-			"long total;\n"
-			"int main(void) {\n"
-			"  long a; long b; unsigned long u; int i;\n"
-			"  a = 100000; b = 7;\n"
-			"  puts(\"A\"); putl(a * b);\n"
-			"  puts(\"B\"); putl(a / b);\n"
-			"  puts(\"C\"); putl(a % b);\n"
-			"  puts(\"D\"); putl(-a / b);\n"
-			"  puts(\"E\"); putl(1L << 20);\n"
-			"  puts(\"F\"); putl(a > 99999 ? 1 : 0);\n"
-			"  u = 2000000; u = u * 2000;\n"
-			"  puts(\"G\"); putl((long)(u / 1000));\n"
-			"  total = 0;\n"
-			"  for (i = 0; i < 5; i = i + 1) total = total + 1000000;\n"
-			"  puts(\"H\"); putl(total);\n"
-			"  puts(\"I\"); putl((long)sizeof(long));\n"
-			"  return 0;\n"
-			"}\n";
+		const char* wide = "int __int21(int ax, int bx, int cx, int dx);\n"
+						   "void putch(int c) { __int21(0x0200, 0, 0, c); }\n"
+						   "void puts(char *s) { while (*s) { putch(*s); s = s + 1; } }\n"
+						   "void putl(long v) {\n"
+						   "  char d[12]; int at;\n"
+						   "  if (v < 0) { putch('-'); v = -v; }\n"
+						   "  if (v == 0) { putch('0'); return; }\n"
+						   "  at = 0;\n"
+						   "  while (v != 0) { d[at] = (char)('0' + (int)(v % 10)); v = v / 10; at = at + 1; }\n"
+						   "  while (at > 0) { at = at - 1; putch(d[at]); }\n"
+						   "}\n"
+						   "long total;\n"
+						   "int main(void) {\n"
+						   "  long a; long b; unsigned long u; int i;\n"
+						   "  a = 100000; b = 7;\n"
+						   "  puts(\"A\"); putl(a * b);\n"
+						   "  puts(\"B\"); putl(a / b);\n"
+						   "  puts(\"C\"); putl(a % b);\n"
+						   "  puts(\"D\"); putl(-a / b);\n"
+						   "  puts(\"E\"); putl(1L << 20);\n"
+						   "  puts(\"F\"); putl(a > 99999 ? 1 : 0);\n"
+						   "  u = 2000000; u = u * 2000;\n"
+						   "  puts(\"G\"); putl((long)(u / 1000));\n"
+						   "  total = 0;\n"
+						   "  for (i = 0; i < 5; i = i + 1) total = total + 1000000;\n"
+						   "  puts(\"H\"); putl(total);\n"
+						   "  puts(\"I\"); putl((long)sizeof(long));\n"
+						   "  return 0;\n"
+						   "}\n";
 
 		check(compile_text(wide, image, "wide.c"), "the compiler accepts 32-bit arithmetic");
 		if (!image.empty())
@@ -1130,78 +1136,77 @@ namespace
 		// can be placed rather than pushed, a comparison left in the flags, a
 		// dereference whose address stays in memory, a statement applied
 		// straight to a variable, and a loop with its condition at the bottom.
-		const char* placement =
-			"int __int21(int ax, int bx, int cx, int dx);\n"
-			"void putch(int c) { __int21(0x0200, 0, 0, c); }\n"
-			"void puts(char *s) { while (*s) { putch(*s); s = s + 1; } }\n"
-			"void putu(unsigned v) {\n"
-			"  char d[8]; int at;\n"
-			"  if (v == 0) { putch('0'); return; }\n"
-			"  at = 0;\n"
-			"  while (v) { d[at] = (char)('0' + v % 10); v = v / 10; at = at + 1; }\n"
-			"  while (at > 0) { at = at - 1; putch(d[at]); }\n"
-			"}\n"
-			"int failed; int counter; int numbers[8]; long total;\n"
-			"struct point { int x; int y; long z; };\n"
-			"struct point points[4];\n"
-			"void expect(int ok, int id) { if (!ok) { failed = 1; puts(\"X\"); putu(id); } }\n"
-			"int bump(void) { counter = counter + 1; return counter; }\n"
-			"int main(void) {\n"
-			"  int i; int j; long a; int *p; struct point *q; unsigned u; char c;\n"
-			"  failed = 0;\n"
-			"  i = 5; i++; ++i; i--; expect(i == 6, 1);\n"
-			"  i += 10; i -= 6; i = i + 3; expect(i == 13, 2);\n"
-			"  i &= 12; i |= 1; i ^= 5; expect(i == 8, 3);\n"
-			"  j = 4; i = i + j; expect(i == 12, 4);\n"
-			"  i = 5; j = i++; expect(j == 5 && i == 6, 5);\n"
-			"  j = ++i; expect(j == 7 && i == 7, 6);\n"
-			"  total = 100000; total += 100000; a = 7; total = total + a;\n"
-			"  expect(total == 200007, 7);\n"
-			"  numbers[0] = 11; numbers[1] = 22; numbers[2] = 33;\n"
-			"  p = &numbers[0]; p++; expect(*p == 22, 8);\n"
-			"  p += 1; expect(*p == 33, 9); p = p - 2; expect(*p == 11, 10);\n"
-			"  points[1].x = 4; points[1].y = 5; points[1].z = 400000;\n"
-			"  q = &points[1];\n"
-			"  expect(q->x == 4 && q->y == 5 && q->z == 400000, 11);\n"
-			"  q->y = q->y + 2; q->z += 1;\n"
-			"  expect(points[1].y == 7 && points[1].z == 400001, 12);\n"
-			"  i = 3; j = 4;\n"
-			"  expect((i < j) == 1 && (i > j) == 0 && !(i > j), 13);\n"
-			"  expect((i < j) + (j < i) == 1, 14);\n"
-			"  u = 40000; expect(u > 100 && !(u < 100), 15);\n"
-			"  counter = 0; i = bump() + counter; expect(i == 1 || i == 2, 16);\n"
-			"  counter = 0; i = counter + bump(); expect(i == 1 || i == 2, 17);\n"
-			"  a = 0x12345678;\n"
-			"  expect((a >> 16) == 0x1234 && (a >> 8) == 0x123456, 18);\n"
-			"  expect((a << 4) == 0x23456780 && (a & 0xffff) == 0x5678, 19);\n"
-			"  a = -70000;\n"
-			"  expect((a >> 16) == -2 && (a >> 1) == -35000, 20);\n"
-			"  expect(a * 4 == -280000 && a / 8 == -8750, 21);\n"
-			"  i = 100; u = 100;\n"
-			"  expect(i * 8 == 800 && i / 4 == 25, 22);\n"
-			"  expect(u / 8 == 12 && u % 8 == 4, 23);\n"
-			"  expect((i << 3) == 800 && (i >> 2) == 25, 24);\n"
-			"  for (i = 0; i < 8; i++) numbers[i] = i * i;\n"
-			"  j = 0; for (i = 0; i < 8; i++) j += numbers[i];\n"
-			"  expect(j == 140, 25);\n"
-			"  i = 0; j = 0; while (i < 8) { j = j + numbers[i]; i++; }\n"
-			"  expect(j == 140, 26);\n"
-			"  j = 0; i = 0; do { j = j + 1; i++; } while (i < 4);\n"
-			"  expect(j == 4, 27);\n"
-			"  j = 0;\n"
-			"  for (i = 0; i < 20; i++) { if (i == 3) continue; if (i == 6) break; j = j + i; }\n"
-			"  expect(j == 12, 28);\n"
-			"  c = -3; expect(c < 0 && c + 5 == 2, 29);\n"
-			"  numbers[3] = 7; p = &numbers[3];\n"
-			"  (*p)++; expect(numbers[3] == 8, 30);\n"
-			"  ++(*p); expect(numbers[3] == 9, 31);\n"
-			"  *p += 5; expect(numbers[3] == 14, 32);\n"
-			"  *p = *p * 2; expect(numbers[3] == 28, 33);\n"
-			"  q = &points[2]; q->z = 70000; q->z >>= 1;\n"
-			"  expect(points[2].z == 35000, 34);\n"
-			"  if (!failed) puts(\"OK\");\n"
-			"  return 0;\n"
-			"}\n";
+		const char* placement = "int __int21(int ax, int bx, int cx, int dx);\n"
+								"void putch(int c) { __int21(0x0200, 0, 0, c); }\n"
+								"void puts(char *s) { while (*s) { putch(*s); s = s + 1; } }\n"
+								"void putu(unsigned v) {\n"
+								"  char d[8]; int at;\n"
+								"  if (v == 0) { putch('0'); return; }\n"
+								"  at = 0;\n"
+								"  while (v) { d[at] = (char)('0' + v % 10); v = v / 10; at = at + 1; }\n"
+								"  while (at > 0) { at = at - 1; putch(d[at]); }\n"
+								"}\n"
+								"int failed; int counter; int numbers[8]; long total;\n"
+								"struct point { int x; int y; long z; };\n"
+								"struct point points[4];\n"
+								"void expect(int ok, int id) { if (!ok) { failed = 1; puts(\"X\"); putu(id); } }\n"
+								"int bump(void) { counter = counter + 1; return counter; }\n"
+								"int main(void) {\n"
+								"  int i; int j; long a; int *p; struct point *q; unsigned u; char c;\n"
+								"  failed = 0;\n"
+								"  i = 5; i++; ++i; i--; expect(i == 6, 1);\n"
+								"  i += 10; i -= 6; i = i + 3; expect(i == 13, 2);\n"
+								"  i &= 12; i |= 1; i ^= 5; expect(i == 8, 3);\n"
+								"  j = 4; i = i + j; expect(i == 12, 4);\n"
+								"  i = 5; j = i++; expect(j == 5 && i == 6, 5);\n"
+								"  j = ++i; expect(j == 7 && i == 7, 6);\n"
+								"  total = 100000; total += 100000; a = 7; total = total + a;\n"
+								"  expect(total == 200007, 7);\n"
+								"  numbers[0] = 11; numbers[1] = 22; numbers[2] = 33;\n"
+								"  p = &numbers[0]; p++; expect(*p == 22, 8);\n"
+								"  p += 1; expect(*p == 33, 9); p = p - 2; expect(*p == 11, 10);\n"
+								"  points[1].x = 4; points[1].y = 5; points[1].z = 400000;\n"
+								"  q = &points[1];\n"
+								"  expect(q->x == 4 && q->y == 5 && q->z == 400000, 11);\n"
+								"  q->y = q->y + 2; q->z += 1;\n"
+								"  expect(points[1].y == 7 && points[1].z == 400001, 12);\n"
+								"  i = 3; j = 4;\n"
+								"  expect((i < j) == 1 && (i > j) == 0 && !(i > j), 13);\n"
+								"  expect((i < j) + (j < i) == 1, 14);\n"
+								"  u = 40000; expect(u > 100 && !(u < 100), 15);\n"
+								"  counter = 0; i = bump() + counter; expect(i == 1 || i == 2, 16);\n"
+								"  counter = 0; i = counter + bump(); expect(i == 1 || i == 2, 17);\n"
+								"  a = 0x12345678;\n"
+								"  expect((a >> 16) == 0x1234 && (a >> 8) == 0x123456, 18);\n"
+								"  expect((a << 4) == 0x23456780 && (a & 0xffff) == 0x5678, 19);\n"
+								"  a = -70000;\n"
+								"  expect((a >> 16) == -2 && (a >> 1) == -35000, 20);\n"
+								"  expect(a * 4 == -280000 && a / 8 == -8750, 21);\n"
+								"  i = 100; u = 100;\n"
+								"  expect(i * 8 == 800 && i / 4 == 25, 22);\n"
+								"  expect(u / 8 == 12 && u % 8 == 4, 23);\n"
+								"  expect((i << 3) == 800 && (i >> 2) == 25, 24);\n"
+								"  for (i = 0; i < 8; i++) numbers[i] = i * i;\n"
+								"  j = 0; for (i = 0; i < 8; i++) j += numbers[i];\n"
+								"  expect(j == 140, 25);\n"
+								"  i = 0; j = 0; while (i < 8) { j = j + numbers[i]; i++; }\n"
+								"  expect(j == 140, 26);\n"
+								"  j = 0; i = 0; do { j = j + 1; i++; } while (i < 4);\n"
+								"  expect(j == 4, 27);\n"
+								"  j = 0;\n"
+								"  for (i = 0; i < 20; i++) { if (i == 3) continue; if (i == 6) break; j = j + i; }\n"
+								"  expect(j == 12, 28);\n"
+								"  c = -3; expect(c < 0 && c + 5 == 2, 29);\n"
+								"  numbers[3] = 7; p = &numbers[3];\n"
+								"  (*p)++; expect(numbers[3] == 8, 30);\n"
+								"  ++(*p); expect(numbers[3] == 9, 31);\n"
+								"  *p += 5; expect(numbers[3] == 14, 32);\n"
+								"  *p = *p * 2; expect(numbers[3] == 28, 33);\n"
+								"  q = &points[2]; q->z = 70000; q->z >>= 1;\n"
+								"  expect(points[2].z == 35000, 34);\n"
+								"  if (!failed) puts(\"OK\");\n"
+								"  return 0;\n"
+								"}\n";
 
 		check(compile_text(placement, image, "placement.c"), "the compiler accepts the placement program");
 		if (!image.empty())
@@ -1263,10 +1268,9 @@ namespace
 			      "the compiler accepts the whole-program test");
 			if (image.empty()) continue;
 			const std::string screen = run_image(image, nullptr);
-			check(screen.find("OK") != std::string::npos,
-			      limit == 0
-				      ? "calling and copying a body agree, with no copying"
-				      : "calling and copying a body agree, with copying");
+			check(screen.find("OK") != std::string::npos, limit == 0
+			                                                  ? "calling and copying a body agree, with no copying"
+			                                                  : "calling and copying a body agree, with copying");
 		}
 
 		// A function nothing can reach costs nothing, and one that was copied
@@ -1276,54 +1280,52 @@ namespace
 		std::vector<uint8_t> lean, fat;
 		check(compile_text(whole_program, lean, "inline.c"), "the lean build compiles");
 		check(compile_text(whole_program, fat, "inline.c", keep), "the kept build compiles");
-		check(!lean.empty() && !fat.empty() && lean.size() < fat.size(),
-		      "an unreachable function is left out");
+		check(!lean.empty() && !fat.empty() && lean.size() < fat.size(), "an unreachable function is left out");
 
 		// Function pointers, which reach a callee through a frame slot rather
 		// than a relative call, and goto.
-		const char* indirect =
-			"int __int21(int ax, int bx, int cx, int dx);\n"
-			"void putch(int c) { __int21(0x0200, 0, 0, c); }\n"
-			"void puts(char *s) { while (*s) { putch(*s); s = s + 1; } }\n"
-			"void putu(unsigned v) {\n"
-			"  char d[8]; int at;\n"
-			"  if (v == 0) { putch('0'); return; }\n"
-			"  at = 0;\n"
-			"  while (v) { d[at] = (char)('0' + v % 10); v = v / 10; at = at + 1; }\n"
-			"  while (at > 0) { at = at - 1; putch(d[at]); }\n"
-			"}\n"
-			"int twice(int n) { return n * 2; }\n"
-			"int square(int n) { return n * n; }\n"
-			"typedef int (*op_t)(int);\n"
-			"struct entry { int base; int (*run)(int); };\n"
-			"struct entry list[2];\n"
-			"op_t start[2] = { twice, square };\n"
-			"op_t table[2];\n"
-			"int apply(op_t f, int n) { return f(n); }\n"
-			"int main(void) {\n"
-			"  op_t f; int i; int sum;\n"
-			"  f = twice;\n"
-			"  puts(\"A\"); putu(f(21));\n"
-			"  f = square;\n"
-			"  puts(\"B\"); putu((*f)(7));\n"
-			"  puts(\"C\"); putu(apply(twice, 100));\n"
-			"  table[0] = twice; table[1] = square;\n"
-			"  sum = 0;\n"
-			"  for (i = 0; i < 2; i = i + 1) sum = sum + table[i](5);\n"
-			"  puts(\"D\"); putu(sum);\n"
-			"  list[0].base = 3; list[0].run = twice;\n"
-			"  list[1].base = 4; list[1].run = square;\n"
-			"  sum = 0;\n"
-			"  for (i = 0; i < 2; i = i + 1) sum = sum + list[i].run(list[i].base);\n"
-			"  puts(\"E\"); putu(sum);\n"
-			"  puts(\"F\"); putu(start[1](6));\n"
-			"  i = 0;\n"
-			"again:\n"
-			"  i = i + 1;\n"
-			"  if (i < 4) goto again;\n"
-			"  puts(\"G\"); putu(i);\n"
-			"  return 0;\n"
-			"}\n";
+		const char* indirect = "int __int21(int ax, int bx, int cx, int dx);\n"
+							   "void putch(int c) { __int21(0x0200, 0, 0, c); }\n"
+							   "void puts(char *s) { while (*s) { putch(*s); s = s + 1; } }\n"
+							   "void putu(unsigned v) {\n"
+							   "  char d[8]; int at;\n"
+							   "  if (v == 0) { putch('0'); return; }\n"
+							   "  at = 0;\n"
+							   "  while (v) { d[at] = (char)('0' + v % 10); v = v / 10; at = at + 1; }\n"
+							   "  while (at > 0) { at = at - 1; putch(d[at]); }\n"
+							   "}\n"
+							   "int twice(int n) { return n * 2; }\n"
+							   "int square(int n) { return n * n; }\n"
+							   "typedef int (*op_t)(int);\n"
+							   "struct entry { int base; int (*run)(int); };\n"
+							   "struct entry list[2];\n"
+							   "op_t start[2] = { twice, square };\n"
+							   "op_t table[2];\n"
+							   "int apply(op_t f, int n) { return f(n); }\n"
+							   "int main(void) {\n"
+							   "  op_t f; int i; int sum;\n"
+							   "  f = twice;\n"
+							   "  puts(\"A\"); putu(f(21));\n"
+							   "  f = square;\n"
+							   "  puts(\"B\"); putu((*f)(7));\n"
+							   "  puts(\"C\"); putu(apply(twice, 100));\n"
+							   "  table[0] = twice; table[1] = square;\n"
+							   "  sum = 0;\n"
+							   "  for (i = 0; i < 2; i = i + 1) sum = sum + table[i](5);\n"
+							   "  puts(\"D\"); putu(sum);\n"
+							   "  list[0].base = 3; list[0].run = twice;\n"
+							   "  list[1].base = 4; list[1].run = square;\n"
+							   "  sum = 0;\n"
+							   "  for (i = 0; i < 2; i = i + 1) sum = sum + list[i].run(list[i].base);\n"
+							   "  puts(\"E\"); putu(sum);\n"
+							   "  puts(\"F\"); putu(start[1](6));\n"
+							   "  i = 0;\n"
+							   "again:\n"
+							   "  i = i + 1;\n"
+							   "  if (i < 4) goto again;\n"
+							   "  puts(\"G\"); putu(i);\n"
+							   "  return 0;\n"
+							   "}\n";
 
 		check(compile_text(indirect, image, "indirect.c"), "the compiler accepts function pointers");
 		if (!image.empty())
@@ -1340,41 +1342,40 @@ namespace
 
 		// Variadic arguments, which are found by address above the last named
 		// parameter rather than being passed in any declared slot.
-		const char* variadic =
-			"int __int21(int ax, int bx, int cx, int dx);\n"
-			"typedef char *va_list;\n"
-			"#define va_start(ap, last) ((ap) = __args(last))\n"
-			"#define va_arg(ap, type) (*(type *)(((ap) += sizeof(type)) - sizeof(type)))\n"
-			"void putch(int c) { __int21(0x0200, 0, 0, c); }\n"
-			"void puts(char *s) { while (*s) { putch(*s); s = s + 1; } }\n"
-			"void putl(long v) {\n"
-			"  char d[12]; int at;\n"
-			"  if (v < 0) { putch('-'); v = -v; }\n"
-			"  if (v == 0) { putch('0'); return; }\n"
-			"  at = 0;\n"
-			"  while (v != 0) { d[at] = (char)('0' + (int)(v % 10)); v = v / 10; at = at + 1; }\n"
-			"  while (at > 0) { at = at - 1; putch(d[at]); }\n"
-			"}\n"
-			"int total(int count, ...) {\n"
-			"  va_list ap; int i; int sum;\n"
-			"  va_start(ap, count);\n"
-			"  sum = 0;\n"
-			"  for (i = 0; i < count; i = i + 1) sum = sum + va_arg(ap, int);\n"
-			"  return sum;\n"
-			"}\n"
-			"void show(char *label, ...) {\n"
-			"  va_list ap;\n"
-			"  va_start(ap, label);\n"
-			"  puts(label);\n"
-			"  putl(va_arg(ap, long));\n"
-			"  putch(va_arg(ap, int));\n"
-			"}\n"
-			"int main(void) {\n"
-			"  puts(\"A\"); putl((long)total(4, 10, 20, 30, 40));\n"
-			"  puts(\"B\"); putl((long)total(1, 7));\n"
-			"  show(\"C\", 100000L * 7, 'z');\n"
-			"  return 0;\n"
-			"}\n";
+		const char* variadic = "int __int21(int ax, int bx, int cx, int dx);\n"
+							   "typedef char *va_list;\n"
+							   "#define va_start(ap, last) ((ap) = __args(last))\n"
+							   "#define va_arg(ap, type) (*(type *)(((ap) += sizeof(type)) - sizeof(type)))\n"
+							   "void putch(int c) { __int21(0x0200, 0, 0, c); }\n"
+							   "void puts(char *s) { while (*s) { putch(*s); s = s + 1; } }\n"
+							   "void putl(long v) {\n"
+							   "  char d[12]; int at;\n"
+							   "  if (v < 0) { putch('-'); v = -v; }\n"
+							   "  if (v == 0) { putch('0'); return; }\n"
+							   "  at = 0;\n"
+							   "  while (v != 0) { d[at] = (char)('0' + (int)(v % 10)); v = v / 10; at = at + 1; }\n"
+							   "  while (at > 0) { at = at - 1; putch(d[at]); }\n"
+							   "}\n"
+							   "int total(int count, ...) {\n"
+							   "  va_list ap; int i; int sum;\n"
+							   "  va_start(ap, count);\n"
+							   "  sum = 0;\n"
+							   "  for (i = 0; i < count; i = i + 1) sum = sum + va_arg(ap, int);\n"
+							   "  return sum;\n"
+							   "}\n"
+							   "void show(char *label, ...) {\n"
+							   "  va_list ap;\n"
+							   "  va_start(ap, label);\n"
+							   "  puts(label);\n"
+							   "  putl(va_arg(ap, long));\n"
+							   "  putch(va_arg(ap, int));\n"
+							   "}\n"
+							   "int main(void) {\n"
+							   "  puts(\"A\"); putl((long)total(4, 10, 20, 30, 40));\n"
+							   "  puts(\"B\"); putl((long)total(1, 7));\n"
+							   "  show(\"C\", 100000L * 7, 'z');\n"
+							   "  return 0;\n"
+							   "}\n";
 
 		check(compile_text(variadic, image, "variadic.c"), "the compiler accepts variadic functions");
 		if (!image.empty())
@@ -1386,31 +1387,29 @@ namespace
 		}
 
 		// Loading a child through INT 21h AH=4Bh and coming back.
-		const char* child =
-			"int __int21(int ax, int bx, int cx, int dx);\n"
-			"int main(void) { __int21(0x0200, 0, 0, 'X'); return 0; }\n";
+		const char* child = "int __int21(int ax, int bx, int cx, int dx);\n"
+							"int main(void) { __int21(0x0200, 0, 0, 'X'); return 0; }\n";
 		std::vector<uint8_t> child_image;
 		check(compile_text(child, child_image, "child.c"), "the child program compiles");
 
-		const char* parent =
-			"int __int21(int ax, int bx, int cx, int dx);\n"
-			"unsigned __seg(void);\n"
-			"extern int __cf;\n"
-			"char name[16];\n"
-			"unsigned block[7];\n"
-			"char tail[4];\n"
-			"int main(void) {\n"
-			"  name[0] = 'C'; name[1] = ':'; name[2] = 92; name[3] = 'K';\n"
-			"  name[4] = 'I'; name[5] = 'D'; name[6] = '.'; name[7] = 'C';\n"
-			"  name[8] = 'O'; name[9] = 'M'; name[10] = 0;\n"
-			"  tail[0] = 0; tail[1] = 13;\n"
-			"  block[0] = 0; block[1] = (unsigned)tail; block[2] = __seg();\n"
-			"  block[3] = 0x5c; block[4] = __seg(); block[5] = 0x6c; block[6] = __seg();\n"
-			"  __int21(0x0200, 0, 0, 'P');\n"
-			"  __int21(0x4b00, (int)block, 0, (int)name);\n"
-			"  __int21(0x0200, 0, 0, __cf == 0 ? 'Q' : '!');\n"
-			"  return 0;\n"
-			"}\n";
+		const char* parent = "int __int21(int ax, int bx, int cx, int dx);\n"
+							 "unsigned __seg(void);\n"
+							 "extern int __cf;\n"
+							 "char name[16];\n"
+							 "unsigned block[7];\n"
+							 "char tail[4];\n"
+							 "int main(void) {\n"
+							 "  name[0] = 'C'; name[1] = ':'; name[2] = 92; name[3] = 'K';\n"
+							 "  name[4] = 'I'; name[5] = 'D'; name[6] = '.'; name[7] = 'C';\n"
+							 "  name[8] = 'O'; name[9] = 'M'; name[10] = 0;\n"
+							 "  tail[0] = 0; tail[1] = 13;\n"
+							 "  block[0] = 0; block[1] = (unsigned)tail; block[2] = __seg();\n"
+							 "  block[3] = 0x5c; block[4] = __seg(); block[5] = 0x6c; block[6] = __seg();\n"
+							 "  __int21(0x0200, 0, 0, 'P');\n"
+							 "  __int21(0x4b00, (int)block, 0, (int)name);\n"
+							 "  __int21(0x0200, 0, 0, __cf == 0 ? 'Q' : '!');\n"
+							 "  return 0;\n"
+							 "}\n";
 		check(compile_text(parent, image, "parent.c"), "the parent program compiles");
 
 		if (!image.empty() && !child_image.empty())
@@ -1467,23 +1466,25 @@ namespace
 
 		check(refused("struct p { int x; };\n"
 		              "int main(void) { struct p a; struct p b; a.x = 1; b = a; return b.x; }\n",
-		              "structure assignment is not supported"), "structure assignment is refused");
+		              "structure assignment is not supported"),
+		      "structure assignment is refused");
 		check(refused("int a[3];\nint main(void) { a = 5; return 0; }\n", "cannot assign to an array"),
 		      "assigning to an array is refused");
 		check(refused("int main(void) { return 3; }\nint main(void) { return 4; }\n", "redefinition of function"),
 		      "a second definition of a function is refused");
 		check(refused("struct p { int x; };\nstruct p f(void) { struct p r; r.x = 1; return r; }\n"
-		              "int main(void) { return 0; }\n", "returning a structure"),
+		              "int main(void) { return 0; }\n",
+		              "returning a structure"),
 		      "returning a structure is refused");
 		check(refused("struct p { int x; };\nint f(struct p v) { return v.x; }\nint main(void) { return 0; }\n",
-		              "passing a structure by value"), "a structure parameter is refused");
+		              "passing a structure by value"),
+		      "a structure parameter is refused");
 
 		int line = 0;
 		const std::string comment = compile_error("int main(void) { return 0; }\n/* never closed\nint x;\n", &line);
 		check(comment.find("unterminated comment") != std::string::npos && line == 2,
 		      "an unterminated comment is reported where it opens");
-		check(refused("#if 1\nint main(void) { return 0; }\n", "unterminated #if"),
-		      "an #if with no #endif is refused");
+		check(refused("#if 1\nint main(void) { return 0; }\n", "unterminated #if"), "an #if with no #endif is refused");
 		const std::string body = compile_error("int main(void)\n{\n\tif (1) {\n\t\treturn 0;\n\t}\n", &line);
 		check(!body.empty() && line == 5, "an error at the end of the file is reported on its last line");
 	}
@@ -1553,17 +1554,13 @@ namespace
 			break;
 
 		case 0x3f: // read
-			result = native_host != nullptr
-				         ? native_host->file_read(r->bx, memory + r->dx, r->cx)
-				         : -1;
+			result = native_host != nullptr ? native_host->file_read(r->bx, memory + r->dx, r->cx) : -1;
 			if (result < 0) *carry = 1;
 			r->ax = uint16_t(result < 0 ? 5 : result);
 			break;
 
 		case 0x40: // write
-			result = native_host != nullptr
-				         ? native_host->file_write(r->bx, memory + r->dx, r->cx)
-				         : -1;
+			result = native_host != nullptr ? native_host->file_write(r->bx, memory + r->dx, r->cx) : -1;
 			if (result < 0) *carry = 1;
 			r->ax = uint16_t(result < 0 ? 5 : result);
 			break;
@@ -1619,6 +1616,8 @@ namespace
 
 		// A program that exits in the middle comes back here instead of
 		// returning; the generated code has no frames worth unwinding.
+#pragma warning(push)
+#pragma warning(disable : 4611) // the jump skips only native_service and generated code; neither holds a C++ object
 		if (setjmp(native_finished) == 0)
 		{
 			using entry_point = int (*)(void*);
@@ -1626,6 +1625,7 @@ namespace
 			answer = run(block) & 0xffff;
 		}
 		else answer = native_exit_code;
+#pragma warning(pop)
 
 		native_host = nullptr;
 		host.code_free(block, block_size);
@@ -1638,32 +1638,31 @@ namespace
 		// A pointer is a 16-bit offset into the block the host hands the entry
 		// point, exactly as it is under DOS, so arrays, structures and the
 		// address of a local all mean the same thing on both machines.
-		const char* source =
-			"int fib(int n) { if (n < 2) return n; return fib(n - 1) + fib(n - 2); }\n"
-			"int counter;\n"
-			"int scale(int v, int f) { return (v * f) >> 2; }\n"
-			"struct point { int x; int y; };\n"
-			"struct point grid[4];\n"
-			"int total(int *values, int count) {\n"
-			"  int sum; int i; sum = 0;\n"
-			"  for (i = 0; i < count; i = i + 1) sum = sum + values[i];\n"
-			"  return sum;\n"
-			"}\n"
-			"int length(char *s) { int n; n = 0; while (*s) { n = n + 1; s = s + 1; } return n; }\n"
-			"int main(void) {\n"
-			"  int i; int sum; int local[4]; char *text;\n"
-			"  sum = 0;\n"
-			"  for (i = 0; i < 10; i = i + 1) sum = sum + scale(i, 6);\n"
-			"  counter = 0;\n"
-			"  while (counter < 5) counter = counter + 1;\n"
-			"  switch (counter) { case 4: return 1; case 5: break; default: return 2; }\n"
-			"  for (i = 0; i < 4; i = i + 1) { local[i] = i * 2; grid[i].x = i; grid[i].y = i + 1; }\n"
-			"  sum = sum + total(local, 4);\n"
-			"  for (i = 0; i < 4; i = i + 1) sum = sum + grid[i].x * grid[i].y;\n"
-			"  text = \"abcdef\";\n"
-			"  sum = sum + length(text);\n"
-			"  return sum + fib(12) + counter;\n"
-			"}\n";
+		const char* source = "int fib(int n) { if (n < 2) return n; return fib(n - 1) + fib(n - 2); }\n"
+							 "int counter;\n"
+							 "int scale(int v, int f) { return (v * f) >> 2; }\n"
+							 "struct point { int x; int y; };\n"
+							 "struct point grid[4];\n"
+							 "int total(int *values, int count) {\n"
+							 "  int sum; int i; sum = 0;\n"
+							 "  for (i = 0; i < count; i = i + 1) sum = sum + values[i];\n"
+							 "  return sum;\n"
+							 "}\n"
+							 "int length(char *s) { int n; n = 0; while (*s) { n = n + 1; s = s + 1; } return n; }\n"
+							 "int main(void) {\n"
+							 "  int i; int sum; int local[4]; char *text;\n"
+							 "  sum = 0;\n"
+							 "  for (i = 0; i < 10; i = i + 1) sum = sum + scale(i, 6);\n"
+							 "  counter = 0;\n"
+							 "  while (counter < 5) counter = counter + 1;\n"
+							 "  switch (counter) { case 4: return 1; case 5: break; default: return 2; }\n"
+							 "  for (i = 0; i < 4; i = i + 1) { local[i] = i * 2; grid[i].x = i; grid[i].y = i + 1; }\n"
+							 "  sum = sum + total(local, 4);\n"
+							 "  for (i = 0; i < 4; i = i + 1) sum = sum + grid[i].x * grid[i].y;\n"
+							 "  text = \"abcdef\";\n"
+							 "  sum = sum + length(text);\n"
+							 "  return sum + fib(12) + counter;\n"
+							 "}\n";
 
 		// What the interpreter says it means, through the 8086 back end.
 		std::vector<uint8_t> guest;
@@ -1704,8 +1703,7 @@ namespace
 		win32_host host;
 		int answer = -1;
 		if (!run_native(image, host, answer)) return; // not a host that can run it
-		check_equal(uint32_t(answer), uint32_t(expected),
-		            "the host back end computes what the emulator computed");
+		check_equal(uint32_t(answer), uint32_t(expected), "the host back end computes what the emulator computed");
 	}
 
 	// A key travels from the host through the keyboard controller, IRQ 1 and
@@ -1732,10 +1730,12 @@ namespace
 
 		{
 			// mov ah,0 / int 16h / mov dl,al / mov ah,2 / int 21h / exit
+			// clang-format off
 			const uint8_t com[] = {
 				0xb4, 0x00, 0xcd, 0x16, 0x88, 0xc2, 0xb4, 0x02, 0xcd, 0x21,
 				0xb8, 0x00, 0x4c, 0xcd, 0x21
 			};
+			// clang-format on
 			machine m;
 			check(m.load_program(com, sizeof(com), "C:\\KEY.COM", ""), "the key test program loads");
 
@@ -1826,8 +1826,8 @@ namespace
 
 		const uint8_t wide[] = {
 			0x0f, 0x84, 0x03, 0x00, // je near
-			0x0f, 0x94, 0xc3, // sete bl
-			0x0f, 0xb6, 0xc3, // movzx ax,bl
+			0x0f, 0x94, 0xc3,       // sete bl
+			0x0f, 0xb6, 0xc3,       // movzx ax,bl
 			0x0f, 0xba, 0xe8, 0x05, // bts ax,5
 			0x64, 0xa0, 0x10, 0x00, // mov al,fs:[0010h]
 		};
@@ -1904,9 +1904,10 @@ namespace
 		int32_t file_seek(int handle, int32_t offset, int origin) override
 		{
 			if (!valid(handle)) return -1;
-			const int32_t base = origin == 1 ? int32_t(open_[handle].position)
-			                                 : origin == 2 ? int32_t(files[open_[handle].path].size()) : 0;
-			open_[handle].position = size_t(base + offset);
+			const int32_t base = origin == 1   ? int32_t(open_[handle].position)
+			                     : origin == 2 ? int32_t(files[open_[handle].path].size())
+			                                   : 0;
+			open_[handle].position = size_t(int64_t(base) + offset);
 			return int32_t(open_[handle].position);
 		}
 
@@ -2131,25 +2132,24 @@ namespace
 			check(read16(s, psp, 2) > 0x9000, "an EXE asking for everything gets everything");
 		}
 
-		const char* handles =
-			"int __int21(int ax, int bx, int cx, int dx);\n"
-			"int main(void) {\n"
-			"  int h = __int21(0x3c00, 0, 0, (int)\"OUT.TXT\");\n"
-			"  int d;\n"
-			"  __int21(0x4000, h, 2, (int)\"AB\");\n"
-			"  d = __int21(0x4500, h, 0, 0);\n"
-			"  __int21(0x4000, d, 1, (int)\"C\");\n"
-			"  __int21(0x3e00, d, 0, 0);\n"
-			"  __int21(0x4600, h, 1, 0);\n"
-			"  __int21(0x0900, 0, 0, (int)\"D$\");\n"
-			"  __int21(0x3e00, h, 0, 0);\n"
-			"  h = __int21(0x3c00, 0, 0, (int)\"LONGFILENAME.TEXT\");\n"
-			"  __int21(0x3e00, h, 0, 0);\n"
-			"  h = __int21(0x3d01, 0, 0, (int)\"NUL\");\n"
-			"  __int21(0x4000, h, 5, (int)\"lost!\");\n"
-			"  __int21(0x3e00, h, 0, 0);\n"
-			"  return 0;\n"
-			"}\n";
+		const char* handles = "int __int21(int ax, int bx, int cx, int dx);\n"
+							  "int main(void) {\n"
+							  "  int h = __int21(0x3c00, 0, 0, (int)\"OUT.TXT\");\n"
+							  "  int d;\n"
+							  "  __int21(0x4000, h, 2, (int)\"AB\");\n"
+							  "  d = __int21(0x4500, h, 0, 0);\n"
+							  "  __int21(0x4000, d, 1, (int)\"C\");\n"
+							  "  __int21(0x3e00, d, 0, 0);\n"
+							  "  __int21(0x4600, h, 1, 0);\n"
+							  "  __int21(0x0900, 0, 0, (int)\"D$\");\n"
+							  "  __int21(0x3e00, h, 0, 0);\n"
+							  "  h = __int21(0x3c00, 0, 0, (int)\"LONGFILENAME.TEXT\");\n"
+							  "  __int21(0x3e00, h, 0, 0);\n"
+							  "  h = __int21(0x3d01, 0, 0, (int)\"NUL\");\n"
+							  "  __int21(0x4000, h, 5, (int)\"lost!\");\n"
+							  "  __int21(0x3e00, h, 0, 0);\n"
+							  "  return 0;\n"
+							  "}\n";
 		std::vector<uint8_t> image;
 		check(compile_text(handles, image, "handles.c"), "the handles program compiles");
 		if (!image.empty())
@@ -2172,45 +2172,43 @@ namespace
 	// the console a host takes over.
 	void test_command_line()
 	{
-		const char* kid =
-			"int __int21(int ax, int bx, int cx, int dx);\n"
-			"int main(void) {\n"
-			"  unsigned char *tail = (unsigned char *)0x80;\n"
-			"  __int21(0x4000, 1, tail[0], 0x81);\n"
-			"  return 3;\n"
-			"}\n";
-		const char* parent =
-			"int __int21(int ax, int bx, int cx, int dx);\n"
-			"unsigned __seg(void);\n"
-			"extern int __cf;\n"
-			"char tail[130];\n"
-			"unsigned block[7];\n"
-			"int run(char *line) {\n"
-			"  int n = 0;\n"
-			"  while (line[n] != 0) { tail[n + 1] = line[n]; ++n; }\n"
-			"  tail[0] = n; tail[n + 1] = 13;\n"
-			"  block[0] = 0; block[1] = (unsigned)tail; block[2] = __seg();\n"
-			"  block[3] = 0x5c; block[4] = __seg(); block[5] = 0x6c; block[6] = __seg();\n"
-			"  __int21(0x4b00, (int)block, 0, (int)\"C:\\\\COMMAND.COM\");\n"
-			"  if (__cf) return 9;\n"
-			"  return __int21(0x4d00, 0, 0, 0) & 0xff;\n"
-			"}\n"
-			"int main(void) {\n"
-			"  int code;\n"
-			"  run(\" /C echo hello > HELLO.TXT\");\n"
-			"  run(\" /C copy /b A.TXT+B.TXT C.TXT\");\n"
-			"  run(\" /C ren C.TXT D.TXT\");\n"
-			"  run(\" /C del A.TXT\");\n"
-			"  run(\" /C if exist D.TXT echo yes> E.TXT\");\n"
-			"  run(\" /C if not exist A.TXT type B.TXT > F.TXT\");\n"
-			"  code = run(\" /C kid one two>KID.TXT\");\n"
-			"  __int21(0x0200, 0, 0, '0' + code);\n"
-			"  code = run(\" /C tool x\");\n"
-			"  __int21(0x0200, 0, 0, '0' + code);\n"
-			"  code = run(\" /C nosuch\");\n"
-			"  __int21(0x0200, 0, 0, '0' + code);\n"
-			"  return 0;\n"
-			"}\n";
+		const char* kid = "int __int21(int ax, int bx, int cx, int dx);\n"
+						  "int main(void) {\n"
+						  "  unsigned char *tail = (unsigned char *)0x80;\n"
+						  "  __int21(0x4000, 1, tail[0], 0x81);\n"
+						  "  return 3;\n"
+						  "}\n";
+		const char* parent = "int __int21(int ax, int bx, int cx, int dx);\n"
+							 "unsigned __seg(void);\n"
+							 "extern int __cf;\n"
+							 "char tail[130];\n"
+							 "unsigned block[7];\n"
+							 "int run(char *line) {\n"
+							 "  int n = 0;\n"
+							 "  while (line[n] != 0) { tail[n + 1] = line[n]; ++n; }\n"
+							 "  tail[0] = n; tail[n + 1] = 13;\n"
+							 "  block[0] = 0; block[1] = (unsigned)tail; block[2] = __seg();\n"
+							 "  block[3] = 0x5c; block[4] = __seg(); block[5] = 0x6c; block[6] = __seg();\n"
+							 "  __int21(0x4b00, (int)block, 0, (int)\"C:\\\\COMMAND.COM\");\n"
+							 "  if (__cf) return 9;\n"
+							 "  return __int21(0x4d00, 0, 0, 0) & 0xff;\n"
+							 "}\n"
+							 "int main(void) {\n"
+							 "  int code;\n"
+							 "  run(\" /C echo hello > HELLO.TXT\");\n"
+							 "  run(\" /C copy /b A.TXT+B.TXT C.TXT\");\n"
+							 "  run(\" /C ren C.TXT D.TXT\");\n"
+							 "  run(\" /C del A.TXT\");\n"
+							 "  run(\" /C if exist D.TXT echo yes> E.TXT\");\n"
+							 "  run(\" /C if not exist A.TXT type B.TXT > F.TXT\");\n"
+							 "  code = run(\" /C kid one two>KID.TXT\");\n"
+							 "  __int21(0x0200, 0, 0, '0' + code);\n"
+							 "  code = run(\" /C tool x\");\n"
+							 "  __int21(0x0200, 0, 0, '0' + code);\n"
+							 "  code = run(\" /C nosuch\");\n"
+							 "  __int21(0x0200, 0, 0, '0' + code);\n"
+							 "  return 0;\n"
+							 "}\n";
 
 		std::vector<uint8_t> kid_image;
 		std::vector<uint8_t> image;
@@ -2243,30 +2241,29 @@ namespace
 
 		// ECHO's delimiter, >> after the ^Z COPY leaves, and DEL asking
 		// before it empties a directory - with no answer to read, it does not.
-		const char* more =
-			"int __int21(int ax, int bx, int cx, int dx);\n"
-			"unsigned __seg(void);\n"
-			"extern int __cf;\n"
-			"char tail[130];\n"
-			"unsigned block[7];\n"
-			"int run(char *line) {\n"
-			"  int n = 0;\n"
-			"  while (line[n] != 0) { tail[n + 1] = line[n]; ++n; }\n"
-			"  tail[0] = n; tail[n + 1] = 13;\n"
-			"  block[0] = 0; block[1] = (unsigned)tail; block[2] = __seg();\n"
-			"  block[3] = 0x5c; block[4] = __seg(); block[5] = 0x6c; block[6] = __seg();\n"
-			"  __int21(0x4b00, (int)block, 0, (int)\"C:\\\\COMMAND.COM\");\n"
-			"  return 0;\n"
-			"}\n"
-			"int main(void) {\n"
-			"  run(\" /C echo .done> DOT.TXT\");\n"
-			"  run(\" /C echo.> BLANK.TXT\");\n"
-			"  run(\" /C echo y.obj >> X.RSP\");\n"
-			"  run(\" /C del KEEP\\\\*.*\");\n"
-			"  run(\" /C del GONE < YES.TXT\");\n"
-			"  run(\" /C del *.LOG\");\n"
-			"  return 0;\n"
-			"}\n";
+		const char* more = "int __int21(int ax, int bx, int cx, int dx);\n"
+						   "unsigned __seg(void);\n"
+						   "extern int __cf;\n"
+						   "char tail[130];\n"
+						   "unsigned block[7];\n"
+						   "int run(char *line) {\n"
+						   "  int n = 0;\n"
+						   "  while (line[n] != 0) { tail[n + 1] = line[n]; ++n; }\n"
+						   "  tail[0] = n; tail[n + 1] = 13;\n"
+						   "  block[0] = 0; block[1] = (unsigned)tail; block[2] = __seg();\n"
+						   "  block[3] = 0x5c; block[4] = __seg(); block[5] = 0x6c; block[6] = __seg();\n"
+						   "  __int21(0x4b00, (int)block, 0, (int)\"C:\\\\COMMAND.COM\");\n"
+						   "  return 0;\n"
+						   "}\n"
+						   "int main(void) {\n"
+						   "  run(\" /C echo .done> DOT.TXT\");\n"
+						   "  run(\" /C echo.> BLANK.TXT\");\n"
+						   "  run(\" /C echo y.obj >> X.RSP\");\n"
+						   "  run(\" /C del KEEP\\\\*.*\");\n"
+						   "  run(\" /C del GONE < YES.TXT\");\n"
+						   "  run(\" /C del *.LOG\");\n"
+						   "  return 0;\n"
+						   "}\n";
 		check(compile_text(more, image, "command2.c"), "the second COMMAND.COM /C program compiles");
 		if (!image.empty())
 		{
@@ -2281,8 +2278,8 @@ namespace
 			second.files["C:\\B.LOG"] = "2";
 			second.takes_console = true;
 			machine again;
-			const char* environment[] = {"COMSPEC=C:\\COMMAND.COM"};
-			again.set_environment(environment, 1);
+			const char* second_environment[] = {"COMSPEC=C:\\COMMAND.COM"};
+			again.set_environment(second_environment, 1);
 			run_on(again, image, second);
 			check(second.files["C:\\DOT.TXT"] == ".done\r\n", "ECHO keeps a delimiter after a blank");
 			check(second.files["C:\\BLANK.TXT"] == "\r\n", "ECHO. prints an empty line");
@@ -2297,9 +2294,8 @@ namespace
 
 		// Without a host that has taken it, the console is the screen again.
 		machine screen;
-		const char* hello =
-			"int __int21(int ax, int bx, int cx, int dx);\n"
-			"int main(void) { __int21(0x0900, 0, 0, (int)\"on the screen$\"); return 0; }\n";
+		const char* hello = "int __int21(int ax, int bx, int cx, int dx);\n"
+							"int main(void) { __int21(0x0900, 0, 0, (int)\"on the screen$\"); return 0; }\n";
 		check(compile_text(hello, image, "screen.c"), "the screen program compiles");
 		ram_host plain;
 		run_on(screen, image, plain);
@@ -2314,18 +2310,17 @@ namespace
 	void test_dos_services()
 	{
 		const char* waits = "int main(void) { for (;;) {} return 0; }\n";
-		const char* parent =
-			"int __int21(int ax, int bx, int cx, int dx);\n"
-			"unsigned __seg(void);\n"
-			"unsigned block[7];\n"
-			"char tail[2];\n"
-			"int main(void) {\n"
-			"  tail[0] = 0; tail[1] = 13;\n"
-			"  block[0] = 0; block[1] = (unsigned)tail; block[2] = __seg();\n"
-			"  block[3] = 0x5c; block[4] = __seg(); block[5] = 0x6c; block[6] = __seg();\n"
-			"  __int21(0x4b00, (int)block, 0, (int)\"C:\\\\SUB\\\\WAITS.COM\");\n"
-			"  return 0;\n"
-			"}\n";
+		const char* parent = "int __int21(int ax, int bx, int cx, int dx);\n"
+							 "unsigned __seg(void);\n"
+							 "unsigned block[7];\n"
+							 "char tail[2];\n"
+							 "int main(void) {\n"
+							 "  tail[0] = 0; tail[1] = 13;\n"
+							 "  block[0] = 0; block[1] = (unsigned)tail; block[2] = __seg();\n"
+							 "  block[3] = 0x5c; block[4] = __seg(); block[5] = 0x6c; block[6] = __seg();\n"
+							 "  __int21(0x4b00, (int)block, 0, (int)\"C:\\\\SUB\\\\WAITS.COM\");\n"
+							 "  return 0;\n"
+							 "}\n";
 		std::vector<uint8_t> waits_image;
 		std::vector<uint8_t> image;
 		check(compile_text(waits, waits_image, "waits.c"), "the waiting child compiles");
@@ -2348,7 +2343,8 @@ namespace
 			const uint16_t parent_environment = read16(s, read16(s, child, 0x16), 0x2c);
 			std::string strings;
 			uint16_t offset = 0;
-			while (offset < 400 && !(read8(s, child_environment, offset) == 0 && strings.size() > 0 && strings.back() == '\n'))
+			while (offset < 400 &&
+			       !(read8(s, child_environment, offset) == 0 && strings.size() > 0 && strings.back() == '\n'))
 			{
 				const uint8_t ch = read8(s, child_environment, offset++);
 				strings += ch == 0 ? '\n' : char(ch);
@@ -2396,7 +2392,8 @@ namespace
 			{
 				const size_t length = std::strlen(name);
 				for (size_t i = 0; i <= length; ++i) write8(s, 0x2000, uint16_t(i), uint8_t(name[i]));
-				const uint8_t before[16] = {3, 'F', 'O', 'O', ' ', ' ', ' ', ' ', ' ', 'B', 'A', 'K', 0xff, 0xff, 0xff, 0xff};
+				const uint8_t before[16] = {3,   'F', 'O', 'O', ' ',  ' ',  ' ',  ' ',
+				                            ' ', 'B', 'A', 'K', 0xff, 0xff, 0xff, 0xff};
 				for (int i = 0; i < 16; ++i) write8(s, 0x2000, uint16_t(0x100 + i), before[i]);
 				s.cpu.set_ax(uint16_t(0x2900 | flags));
 				s.cpu.set_ds(0x2000);
@@ -2434,21 +2431,21 @@ namespace
 		// there is nothing more at its end, so emptying the keyboard with
 		// while (kbhit()) getch() stops there.
 		{
-			const char* drain =
-				"int __int21(int ax, int bx, int cx, int dx);\n"
-				"int main(void) {\n"
-				"  int h;\n"
-				"  int n;\n"
-				"  int ok;\n"
-				"  h = __int21(0x3d00, 0, 0, (int)\"C:\\\\IN.TXT\");\n"
-				"  __int21(0x4600, h, 0, 0);\n"
-				"  ok = (__int21(0x4406, 0, 0, 0) & 0xff) == 0xff;\n"
-				"  for (n = 0; n < 100 && (__int21(0x0b00, 0, 0, 0) & 0xff) != 0; n = n + 1) __int21(0x0800, 0, 0, 0);\n"
-				"  ok = ok && n == 3 && (__int21(0x4406, 0, 0, 0) & 0xff) == 0;\n"
-				"  ok = ok && (__int21(0x0600, 0, 0, 0xff) & 0xff) == 0;\n"
-				"  __int21(0x0200, 0, 0, ok ? 'E' : 'N');\n"
-				"  return 0;\n"
-				"}\n";
+			const char* drain = "int __int21(int ax, int bx, int cx, int dx);\n"
+								"int main(void) {\n"
+								"  int h;\n"
+								"  int n;\n"
+								"  int ok;\n"
+								"  h = __int21(0x3d00, 0, 0, (int)\"C:\\\\IN.TXT\");\n"
+								"  __int21(0x4600, h, 0, 0);\n"
+								"  ok = (__int21(0x4406, 0, 0, 0) & 0xff) == 0xff;\n"
+								"  for (n = 0; n < 100 && (__int21(0x0b00, 0, 0, 0) & 0xff) != 0; n = n + 1)"
+								" __int21(0x0800, 0, 0, 0);\n"
+								"  ok = ok && n == 3 && (__int21(0x4406, 0, 0, 0) & 0xff) == 0;\n"
+								"  ok = ok && (__int21(0x0600, 0, 0, 0xff) & 0xff) == 0;\n"
+								"  __int21(0x0200, 0, 0, ok ? 'E' : 'N');\n"
+								"  return 0;\n"
+								"}\n";
 			check(compile_text(drain, image, "drain.c"), "the input status program compiles");
 			ram_host host;
 			host.files["C:\\IN.TXT"] = "abc";
@@ -2462,26 +2459,25 @@ namespace
 		// asks after other files and abandons the search: its own walk is
 		// stepped all along, so it is never the one given up.
 		{
-			const char* walk =
-				"int __int21(int ax, int bx, int cx, int dx);\n"
-				"extern int __cf;\n"
-				"char mine[64];\n"
-				"char other[64];\n"
-				"int main(void) {\n"
-				"  int i;\n"
-				"  int walked = 0;\n"
-				"  __int21(0x1a00, 0, 0, (int)mine);\n"
-				"  __int21(0x4e00, 0, 0, (int)\"*.TXT\");\n"
-				"  for (i = 0; i < 30; i = i + 1) {\n"
-				"    __int21(0x1a00, 0, 0, (int)other);\n"
-				"    __int21(0x4e00, 0, 0, (int)\"*.DAT\");\n"
-				"    __int21(0x1a00, 0, 0, (int)mine);\n"
-				"    __int21(0x4f00, 0, 0, 0);\n"
-				"    if (!__cf) walked = walked + 1;\n"
-				"  }\n"
-				"  __int21(0x0200, 0, 0, walked == 30 ? 'W' : 'N');\n"
-				"  return 0;\n"
-				"}\n";
+			const char* walk = "int __int21(int ax, int bx, int cx, int dx);\n"
+							   "extern int __cf;\n"
+							   "char mine[64];\n"
+							   "char other[64];\n"
+							   "int main(void) {\n"
+							   "  int i;\n"
+							   "  int walked = 0;\n"
+							   "  __int21(0x1a00, 0, 0, (int)mine);\n"
+							   "  __int21(0x4e00, 0, 0, (int)\"*.TXT\");\n"
+							   "  for (i = 0; i < 30; i = i + 1) {\n"
+							   "    __int21(0x1a00, 0, 0, (int)other);\n"
+							   "    __int21(0x4e00, 0, 0, (int)\"*.DAT\");\n"
+							   "    __int21(0x1a00, 0, 0, (int)mine);\n"
+							   "    __int21(0x4f00, 0, 0, 0);\n"
+							   "    if (!__cf) walked = walked + 1;\n"
+							   "  }\n"
+							   "  __int21(0x0200, 0, 0, walked == 30 ? 'W' : 'N');\n"
+							   "  return 0;\n"
+							   "}\n";
 			check(compile_text(walk, image, "walk.c"), "the directory walk compiles");
 			ram_host host;
 			for (int i = 0; i < 31; ++i) host.files["C:\\F" + std::to_string(i) + ".TXT"] = "t";
@@ -2557,8 +2553,8 @@ namespace
 			step(m, 5);
 			const cpu_state& c = m.state().cpu;
 			const bool is_8086 = model == cpu_model::i8086;
-			check_equal(c.ax(), is_8086 ? 0xfffc : 0xfffe, is_8086 ? "an 8086 pushes SP after the decrement"
-			                                                     : "a 386 pushes SP as it was");
+			check_equal(c.ax(), is_8086 ? 0xfffc : 0xfffe,
+			            is_8086 ? "an 8086 pushes SP after the decrement" : "a 386 pushes SP as it was");
 			check_equal(c.bx(), is_8086 ? 0 : 2, is_8086 ? "an 8086 shifts by all of CL" : "a 386 shifts by CL mod 32");
 			check(!m.faulted(), "neither stops");
 		}
@@ -2601,10 +2597,8 @@ namespace
 				const size_t within = size_t(at % disk_sector_size);
 				const size_t part = std::min<size_t>(count - done, disk_sector_size - within);
 				const auto found = sectors.find(at / disk_sector_size);
-				if (found == sectors.end())
-					memset(data + done, 0, part);
-				else
-					memcpy(data + done, found->second.data() + within, part);
+				if (found == sectors.end()) memset(data + done, 0, part);
+				else memcpy(data + done, found->second.data() + within, part);
 				done += part;
 			}
 			return true;
@@ -2647,7 +2641,7 @@ namespace
 		master[510] = 0x55;
 		master[511] = 0xaa;
 		const std::vector<disk_file> files = {
-			test_file("bin\\io.sys", 3000, true), test_file("msdos.sys", 1500, true),
+			test_file("bin\\io.sys", 3000, true),   test_file("msdos.sys", 1500, true),
 			test_file("command.com", 25000, false), test_file("empty.txt", 0, false),
 			test_file("readme.long", 600, false),
 		};
@@ -2668,7 +2662,8 @@ namespace
 		std::vector<uint8_t> floppy;
 		disk_report report;
 		std::string error;
-		check(disk_build_floppy(360, boot, files, "test disk", stamp, floppy, report, error), "a 360 KB floppy is built");
+		check(disk_build_floppy(360, boot, files, "test disk", stamp, floppy, report, error),
+		      "a 360 KB floppy is built");
 		check_equal(uint32_t(floppy.size()), 368640, "a 360 KB floppy is 720 sectors");
 		check(floppy[13] == 2 && floppy[17] == 112 && floppy[21] == 0xfd && floppy[22] == 2 && floppy[24] == 9,
 		      "a 360 KB floppy's parameter block");
@@ -2676,22 +2671,28 @@ namespace
 		      "the boot sector names the label and FAT12");
 		check_equal(le32(&floppy[39]), 0x12345678, "a floppy's serial number is the stamp's");
 		const uint8_t* root = &floppy[5 * disk_sector_size];
-		check(memcmp(root, "IO      SYS", 11) == 0 && root[11] == 0x07 && root[26] == 2, "IO.SYS is first, a system file at cluster 2");
+		check(memcmp(root, "IO      SYS", 11) == 0 && root[11] == 0x07 && root[26] == 2,
+		      "IO.SYS is first, a system file at cluster 2");
 		check(memcmp(root + 32, "MSDOS   SYS", 11) == 0 && root[43] == 0x07 && root[58] == 5, "MSDOS.SYS follows it");
 		check(memcmp(root + 64, "TEST DISK  ", 11) == 0 && root[75] == 0x08, "the label is third");
 		check_equal(uint32_t(root[86] | root[87] << 8), stamp.time, "the label is dated");
 		check(memcmp(root + 128, "EMPTY   TXT", 11) == 0 && root[154] == 0 && le32(root + 156) == 0,
 		      "an empty file has an entry and no cluster");
 		const uint8_t* fat = &floppy[disk_sector_size];
-		check(fat[0] == 0xfd && fat[1] == 0xff && fat[2] == 0xff && fat[3] == 0x03 && (fat[6] | (fat[7] & 0x0f) << 8) == 0xfff,
+		check(fat[0] == 0xfd && fat[1] == 0xff && fat[2] == 0xff && fat[3] == 0x03 &&
+		          (fat[6] | (fat[7] & 0x0f) << 8) == 0xfff,
 		      "the FAT holds the media byte and IO.SYS's chain");
 		check(memcmp(fat, &floppy[3 * disk_sector_size], 2 * disk_sector_size) == 0, "both FATs match");
 		check_equal(report.volumes[0].free_clusters, 354 - 31, "the floppy's free clusters");
 
 		// Read it back, with a subdirectory added by hand: SUB at cluster 33
 		// holding INNER.TXT at 34 and a deleted entry.
-		const auto cluster_at = [](uint32_t cluster) { return size_t(12 + (cluster - 2) * 2) * disk_sector_size; };
-		const auto set_fat12 = [&](uint32_t cluster, uint32_t value) {
+		const auto cluster_at = [](uint32_t cluster)
+		{
+			return size_t(12 + (cluster - 2) * 2) * disk_sector_size;
+		};
+		const auto set_fat12 = [&](uint32_t cluster, uint32_t value)
+		{
 			uint8_t* p = &floppy[disk_sector_size + cluster + cluster / 2];
 			if (cluster & 1)
 			{
@@ -2705,6 +2706,7 @@ namespace
 			}
 		};
 		uint8_t* sub = &floppy[5 * disk_sector_size + 6 * 32];
+		// NOLINTBEGIN(bugprone-not-null-terminated-result): a directory entry's name is 11 bytes, unterminated
 		memcpy(sub, "SUB        ", 11);
 		sub[11] = 0x10;
 		sub[26] = 33;
@@ -2714,8 +2716,11 @@ namespace
 		listing[26] = 33;
 		memcpy(listing + 32, "..         ", 11);
 		listing[43] = 0x10;
+		// clang-format off
 		memcpy(listing + 64, "\xe5" "DELETEDTXT", 11);
+		// clang-format on
 		memcpy(listing + 96, "INNER   TXT", 11);
+		// NOLINTEND(bugprone-not-null-terminated-result)
 		listing[96 + 11] = 0x20;
 		listing[96 + 26] = 34;
 		listing[96 + 28] = 5;
@@ -2746,7 +2751,8 @@ namespace
 		check(disk_read_file(image, volumes[0], "sub/inner.txt", data, error) && data.size() == 5 &&
 		          memcmp(data.data(), "hello", 5) == 0,
 		      "a file in a subdirectory is read back");
-		check(disk_read_file(image, volumes[0], "EMPTY.TXT", data, error) && data.empty(), "an empty file reads as nothing");
+		check(disk_read_file(image, volumes[0], "EMPTY.TXT", data, error) && data.empty(),
+		      "an empty file reads as nothing");
 		check(!disk_read_file(image, volumes[0], "\\deleted.txt", data, error), "a deleted file is not found");
 		check(!disk_read_file(image, volumes[0], "\\sub", data, error) && error.find("directory") != std::string::npos,
 		      "a directory is not read as a file");
@@ -2755,6 +2761,7 @@ namespace
 		// once, and a directory whose clusters loop is an error, not an endless read.
 		uint8_t* twin = &floppy[5 * disk_sector_size + 7 * 32];
 		memcpy(twin, sub, 32);
+		// NOLINTNEXTLINE(bugprone-not-null-terminated-result): a directory entry's name is 11 bytes, unterminated
 		memcpy(twin, "TWIN       ", 11);
 		image.write(0, floppy.data(), floppy.size());
 		check(disk_list(image, volumes[0], entries, error) && entries.size() == 8 && entries[7].path == "\\TWIN",
@@ -2766,6 +2773,7 @@ namespace
 		check(!disk_read_file(image, volumes[0], "sub/inner.txt", data, error), "nor is a file read through one");
 
 		std::vector<disk_file> too_many;
+		too_many.reserve(120);
 		for (int i = 0; i < 120; ++i) too_many.push_back(test_file(("f" + std::to_string(i)).c_str(), 1, false));
 		check(!disk_build_floppy(360, boot, too_many, "", stamp, floppy, report, error) &&
 		          error.find("root directory") != std::string::npos,
@@ -2821,7 +2829,8 @@ namespace
 		const uint8_t blank[disk_sector_size] = {};
 		image.write(volumes[2].start * disk_sector_size, blank, disk_sector_size);
 		check(disk_volumes(image, volumes, error) && volumes.size() == 4 && volumes[0].drive == 0 &&
-		          volumes[1].drive == 'C' && !volumes[2].formatted && volumes[2].drive == 'D' && volumes[3].drive == 'E',
+		          volumes[1].drive == 'C' && !volumes[2].formatted && volumes[2].drive == 'D' &&
+		          volumes[3].drive == 'E',
 		      "only DOS partition types are lettered, formatted or not");
 
 		// An EBR that links back to itself ends the chain rather than giving
@@ -2840,7 +2849,8 @@ namespace
 		layout.lba_types = true;
 		check(disk_build_hard_disk(layout, master, boot, {}, "", stamp, image, report, error) &&
 		          report.volumes.size() == 3 && report.volumes[0].type == 0x0e && report.volumes[1].type == 0x0e &&
-		          report.volumes[2].type == 0x01 && report.volumes[0].sectors_per_cluster == 4 && report.volumes[0].fat16,
+		          report.volumes[2].type == 0x01 && report.volumes[0].sectors_per_cluster == 4 &&
+		          report.volumes[0].fat16,
 		      "LBA types: FAT16 partitions are 0Eh, a small one is still 01h");
 		check(image.sector(0)[0x1d2] == 0x0f, "the extended partition is 0Fh with LBA");
 		check(disk_volumes(image, volumes, error) && volumes.size() == 3 && volumes[0].fat16 && !volumes[2].fat16,
@@ -2860,8 +2870,8 @@ namespace
 		layout.megabytes = 8500;
 		layout.partition_megabytes = 2047;
 		layout.lba_types = true;
-		check(disk_build_hard_disk(layout, master, boot, {}, "", stamp, image, report, error) &&
-		          report.heads == 255 && report.cylinders == 1083 && report.volumes.size() == 5 &&
+		check(disk_build_hard_disk(layout, master, boot, {}, "", stamp, image, report, error) && report.heads == 255 &&
+		          report.cylinders == 1083 && report.volumes.size() == 5 &&
 		          report.volumes[0].sectors_per_cluster == 64 && report.volumes[4].sectors_per_cluster == 16,
 		      "an 8.5 GB disk is five volumes, the first with 32 KB clusters");
 		std::vector<uint8_t> last = image.sector(report.volumes[4].start - 63);
@@ -2881,14 +2891,9 @@ namespace
 	public:
 		std::vector<uint8_t> bytes;
 
-		explicit ram_drive(size_t sectors) : bytes(sectors * 512)
-		{
-		}
+		explicit ram_drive(size_t sectors) : bytes(sectors * 512) {}
 
-		uint64_t sectors() override
-		{
-			return bytes.size() / 512;
-		}
+		uint64_t sectors() override { return bytes.size() / 512; }
 
 		bool read(uint64_t lba, uint8_t* data, uint32_t count) override
 		{
@@ -2913,19 +2918,20 @@ namespace
 		// for the LBA calls and prints BH (AAh if they are there), reads LBA 3
 		// through the packet at 7C80h and prints its first byte, then halts.
 		const uint8_t program[] = {
-			0x31, 0xc0, 0x8e, 0xd8, 0x8e, 0xc0,             // xor ax,ax / mov ds,ax / mov es,ax
-			0xb8, 0x42, 0x0e, 0xcd, 0x10,                   // mov ax,0E42h / int 10h
-			0xb8, 0x01, 0x02, 0xbb, 0x00, 0x06,             // mov ax,0201h / mov bx,0600h
-			0xb9, 0x02, 0x00, 0xb6, 0x00, 0xcd, 0x13,       // mov cx,2 / mov dh,0 / int 13h
-			0xa0, 0x00, 0x06, 0xb4, 0x0e, 0xcd, 0x10,       // mov al,[0600h] / mov ah,0Eh / int 10h
-			0xb4, 0x41, 0xbb, 0xaa, 0x55, 0xcd, 0x13,       // mov ah,41h / mov bx,55AAh / int 13h
-			0x88, 0xf8, 0xb4, 0x0e, 0xcd, 0x10,             // mov al,bh / mov ah,0Eh / int 10h
-			0xbe, 0x80, 0x7c, 0xb4, 0x42, 0xcd, 0x13,       // mov si,7C80h / mov ah,42h / int 13h
-			0xa0, 0x00, 0x08, 0xb4, 0x0e, 0xcd, 0x10,       // mov al,[0800h] / mov ah,0Eh / int 10h
-			0xf4, 0xeb, 0xfd,                               // hlt / jmp $-1
+			0x31, 0xc0, 0x8e, 0xd8, 0x8e, 0xc0,       // xor ax,ax / mov ds,ax / mov es,ax
+			0xb8, 0x42, 0x0e, 0xcd, 0x10,             // mov ax,0E42h / int 10h
+			0xb8, 0x01, 0x02, 0xbb, 0x00, 0x06,       // mov ax,0201h / mov bx,0600h
+			0xb9, 0x02, 0x00, 0xb6, 0x00, 0xcd, 0x13, // mov cx,2 / mov dh,0 / int 13h
+			0xa0, 0x00, 0x06, 0xb4, 0x0e, 0xcd, 0x10, // mov al,[0600h] / mov ah,0Eh / int 10h
+			0xb4, 0x41, 0xbb, 0xaa, 0x55, 0xcd, 0x13, // mov ah,41h / mov bx,55AAh / int 13h
+			0x88, 0xf8, 0xb4, 0x0e, 0xcd, 0x10,       // mov al,bh / mov ah,0Eh / int 10h
+			0xbe, 0x80, 0x7c, 0xb4, 0x42, 0xcd, 0x13, // mov si,7C80h / mov ah,42h / int 13h
+			0xa0, 0x00, 0x08, 0xb4, 0x0e, 0xcd, 0x10, // mov al,[0800h] / mov ah,0Eh / int 10h
+			0xf4, 0xeb, 0xfd,                         // hlt / jmp $-1
 		};
 		const uint8_t packet[16] = {0x10, 0, 1, 0, 0x00, 0x08, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0};
-		const auto make_disk = [&](ram_drive& disk) {
+		const auto make_disk = [&](ram_drive& disk)
+		{
 			memcpy(disk.bytes.data(), program, sizeof(program));
 			memcpy(&disk.bytes[0x80], packet, sizeof(packet));
 			disk.bytes[510] = 0x55;
@@ -2933,7 +2939,8 @@ namespace
 			disk.bytes[512] = 'C';
 			disk.bytes[3 * 512] = 'D';
 		};
-		const auto run = [](machine& m, ram_host& host, size_t characters) {
+		const auto run = [](machine& m, ram_host& host, size_t characters)
+		{
 			for (int i = 0; i < 400 && host.video.size() < characters && !m.faulted(); ++i) m.exec(1000);
 		};
 
@@ -2947,7 +2954,9 @@ namespace
 			check(m.attach_disk(0x80, &disk, {20, 16, 63}, true), "a hard disk is attached");
 			check(m.power_on(0x80), "the machine boots from it");
 			run(m, host, 4);
-			check(host.video == "BC\xaa" "D", "the boot sector reads by CHS, finds the LBA calls and reads by LBA");
+			check(host.video == "BC\xaa"
+			                    "D",
+			      "the boot sector reads by CHS, finds the LBA calls and reads by LBA");
 			machine_state& s = m.state();
 			check(read16(s, 0, 0x21 * 4) == 0 && read16(s, 0, 0x21 * 4 + 2) == 0 && read16(s, 0, 0x33 * 4 + 2) == 0,
 			      "booted, no DOS and no mouse driver are mapped in");
@@ -3028,47 +3037,46 @@ namespace
 
 		// cc's INT 13h thunk, as DISKINFO uses it. Mapped, there is no disk:
 		// a reset works and anything else is a bad command, with the carry set.
-		const char* disk_program =
-			"int __int13(int ax, int bx, int cx, int dx);\n"
-			"int __int21(int ax, int bx, int cx, int dx);\n"
-			"extern int __cf;\n"
-			"int main(void) {\n"
-			"  int ax;\n"
-			"  __int13(0x0000, 0, 0, 0x80);\n"
-			"  __int21(0x0200, 0, 0, __cf == 0 ? 'R' : '!');\n"
-			"  ax = __int13(0x0800, 0, 0, 0x80);\n"
-			"  __int21(0x0200, 0, 0, __cf != 0 && (ax >> 8) == 1 ? 'F' : '!');\n"
-			"  return 0;\n"
-			"}\n";
+		const char* disk_program = "int __int13(int ax, int bx, int cx, int dx);\n"
+								   "int __int21(int ax, int bx, int cx, int dx);\n"
+								   "extern int __cf;\n"
+								   "int main(void) {\n"
+								   "  int ax;\n"
+								   "  __int13(0x0000, 0, 0, 0x80);\n"
+								   "  __int21(0x0200, 0, 0, __cf == 0 ? 'R' : '!');\n"
+								   "  ax = __int13(0x0800, 0, 0, 0x80);\n"
+								   "  __int21(0x0200, 0, 0, __cf != 0 && (ax >> 8) == 1 ? 'F' : '!');\n"
+								   "  return 0;\n"
+								   "}\n";
 		std::vector<uint8_t> image;
 		check(compile_text(disk_program, image, "disk.c"), "a program calling __int13 compiles");
 		if (!image.empty())
-			check(run_image(image, nullptr).find("RF") != std::string::npos, "__int13 reaches INT 13h and reports the carry");
+			check(run_image(image, nullptr).find("RF") != std::string::npos,
+			      "__int13 reaches INT 13h and reports the carry");
 
 		// A BIOS whose AH=08h changes DI, as one hands back a floppy's
 		// parameter table in ES:DI: the variables kept in SI and DI survive it.
-		const char* di_program =
-			"int __int13(int ax, int bx, int cx, int dx);\n"
-			"int __int21(int ax, int bx, int cx, int dx);\n"
-			"unsigned char clobber[4] = {0xbf, 0xef, 0xbe, 0xcf};\n" // mov di,0BEEFh / iret
-			"int main(void) {\n"
-			"  int i;\n"
-			"  int a;\n"
-			"  int b;\n"
-			"  __int21(0x2513, 0, 0, (int)clobber);\n"
-			"  a = 0;\n"
-			"  b = 0;\n"
-			"  for (i = 0; i < 5; i = i + 1) {\n"
-			"    __int13(0x0800, 0, 0, 0x80);\n"
-			"    a = a + i;\n"
-			"    b = b + 2;\n"
-			"  }\n"
-			"  __int21(0x0200, 0, 0, a == 10 && b == 10 && i == 5 ? 'D' : '!');\n"
-			"  return 0;\n"
-			"}\n";
-		check(compile_text(di_program, image, "di.c"), "a program keeping variables in registers across __int13 compiles");
-		if (!image.empty())
-			check(run_image(image, nullptr).find('D') != std::string::npos, "__int13 puts DI back");
+		const char* di_program = "int __int13(int ax, int bx, int cx, int dx);\n"
+								 "int __int21(int ax, int bx, int cx, int dx);\n"
+								 "unsigned char clobber[4] = {0xbf, 0xef, 0xbe, 0xcf};\n" // mov di,0BEEFh / iret
+								 "int main(void) {\n"
+								 "  int i;\n"
+								 "  int a;\n"
+								 "  int b;\n"
+								 "  __int21(0x2513, 0, 0, (int)clobber);\n"
+								 "  a = 0;\n"
+								 "  b = 0;\n"
+								 "  for (i = 0; i < 5; i = i + 1) {\n"
+								 "    __int13(0x0800, 0, 0, 0x80);\n"
+								 "    a = a + i;\n"
+								 "    b = b + 2;\n"
+								 "  }\n"
+								 "  __int21(0x0200, 0, 0, a == 10 && b == 10 && i == 5 ? 'D' : '!');\n"
+								 "  return 0;\n"
+								 "}\n";
+		check(compile_text(di_program, image, "di.c"),
+		      "a program keeping variables in registers across __int13 compiles");
+		if (!image.empty()) check(run_image(image, nullptr).find('D') != std::string::npos, "__int13 puts DI back");
 	}
 
 	int run_tests()
@@ -3161,21 +3169,21 @@ namespace
 		for (const std::string& entry : includes) sources.directories.push_back(entry);
 
 		std::vector<const char*> define_text;
+		define_text.reserve(defines.size());
 		for (const std::string& entry : defines) define_text.push_back(entry.c_str());
 
 		cc_result result = cc_compile(text.c_str(), name, &sources.base,
-		                              define_text.empty() ? nullptr : define_text.data(),
-		                              int(define_text.size()), &options);
+		                              define_text.empty() ? nullptr : define_text.data(), int(define_text.size()),
+		                              &options);
 		if (map && result.function_count > 0)
 		{
 			std::vector<std::pair<std::string, int>> sizes;
+			sizes.reserve(size_t(result.function_count));
 			for (int i = 0; i < result.function_count; ++i)
 				sizes.emplace_back(result.functions[i].name, result.functions[i].size);
 			std::sort(sizes.begin(), sizes.end(),
 			          [](const std::pair<std::string, int>& a, const std::pair<std::string, int>& b)
-			          {
-				          return a.second > b.second;
-			          });
+			{ return a.second > b.second; });
 			int total = 0;
 			for (const auto& entry : sizes) total += entry.second;
 			printf("%d functions, %d bytes of them\n", int(sizes.size()), total);
@@ -3189,8 +3197,7 @@ namespace
 			return false;
 		}
 		if (!quiet)
-			printf("%s: %d bytes (%d code, %d data)\n", name, result.image_size,
-			       result.code_size, result.data_size);
+			printf("%s: %d bytes (%d code, %d data)\n", name, result.image_size, result.code_size, result.data_size);
 		image.assign(result.image, result.image + result.image_size);
 		cc_result_free(&result);
 		return true;
@@ -3245,12 +3252,14 @@ int show_info(const char* path)
 	}
 	else if (size >= 0x20 && data[0] == 'M' && data[1] == 'Z')
 	{
-		const auto word = [&](uint32_t offset) { return uint16_t(data[offset] | (data[offset + 1] << 8)); };
-		const uint32_t image_length = uint32_t(word(0x04)) * 512 -
-			(word(0x02) != 0 ? (512 - word(0x02)) : 0);
+		const auto word = [&](uint32_t offset)
+		{
+			return uint16_t(data[offset] | (data[offset + 1] << 8));
+		};
+		const uint32_t image_length = uint32_t(word(0x04)) * 512 - (word(0x02) != 0 ? (512 - word(0x02)) : 0);
 		printf("  format             MZ executable\n");
-		printf("  image size         %u bytes (%u header, %u body)\n", image_length,
-		       unsigned(word(0x08)) * 16, image_length - unsigned(word(0x08)) * 16);
+		printf("  image size         %u bytes (%u header, %u body)\n", image_length, unsigned(word(0x08)) * 16,
+		       image_length - unsigned(word(0x08)) * 16);
 		printf("  relocations        %u at %04Xh\n", word(0x06), word(0x18));
 		printf("  extra paragraphs   min %u, max %u\n", word(0x0a), word(0x0c));
 		printf("  entry point        CS:IP %04X:%04X\n", word(0x16), word(0x14));
@@ -3259,8 +3268,8 @@ int show_info(const char* path)
 		       (image_length - unsigned(word(0x08)) * 16 + unsigned(word(0x0a)) * 16 + 1023) / 1024);
 		if (word(0x18) >= 0x40 && size >= 0x40)
 		{
-			const uint32_t extended = uint32_t(data[0x3c] | (data[0x3d] << 8) |
-				(data[0x3e] << 16) | (data[0x3f] << 24));
+			const uint32_t extended = uint32_t(data[0x3c] | (data[0x3d] << 8) | (data[0x3e] << 16) |
+			                                   (data[0x3f] << 24));
 			if (extended + 2 < size && data[extended] == 'N' && data[extended + 1] == 'E')
 				printf("  note               contains a Windows NE image\n");
 		}
@@ -3312,8 +3321,8 @@ namespace
 
 	// Mounts the folder a program lives in and loads it, which is what every
 	// command that actually runs one needs.
-	bool mount_and_load(const char* path, win32_host& host, machine& m, const char* command_line,
-	                    char* dos_path, int dos_path_size)
+	bool mount_and_load(const char* path, win32_host& host, machine& m, const char* command_line, char* dos_path,
+	                    int dos_path_size)
 	{
 		uint8_t* data = nullptr;
 		uint32_t size = 0;
@@ -3382,8 +3391,7 @@ namespace
 			return 1;
 		}
 		printf("exit code %u, %llu instructions, %llu cycles\n", s.exit_code,
-		       static_cast<unsigned long long>(s.cpu.instructions),
-		       static_cast<unsigned long long>(s.cycles));
+		       static_cast<unsigned long long>(s.cpu.instructions), static_cast<unsigned long long>(s.cycles));
 		printf("emulated in %.3f ms\n", elapsed);
 		if (s.error[0] != 0) printf("first problem: %s\n", s.error);
 		return 0;
@@ -3403,9 +3411,10 @@ namespace
 		static const uint32_t section_rva = 0x1000;
 		static const uint32_t block_size = 0x10000; // code, data and stack
 
-		std::vector<uint8_t> body; // the one section, from section_rva onwards
+		std::vector<uint8_t> body;                        // the one section, from section_rva onwards
 		std::vector<std::pair<uint32_t, uint32_t>> calls; // where a call is, and the IAT slot it wants
 
+		// clang-format off
 		uint32_t at() const { return uint32_t(body.size()); }
 		uint32_t rva() const { return section_rva + at(); }
 		void u8(int v) { body.push_back(uint8_t(v)); }
@@ -3414,6 +3423,7 @@ namespace
 		void u64(uint64_t v) { u32(uint32_t(v)); u32(uint32_t(v >> 32)); }
 		void run(std::initializer_list<int> bytes) { for (const int b : bytes) u8(b); }
 		void align(uint32_t to) { while (at() % to != 0) u8(0); }
+		// clang-format on
 
 		// call [rip + slot], which is how an import is reached.
 		void call_import(uint32_t slot)
@@ -3439,9 +3449,9 @@ namespace
 	{
 		std::vector<uint32_t> to_end;
 
-		pe.run({0x48, 0x83, 0xec, 0x48}); // sub rsp, 48h - shadow space and three locals
+		pe.run({0x48, 0x83, 0xec, 0x48});       // sub rsp, 48h - shadow space and three locals
 		pe.run({0x48, 0x89, 0x4c, 0x24, 0x30}); // mov [rsp+30h], rcx - the block
-		pe.run({0xc6, 0x81}); // mov byte [rcx + carry], 0
+		pe.run({0xc6, 0x81});                   // mov byte [rcx + carry], 0
 		pe.u32(CC_NATIVE_CARRY);
 		pe.u8(0);
 
@@ -3472,12 +3482,12 @@ namespace
 		pe.body[to_character] = uint8_t(character - to_character - 1);
 		pe.run({0xb9, 0xf5, 0xff, 0xff, 0xff}); // mov ecx, -11 - the standard output
 		pe.call_import(std_handle);
-		pe.run({0x48, 0x89, 0xc1}); // mov rcx, rax
+		pe.run({0x48, 0x89, 0xc1});             // mov rcx, rax
 		pe.run({0x48, 0x8b, 0x54, 0x24, 0x30}); // mov rdx, [rsp+30h]
-		pe.run({0x48, 0x81, 0xc2}); // add rdx, <the low byte of DX>
+		pe.run({0x48, 0x81, 0xc2});             // add rdx, <the low byte of DX>
 		pe.u32(CC_NATIVE_REGISTERS + 6);
-		pe.run({0x41, 0xb8, 0x01, 0x00, 0x00, 0x00}); // mov r8d, 1
-		pe.run({0x4c, 0x8d, 0x4c, 0x24, 0x28}); // lea r9, [rsp+28h] - bytes written
+		pe.run({0x41, 0xb8, 0x01, 0x00, 0x00, 0x00});                   // mov r8d, 1
+		pe.run({0x4c, 0x8d, 0x4c, 0x24, 0x28});                         // lea r9, [rsp+28h] - bytes written
 		pe.run({0x48, 0xc7, 0x44, 0x24, 0x20, 0x00, 0x00, 0x00, 0x00}); // mov qword [rsp+20h], 0
 		pe.call_import(write_file);
 		pe.run({0xeb});
@@ -3490,23 +3500,23 @@ namespace
 		const uint32_t string = pe.at();
 		pe.body[to_string] = uint8_t(string - to_string - 1);
 		pe.run({0x4c, 0x8b, 0x54, 0x24, 0x30}); // mov r10, [rsp+30h]
-		pe.run({0x41, 0x0f, 0xb7, 0x82}); // movzx eax, word [r10 + dx]
+		pe.run({0x41, 0x0f, 0xb7, 0x82});       // movzx eax, word [r10 + dx]
 		pe.u32(CC_NATIVE_REGISTERS + 6);
-		pe.run({0x49, 0x01, 0xc2}); // add r10, rax
+		pe.run({0x49, 0x01, 0xc2});             // add r10, rax
 		pe.run({0x4c, 0x89, 0x54, 0x24, 0x38}); // mov [rsp+38h], r10
 
 		const uint32_t loop = pe.at();
 		pe.run({0x4c, 0x8b, 0x54, 0x24, 0x38}); // mov r10, [rsp+38h]
-		pe.run({0x41, 0x80, 0x3a, 0x24}); // cmp byte [r10], '$'
+		pe.run({0x41, 0x80, 0x3a, 0x24});       // cmp byte [r10], '$'
 		pe.run({0x74});
 		to_end.push_back(pe.at());
 		pe.u8(0);
 		pe.run({0xb9, 0xf5, 0xff, 0xff, 0xff}); // mov ecx, -11
 		pe.call_import(std_handle);
-		pe.run({0x48, 0x89, 0xc1}); // mov rcx, rax
-		pe.run({0x48, 0x8b, 0x54, 0x24, 0x38}); // mov rdx, [rsp+38h]
-		pe.run({0x41, 0xb8, 0x01, 0x00, 0x00, 0x00}); // mov r8d, 1
-		pe.run({0x4c, 0x8d, 0x4c, 0x24, 0x28}); // lea r9, [rsp+28h]
+		pe.run({0x48, 0x89, 0xc1});                                     // mov rcx, rax
+		pe.run({0x48, 0x8b, 0x54, 0x24, 0x38});                         // mov rdx, [rsp+38h]
+		pe.run({0x41, 0xb8, 0x01, 0x00, 0x00, 0x00});                   // mov r8d, 1
+		pe.run({0x4c, 0x8d, 0x4c, 0x24, 0x28});                         // lea r9, [rsp+28h]
 		pe.run({0x48, 0xc7, 0x44, 0x24, 0x20, 0x00, 0x00, 0x00, 0x00}); // mov qword [rsp+20h], 0
 		pe.call_import(write_file);
 		pe.run({0x48, 0xff, 0x44, 0x24, 0x38}); // inc qword [rsp+38h]
@@ -3517,7 +3527,7 @@ namespace
 		const uint32_t finish = pe.at();
 		pe.body[to_exit] = uint8_t(finish - to_exit - 1);
 		pe.run({0x4c, 0x8b, 0x54, 0x24, 0x30}); // mov r10, [rsp+30h]
-		pe.run({0x41, 0x0f, 0xb7, 0x8a}); // movzx ecx, word [r10 + ax]
+		pe.run({0x41, 0x0f, 0xb7, 0x8a});       // movzx ecx, word [r10 + ax]
 		pe.u32(CC_NATIVE_REGISTERS);
 		pe.run({0x81, 0xe1, 0xff, 0x00, 0x00, 0x00}); // and ecx, 255
 		pe.call_import(exit_process);
@@ -3526,7 +3536,7 @@ namespace
 		pe.body[not_dos] = uint8_t(end - not_dos - 1);
 		for (const uint32_t branch : to_end) pe.body[branch] = uint8_t(end - branch - 1);
 		pe.run({0x48, 0x83, 0xc4, 0x48}); // add rsp, 48h
-		pe.run({0xc3}); // ret
+		pe.run({0xc3});                   // ret
 	}
 
 	bool write_executable(const std::vector<uint8_t>& image, const char* path)
@@ -3541,11 +3551,11 @@ namespace
 		// program's answer becomes the process's.
 		const uint32_t entry_rva = pe.rva();
 		pe.run({0x48, 0x83, 0xec, 0x28}); // sub rsp, 28h - alignment and shadow space
-		pe.run({0x48, 0xb9}); // mov rcx, <the block>
+		pe.run({0x48, 0xb9});             // mov rcx, <the block>
 		pe.u64(pe_writer::image_base + pe_writer::section_rva);
 		pe.run({0x48, 0xb8}); // mov rax, <the program's own entry>
 		pe.u64(pe_writer::image_base + pe_writer::section_rva);
-		pe.run({0xff, 0xd0}); // call rax
+		pe.run({0xff, 0xd0});       // call rax
 		pe.run({0x0f, 0xb7, 0xc8}); // movzx ecx, ax
 		const uint32_t exit_call = pe.at();
 		pe.run({0xff, 0x15, 0x00, 0x00, 0x00, 0x00});
@@ -3597,9 +3607,9 @@ namespace
 			pe.patch(iat_at + i * 8, name_rva[i]);
 			pe.patch(lookup_at + i * 8, name_rva[i]);
 		}
-		pe.patch(descriptors_at, lookup_rva); // OriginalFirstThunk
+		pe.patch(descriptors_at, lookup_rva);       // OriginalFirstThunk
 		pe.patch(descriptors_at + 12, library_rva); // Name
-		pe.patch(descriptors_at + 16, iat_rva); // FirstThunk
+		pe.patch(descriptors_at + 16, iat_rva);     // FirstThunk
 
 		// The program reaches the host the same way it does in process: through
 		// a function pointer at the top of its own block.
@@ -3610,15 +3620,12 @@ namespace
 
 		// Every call into the import table is relative to the instruction after
 		// it, and both ends are inside the image.
-		for (const auto& call : pe.calls)
-			pe.patch(call.first, call.second - (pe_writer::section_rva + call.first + 4));
+		for (const auto& call : pe.calls) pe.patch(call.first, call.second - (pe_writer::section_rva + call.first + 4));
 
 		const uint32_t file_alignment = 0x200;
 		const uint32_t headers = 0x200;
-		const uint32_t raw_size = (uint32_t(pe.body.size()) + file_alignment - 1) / file_alignment *
-			file_alignment;
-		const uint32_t image_size = (pe_writer::section_rva + uint32_t(pe.body.size()) + 0xfff) /
-			0x1000 * 0x1000;
+		const uint32_t raw_size = (uint32_t(pe.body.size()) + file_alignment - 1) / file_alignment * file_alignment;
+		const uint32_t image_size = (pe_writer::section_rva + uint32_t(pe.body.size()) + 0xfff) / 0x1000 * 0x1000;
 
 		std::vector<uint8_t> file(headers, 0);
 		const auto put16 = [&](uint32_t at, int v)
@@ -3645,14 +3652,14 @@ namespace
 		file[p] = 'P';
 		file[p + 1] = 'E';
 		p += 4;
-		put16(p, 0x8664); // machine
-		put16(p + 2, 1); // one section
-		put16(p + 16, 0xf0); // the optional header's size
+		put16(p, 0x8664);      // machine
+		put16(p + 2, 1);       // one section
+		put16(p + 16, 0xf0);   // the optional header's size
 		put16(p + 18, 0x0023); // executable, relocations stripped, large address aware
 		p += 20;
 
 		const uint32_t optional = p;
-		put16(optional, 0x20b); // PE32+
+		put16(optional, 0x20b);        // PE32+
 		put32(optional + 4, raw_size); // size of code
 		put32(optional + 16, entry_rva);
 		put32(optional + 20, pe_writer::section_rva); // base of code
@@ -3663,12 +3670,12 @@ namespace
 		put16(optional + 48, 6);
 		put32(optional + 56, image_size);
 		put32(optional + 60, headers);
-		put16(optional + 68, 3); // a console program
+		put16(optional + 68, 3);        // a console program
 		put64(optional + 72, 0x100000); // stack reserve
-		put64(optional + 80, 0x1000); // stack commit
+		put64(optional + 80, 0x1000);   // stack commit
 		put64(optional + 88, 0x100000); // heap reserve
-		put64(optional + 96, 0x1000); // heap commit
-		put32(optional + 108, 16); // how many directories follow
+		put64(optional + 96, 0x1000);   // heap commit
+		put32(optional + 108, 16);      // how many directories follow
 
 		const uint32_t directories = optional + 112;
 		put32(directories + 8, descriptors_rva); // the import directory
@@ -3681,7 +3688,7 @@ namespace
 		put32(section + 8, uint32_t(pe.body.size())); // virtual size
 		put32(section + 12, pe_writer::section_rva);
 		put32(section + 16, raw_size);
-		put32(section + 20, headers); // where it is in the file
+		put32(section + 20, headers);    // where it is in the file
 		put32(section + 36, 0xe0000060); // code and data, read, write, execute
 
 		file.insert(file.end(), pe.body.begin(), pe.body.end());
@@ -3708,8 +3715,7 @@ namespace
 
 		if (dump)
 		{
-			for (size_t i = 0; i < image.size(); ++i)
-				printf("%02X%s", image[i], (i + 1) % 16 == 0 ? "\n" : " ");
+			for (size_t i = 0; i < image.size(); ++i) printf("%02X%s", image[i], (i + 1) % 16 == 0 ? "\n" : " ");
 			printf("\n");
 		}
 		fflush(stdout); // a fault in generated code takes the process, buffer and all
@@ -3766,8 +3772,7 @@ namespace
 	                const char* keys, int key_delay)
 	{
 		const DWORD attributes = GetFileAttributesA(path);
-		const bool is_directory = attributes != INVALID_FILE_ATTRIBUTES &&
-			(attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+		const bool is_directory = attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 
 		win32_host host;
 		host.set_verbose(trace);
@@ -3839,14 +3844,13 @@ namespace
 				if (s.pit.pending >= s.pit.due) pit_sync(s);
 			}
 			const int64_t first = count > capacity ? count - capacity : 0;
-			printf("--- last %lld instructions of %lld ---\n",
-			       static_cast<long long>(count - first), static_cast<long long>(count));
+			printf("--- last %lld instructions of %lld ---\n", static_cast<long long>(count - first),
+			       static_cast<long long>(count));
 			for (int64_t i = first; i < count; ++i)
 			{
 				const trace_entry& entry = ring[i % capacity];
-				printf("%04X:%04X  %-26s AX=%04X BX=%04X CX=%04X DX=%04X SI=%04X DI=%04X\n",
-				       entry.cs, entry.ip, entry.text, entry.ax, entry.bx, entry.cx, entry.dx,
-				       entry.si, entry.di);
+				printf("%04X:%04X  %-26s AX=%04X BX=%04X CX=%04X DX=%04X SI=%04X DI=%04X\n", entry.cs, entry.ip,
+				       entry.text, entry.ax, entry.bx, entry.cx, entry.dx, entry.si, entry.di);
 			}
 			delete[] ring;
 		}
@@ -3880,10 +3884,9 @@ namespace
 				for (const int16_t sample : audio)
 					if (sample > peak || -sample > peak) peak = int16_t(sample < 0 ? -sample : sample);
 				if (write_wav(wav_path, audio.data(), uint32_t(audio.size())))
-					printf("Wrote %s (%.1f s, peak %d of 32767)\n", wav_path,
-					       double(audio.size()) / sound_sample_rate, peak);
-				else
-					printf("Cannot write %s\n", wav_path);
+					printf("Wrote %s (%.1f s, peak %d of 32767)\n", wav_path, double(audio.size()) / sound_sample_rate,
+					       peak);
+				else printf("Cannot write %s\n", wav_path);
 			}
 		}
 
@@ -3913,15 +3916,13 @@ namespace
 			vga_render(s);
 			if (write_bmp(bmp_path, m.framebuffer(), m.width(), m.height()))
 				printf("Wrote %s (%dx%d)\n", bmp_path, m.width(), m.height());
-			else
-				printf("Cannot write %s\n", bmp_path);
+			else printf("Cannot write %s\n", bmp_path);
 		}
 		return 0;
 	}
 
 	// What the interpreter actually costs, and therefore what cpu_hz a 60 Hz
-	// frame could afford. Phase 0 of docs/jit.md: nothing about a JIT is worth
-	// starting until these numbers say where the time goes.
+	// frame could afford.
 	struct bench_pass
 	{
 		double seconds = 0;
@@ -3949,8 +3950,7 @@ namespace
 			++pass.frames;
 			QueryPerformanceCounter(&now);
 			pass.seconds = double(now.QuadPart - start.QuadPart) / double(frequency.QuadPart);
-		}
-		while (pass.seconds < seconds && !m.exited());
+		} while (pass.seconds < seconds && !m.exited());
 
 		pass.instructions = s.cpu.instructions - instructions;
 		pass.cycles = s.cycles - cycles;
@@ -3961,10 +3961,8 @@ namespace
 	void bench_report(const char* label, const bench_pass& pass, uint32_t cpu_hz)
 	{
 		const double rate = pass.seconds > 0 ? double(pass.cycles) / pass.seconds : 0;
-		printf("  %-12s %10.1f M %11.1f %10.1fx %14.1f\n",
-		       label,
-		       pass.seconds > 0 ? double(pass.instructions) / pass.seconds / 1e6 : 0,
-		       rate / 1e6,
+		printf("  %-12s %10.1f M %11.1f %10.1fx %14.1f\n", label,
+		       pass.seconds > 0 ? double(pass.instructions) / pass.seconds / 1e6 : 0, rate / 1e6,
 		       cpu_hz > 0 ? rate / double(cpu_hz) : 0,
 		       pass.instructions > 0 ? double(pass.cycles) / double(pass.instructions) : 0);
 	}
@@ -4000,14 +3998,12 @@ namespace
 		const double full_rate = full.seconds > 0 ? double(full.cycles) / full.seconds : 0;
 		const double bare_rate = bare.seconds > 0 ? double(bare.cycles) / bare.seconds : 0;
 		printf("\n");
-		if (bare_rate > 0)
-			printf("  vga_render is %.0f%% of the frame\n", (1.0 - full_rate / bare_rate) * 100.0);
-		printf("  sustains 60 fps at cpu_hz = %.1f MHz (%.1fx the configured %.1f MHz)\n",
-		       full_rate / 1e6, full_rate / double(m.state().cpu_hz), double(m.state().cpu_hz) / 1e6);
+		if (bare_rate > 0) printf("  vga_render is %.0f%% of the frame\n", (1.0 - full_rate / bare_rate) * 100.0);
+		printf("  sustains 60 fps at cpu_hz = %.1f MHz (%.1fx the configured %.1f MHz)\n", full_rate / 1e6,
+		       full_rate / double(m.state().cpu_hz), double(m.state().cpu_hz) / 1e6);
 
 		machine_state& s = m.state();
-		printf("  video mode %02Xh %dx%d, %d frames measured%s\n",
-		       s.vga.mode, s.vga.width, s.vga.height, full.frames,
+		printf("  video mode %02Xh %dx%d, %d frames measured%s\n", s.vga.mode, s.vga.width, s.vga.height, full.frames,
 		       full.exited ? ", program exited during the pass" : "");
 		if (s.error[0] != 0) printf("  first problem: %s\n", s.error);
 		return 0;
@@ -4015,43 +4011,42 @@ namespace
 
 	void usage()
 	{
-		printf(
-			"demu - DOS program runner, debugger and test suite (libdos)\n\n"
-			"  demu --test                       run the behavioural test suite\n"
-			"  demu --cc <file.c> [-o out.com] [-I dir] [-D name=value]\n"
-			"                                         compile C to a DOS program\n"
-			"  demu --ccbench <file.c> [-I dir] [-D name=value]\n"
-			"                                         compile, run, and report size and work\n"
-			"  demu --ccnative <file.c> [--dump] compile for this machine and run it\n"
-			"  demu --ccexe <file.c> [-o out.exe] [-I dir] [-D name=value]\n"
-			"                                         compile to a Windows executable\n"
-			"  demu --info <file>                describe a DOS executable\n"
-			"  demu --disasm <file> [count]      disassemble from the entry point\n"
-			"  demu --run <file> [options]       run headlessly\n"
-			"  demu --run <folder> --args \"dir\"  mount a folder and use the shell\n"
-			"  demu --bench <file> [options]     measure interpreter throughput\n\n"
-			"Run options:\n"
-			"  --frames <n>    how many 60 Hz frames to run (default 600)\n"
-			"  --screen        print the text screen afterwards\n"
-			"  --state         print registers, memory and a disassembly window\n"
-			"  --trace         report DOS and BIOS calls as they happen\n"
-			"  --trace-tail n  print the last n instructions executed\n"
-			"  --bmp <file>    write the final frame as a bitmap\n"
-			"  --wav <file>    write the audio the program produced\n"
-			"  --keys <text>   type these keys as it runs, one every --key-delay frames\n"
-			"  --key-delay <n> frames between typed keys (default 60)\n"
-			"  --args <text>   command line to hand to the program\n\n"
-			"Bench options:\n"
-			"  --seconds <n>   wall clock per pass (default 3)\n"
-			"  --warmup <n>    frames to run before measuring (default 300)\n"
-			"  --cpu-hz <n>    emulated clock to measure at (default 8000000)\n\n"
-			"Compiler options:\n"
-			"  --inline <n>    how big a body may be, in tokens, to be copied to\n"
-			"                  its call site rather than called (default 24)\n"
-			"  --no-inline     never copy a body to its call site\n"
-			"  --keep-unused   keep the functions nothing can reach\n"
-			"  --cpu <n>       8086 or 386; a 386 still produces a 16-bit .COM\n"
-			"  --map           list what each function cost, largest first\n\n");
+		printf("demu - DOS program runner, debugger and test suite (libdos)\n\n"
+		       "  demu --test                       run the behavioural test suite\n"
+		       "  demu --cc <file.c> [-o out.com] [-I dir] [-D name=value]\n"
+		       "                                         compile C to a DOS program\n"
+		       "  demu --ccbench <file.c> [-I dir] [-D name=value]\n"
+		       "                                         compile, run, and report size and work\n"
+		       "  demu --ccnative <file.c> [--dump] compile for this machine and run it\n"
+		       "  demu --ccexe <file.c> [-o out.exe] [-I dir] [-D name=value]\n"
+		       "                                         compile to a Windows executable\n"
+		       "  demu --info <file>                describe a DOS executable\n"
+		       "  demu --disasm <file> [count]      disassemble from the entry point\n"
+		       "  demu --run <file> [options]       run headlessly\n"
+		       "  demu --run <folder> --args \"dir\"  mount a folder and use the shell\n"
+		       "  demu --bench <file> [options]     measure interpreter throughput\n\n"
+		       "Run options:\n"
+		       "  --frames <n>    how many 60 Hz frames to run (default 600)\n"
+		       "  --screen        print the text screen afterwards\n"
+		       "  --state         print registers, memory and a disassembly window\n"
+		       "  --trace         report DOS and BIOS calls as they happen\n"
+		       "  --trace-tail n  print the last n instructions executed\n"
+		       "  --bmp <file>    write the final frame as a bitmap\n"
+		       "  --wav <file>    write the audio the program produced\n"
+		       "  --keys <text>   type these keys as it runs, one every --key-delay frames\n"
+		       "  --key-delay <n> frames between typed keys (default 60)\n"
+		       "  --args <text>   command line to hand to the program\n\n"
+		       "Bench options:\n"
+		       "  --seconds <n>   wall clock per pass (default 3)\n"
+		       "  --warmup <n>    frames to run before measuring (default 300)\n"
+		       "  --cpu-hz <n>    emulated clock to measure at (default 8000000)\n\n"
+		       "Compiler options:\n"
+		       "  --inline <n>    how big a body may be, in tokens, to be copied to\n"
+		       "                  its call site rather than called (default 24)\n"
+		       "  --no-inline     never copy a body to its call site\n"
+		       "  --keep-unused   keep the functions nothing can reach\n"
+		       "  --cpu <n>       8086 or 386; a 386 still produces a 16-bit .COM\n"
+		       "  --map           list what each function cost, largest first\n\n");
 		runner_usage();
 		boot_usage();
 	}
@@ -4143,8 +4138,7 @@ int main(int argc, char** argv)
 		return cc_exe_command(argv[2], output, includes, defines);
 	}
 	if (strcmp(command, "--info") == 0 && argc > 2) return show_info(argv[2]);
-	if (strcmp(command, "--disasm") == 0 && argc > 2)
-		return disassemble_file(argv[2], argc > 3 ? atoi(argv[3]) : 32);
+	if (strcmp(command, "--disasm") == 0 && argc > 2) return disassemble_file(argv[2], argc > 3 ? atoi(argv[3]) : 32);
 	if (strcmp(command, "--boot") == 0) return run_boot(argc - 2, argv + 2);
 	if (strcmp(command, "--bench") == 0 && argc > 2)
 	{
@@ -4194,6 +4188,6 @@ int main(int argc, char** argv)
 		else if (strcmp(argv[i], "--args") == 0 && i + 1 < argc) command_line = argv[++i];
 	}
 	if (key_delay < 2) key_delay = 2;
-	return run_program(path, frames, screen, trace, state, command_line, trace_tail, bmp_path, wav_path,
-	                   keys, key_delay);
+	return run_program(path, frames, screen, trace, state, command_line, trace_tail, bmp_path, wav_path, keys,
+	                   key_delay);
 }

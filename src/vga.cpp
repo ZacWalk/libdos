@@ -13,12 +13,14 @@
 namespace
 {
 	// The 16 EGA colours as 6-bit DAC values, in attribute order.
+	// clang-format off
 	const uint8_t ega_palette[16][3] = {
 		{0, 0, 0}, {0, 0, 42}, {0, 42, 0}, {0, 42, 42},
 		{42, 0, 0}, {42, 0, 42}, {42, 21, 0}, {42, 42, 42},
 		{21, 21, 21}, {21, 21, 63}, {21, 63, 21}, {21, 63, 63},
 		{63, 21, 21}, {63, 21, 63}, {63, 63, 21}, {63, 63, 63},
 	};
+	// clang-format on
 
 	const uint8_t grey_ramp[16] = {0, 5, 8, 11, 14, 17, 20, 24, 28, 32, 36, 40, 45, 50, 56, 63};
 
@@ -28,12 +30,14 @@ namespace
 		const double x = c * (1.0 - std::fabs(std::fmod(h / 60.0, 2.0) - 1.0));
 		const double m = v - c;
 		double r = 0, g = 0, b = 0;
+		// clang-format off
 		if (h < 60) { r = c; g = x; }
 		else if (h < 120) { r = x; g = c; }
 		else if (h < 180) { g = c; b = x; }
 		else if (h < 240) { g = x; b = c; }
 		else if (h < 300) { r = x; b = c; }
 		else { r = c; b = x; }
+		// clang-format on
 		out[0] = uint8_t((r + m) * 63.0 + 0.5);
 		out[1] = uint8_t((g + m) * 63.0 + 0.5);
 		out[2] = uint8_t((b + m) * 63.0 + 0.5);
@@ -88,10 +92,12 @@ namespace
 	{
 		// The EGA colour each of the 16 attributes selects; 0x14 is the entry
 		// that makes attribute 6 brown rather than dark yellow.
+		// clang-format off
 		static const uint8_t standard[16] = {
 			0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x14, 0x07,
 			0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
 		};
+		// clang-format on
 		for (int i = 0; i < 16; ++i) v.attr[i] = standard[i];
 		v.attr[0x10] = 0x0c; // graphics mode, blink off by default
 		v.attr[0x11] = 0x00;
@@ -135,8 +141,7 @@ void vga_reset(vga_state& v)
 	// The character generator has a 32-byte stride so any font height fits.
 	std::memset(v.font, 0, sizeof(v.font));
 	for (int ch = 0; ch < 256; ++ch)
-		for (int row = 0; row < 8; ++row)
-			v.font[ch * 32 + row] = rom_font_8x8[ch * 8 + row];
+		for (int row = 0; row < 8; ++row) v.font[ch * 32 + row] = rom_font_8x8[ch * 8 + row];
 	ega_dac(v);
 	default_attribute_palette(v);
 	v.seq[2] = 0x0f;
@@ -173,7 +178,8 @@ void vga_set_mode(machine_state& s, uint8_t mode)
 
 	switch (mode)
 	{
-	case 0x00: case 0x01:
+	case 0x00:
+	case 0x01:
 		v.render_mode = vga_render_mode::text;
 		v.mapping = vga_mapping::odd_even;
 		v.text_columns = 40;
@@ -182,7 +188,9 @@ void vga_set_mode(machine_state& s, uint8_t mode)
 		v.width = 320;
 		v.height = 200;
 		break;
-	case 0x02: case 0x03: case 0x07:
+	case 0x02:
+	case 0x03:
+	case 0x07:
 		v.render_mode = vga_render_mode::text;
 		v.mapping = vga_mapping::odd_even;
 		v.text_columns = 80;
@@ -191,7 +199,8 @@ void vga_set_mode(machine_state& s, uint8_t mode)
 		v.width = 640;
 		v.height = 200;
 		break;
-	case 0x04: case 0x05:
+	case 0x04:
+	case 0x05:
 		v.render_mode = vga_render_mode::cga4;
 		v.mapping = vga_mapping::odd_even;
 		v.text_columns = 40;
@@ -229,7 +238,8 @@ void vga_set_mode(machine_state& s, uint8_t mode)
 		v.height = 200;
 		v.crtc[0x13] = 40;
 		break;
-	case 0x0f: case 0x10:
+	case 0x0f:
+	case 0x10:
 		v.render_mode = vga_render_mode::planar4;
 		v.mapping = vga_mapping::planar;
 		v.text_columns = 80;
@@ -239,7 +249,8 @@ void vga_set_mode(machine_state& s, uint8_t mode)
 		v.height = 350;
 		v.crtc[0x13] = 40;
 		break;
-	case 0x11: case 0x12:
+	case 0x11:
+	case 0x12:
 		v.render_mode = vga_render_mode::planar4;
 		v.mapping = vga_mapping::planar;
 		v.text_columns = 80;
@@ -304,8 +315,7 @@ uint8_t vga_mem_read(machine_state& s, uint32_t address)
 	const uint32_t offset = address - window_base(v, address);
 
 	if (v.mapping == vga_mapping::chain4) return v.mem[offset & (vga_plane_size * 4 - 1)];
-	if (v.mapping == vga_mapping::odd_even)
-		return v.mem[(((offset >> 1) & (vga_plane_size - 1)) * 4) + (offset & 1)];
+	if (v.mapping == vga_mapping::odd_even) return v.mem[(((offset >> 1) & (vga_plane_size - 1)) * 4) + (offset & 1)];
 
 	const uint32_t plane_offset = offset & (vga_plane_size - 1);
 	for (int p = 0; p < 4; ++p) v.latch[p] = v.mem[plane_offset * 4 + p];
@@ -361,9 +371,7 @@ void vga_mem_write(machine_state& s, uint32_t address, uint8_t value)
 		uint8_t result;
 		switch (write_mode)
 		{
-		case 1:
-			result = v.latch[p];
-			break;
+		case 1: result = v.latch[p]; break;
 		case 2:
 		{
 			const uint8_t src = ((value >> p) & 1) ? 0xff : 0x00;
@@ -380,9 +388,7 @@ void vga_mem_write(machine_state& s, uint32_t address, uint8_t value)
 		}
 		default:
 		{
-			const uint8_t src = ((v.gfx[1] >> p) & 1)
-				                    ? (((v.gfx[0] >> p) & 1) ? 0xff : 0x00)
-				                    : rotated;
+			const uint8_t src = ((v.gfx[1] >> p) & 1) ? (((v.gfx[0] >> p) & 1) ? 0xff : 0x00) : rotated;
 			const uint8_t combined = apply_operation(src, v.latch[p], operation);
 			result = uint8_t((combined & bit_mask) | (v.latch[p] & ~bit_mask));
 			break;
@@ -408,8 +414,7 @@ namespace
 		uint8_t dac_index = uint8_t(v.attr[index & 0x0f] & 0x3f);
 		if ((v.attr[0x10] & 0x80) != 0) // P4/P5 come from the colour select register
 			dac_index = uint8_t((dac_index & 0x0f) | ((v.attr[0x14] & 0x0f) << 4));
-		else
-			dac_index = uint8_t(dac_index | ((v.attr[0x14] & 0x0c) << 4));
+		else dac_index = uint8_t(dac_index | ((v.attr[0x14] & 0x0c) << 4));
 		return vga_dac_colour(v, dac_index);
 	}
 
@@ -433,8 +438,8 @@ namespace
 				const uint8_t attribute = v.mem[(cell & (vga_plane_size - 1)) * 4 + 1];
 				const bool blinking = blink_enabled && (attribute & 0x80) != 0;
 				const uint32_t foreground = attribute_colour(v, uint8_t(attribute & 0x0f));
-				const uint32_t background = attribute_colour(
-					v, uint8_t(blink_enabled ? ((attribute >> 4) & 0x07) : ((attribute >> 4) & 0x0f)));
+				const uint32_t background = attribute_colour(v, uint8_t(blink_enabled ? ((attribute >> 4) & 0x07)
+				                                                                      : ((attribute >> 4) & 0x0f)));
 
 				for (int y = 0; y < cell_height; ++y)
 				{
@@ -494,7 +499,7 @@ namespace
 				{
 					const int shift = 7 - bit;
 					const uint8_t pixel = uint8_t(((p0 >> shift) & 1) | (((p1 >> shift) & 1) << 1) |
-						(((p2 >> shift) & 1) << 2) | (((p3 >> shift) & 1) << 3));
+					                              (((p2 >> shift) & 1) << 2) | (((p3 >> shift) & 1) << 3));
 					out[x + bit] = attribute_colour(v, pixel);
 				}
 			}
@@ -611,11 +616,14 @@ uint8_t vga_port_read(machine_state& s, uint16_t port)
 	case 0x3cc: return v.misc_output;
 	case 0x3ce: return v.gfx_index;
 	case 0x3cf: return v.gfx[v.gfx_index & 0x0f];
-	case 0x3b4: case 0x3d4: return v.crtc_index;
-	case 0x3b5: case 0x3d5: return v.crtc[v.crtc_index & 0x1f];
+	case 0x3b4:
+	case 0x3d4: return v.crtc_index;
+	case 0x3b5:
+	case 0x3d5: return v.crtc[v.crtc_index & 0x1f];
 	case 0x3d8: return v.cga_mode_control;
 	case 0x3d9: return v.cga_color_select;
-	case 0x3ba: case 0x3da:
+	case 0x3ba:
+	case 0x3da:
 	{
 		// Input status 1. Programs poll bit 3 for vertical retrace and bit 0
 		// for any retrace, so both have to move with the machine clock.
@@ -641,10 +649,8 @@ void vga_port_write(machine_state& s, uint16_t port, uint8_t value)
 		else v.attr[v.attr_index & 0x1f] = value;
 		v.attr_flipflop = !v.attr_flipflop;
 		break;
-	case 0x3c2: v.misc_output = value;
-		break;
-	case 0x3c4: v.seq_index = uint8_t(value & 7);
-		break;
+	case 0x3c2: v.misc_output = value; break;
+	case 0x3c4: v.seq_index = uint8_t(value & 7); break;
 	case 0x3c5:
 		v.seq[v.seq_index & 7] = value;
 		if (v.seq_index == 4)
@@ -662,8 +668,7 @@ void vga_port_write(machine_state& s, uint16_t port, uint8_t value)
 			}
 		}
 		break;
-	case 0x3c6: v.dac_mask = value;
-		break;
+	case 0x3c6: v.dac_mask = value; break;
 	case 0x3c7:
 		v.dac_read_index = value;
 		v.dac_channel = 0;
@@ -680,13 +685,12 @@ void vga_port_write(machine_state& s, uint16_t port, uint8_t value)
 			++v.dac_write_index;
 		}
 		break;
-	case 0x3ce: v.gfx_index = uint8_t(value & 0x0f);
-		break;
-	case 0x3cf: v.gfx[v.gfx_index & 0x0f] = value;
-		break;
-	case 0x3b4: case 0x3d4: v.crtc_index = uint8_t(value & 0x1f);
-		break;
-	case 0x3b5: case 0x3d5:
+	case 0x3ce: v.gfx_index = uint8_t(value & 0x0f); break;
+	case 0x3cf: v.gfx[v.gfx_index & 0x0f] = value; break;
+	case 0x3b4:
+	case 0x3d4: v.crtc_index = uint8_t(value & 0x1f); break;
+	case 0x3b5:
+	case 0x3d5:
 		v.crtc[v.crtc_index & 0x1f] = value;
 		if (v.crtc_index == 0x0c || v.crtc_index == 0x0d)
 			v.display_start = uint32_t((v.crtc[0x0c] << 8) | v.crtc[0x0d]);
@@ -702,10 +706,8 @@ void vga_port_write(machine_state& s, uint16_t port, uint8_t value)
 			}
 		}
 		break;
-	case 0x3d8: v.cga_mode_control = value;
-		break;
-	case 0x3d9: v.cga_color_select = value;
-		break;
+	case 0x3d8: v.cga_mode_control = value; break;
+	case 0x3d9: v.cga_color_select = value; break;
 	default: break;
 	}
 }
@@ -768,7 +770,8 @@ uint8_t vga_get_pixel(machine_state& s, int x, int y)
 		const uint32_t offset = (uint32_t(y) * uint32_t(stride) + uint32_t(x / 8)) & (vga_plane_size - 1);
 		const uint8_t mask = uint8_t(0x80 >> (x & 7));
 		uint8_t colour = 0;
-		for (int p = 0; p < 4; ++p) if ((v.mem[offset * 4 + p] & mask) != 0) colour = uint8_t(colour | (1 << p));
+		for (int p = 0; p < 4; ++p)
+			if ((v.mem[offset * 4 + p] & mask) != 0) colour = uint8_t(colour | (1 << p));
 		return colour;
 	}
 	case vga_render_mode::cga4:
@@ -837,17 +840,12 @@ void vga_write_char(machine_state& s, uint8_t page, uint8_t ch, uint8_t attribut
 
 	switch (ch)
 	{
-	case '\r':
-		x = 0;
-		break;
-	case '\n':
-		++y;
-		break;
+	case '\r': x = 0; break;
+	case '\n': ++y; break;
 	case '\b':
 		if (x > 0) --x;
 		break;
-	case 7:
-		break;
+	case 7: break;
 	default:
 		if (v.render_mode == vga_render_mode::text)
 		{

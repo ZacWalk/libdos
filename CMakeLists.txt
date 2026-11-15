@@ -38,7 +38,7 @@ if(LIBDOS_BUILD_APP)
     include(FetchContent)
     FetchContent_Declare(libdesktop
         GIT_REPOSITORY https://github.com/ZacWalk/libdesktop.git
-        GIT_TAG        04109ee82a500db38d439fa281bbc3f43124adfe
+        GIT_TAG        d172a12c6e3df0831a641133b96d073559a99db5
     )
     FetchContent_MakeAvailable(libdesktop)
 endif()
@@ -107,6 +107,7 @@ if(LIBDOS_BUILD_APP)
     # through libdesktop's four libraries.
     libdesktop_add_app(dui
         SOURCES     app/main.cpp
+        ICON        app/res/dui.ico
         DESCRIPTION "dui - DOS emulator"
         OUTPUT_NAME dui
     )
@@ -116,8 +117,9 @@ if(LIBDOS_BUILD_APP)
     list(APPEND libdos_executables dui)
 endif()
 
+# libdos's own targets build without warnings at /W4.
 foreach(target ${libdos_targets})
-    target_compile_options(${target} PRIVATE /W3 /MP)
+    target_compile_options(${target} PRIVATE /W4 /MP)
 endforeach()
 
 foreach(target ${libdos_executables})
@@ -140,19 +142,20 @@ if(PROJECT_IS_TOP_LEVEL)
 endif()
 if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     add_executable(libdos_host_header_test host/host-header-test.cpp)
+    target_compile_options(libdos_host_header_test PRIVATE /W4)
     add_test(NAME host_header_boundary COMMAND libdos_host_header_test)
-    set_tests_properties(host_header_boundary PROPERTIES TIMEOUT 30 LABELS libdos)
+    set_tests_properties(host_header_boundary PROPERTIES TIMEOUT 30 LABELS "libdos;headless")
     # The gates: demu's behavioural suite, then dui's offscreen self-check. A
     # new check of src/ or cc/ goes in the demu suite; there is no separate
     # unit test binary.
     if(LIBDOS_BUILD_TOOLS)
         add_test(NAME demu_suite COMMAND demu --test)
         set_tests_properties(demu_suite PROPERTIES
-            TIMEOUT 120 LABELS libdos WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+            TIMEOUT 120 LABELS "libdos;headless" WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
     endif()
     if(LIBDOS_BUILD_APP)
         add_test(NAME dui_selftest COMMAND dui -test)
         set_tests_properties(dui_selftest PROPERTIES
-            TIMEOUT 120 LABELS libdos WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+            TIMEOUT 120 LABELS "libdos;headless" WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
     endif()
 endif()

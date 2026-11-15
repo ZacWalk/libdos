@@ -32,7 +32,10 @@ namespace
 	constexpr uint8_t error_no_more_files = 0x12;
 	constexpr uint8_t error_file_exists = 0x50;
 
-	void set_carry(machine_state& s, bool on) { cpu_set_iret_flag(s, flag_cf, on); }
+	void set_carry(machine_state& s, bool on)
+	{
+		cpu_set_iret_flag(s, flag_cf, on);
+	}
 
 	void fail(machine_state& s, uint8_t code)
 	{
@@ -40,13 +43,28 @@ namespace
 		set_carry(s, true);
 	}
 
-	void succeed(machine_state& s) { set_carry(s, false); }
+	void succeed(machine_state& s)
+	{
+		set_carry(s, false);
+	}
 
-	char upper(char c) { return char(std::toupper(static_cast<unsigned char>(c))); }
+	char upper(char c)
+	{
+		return char(std::toupper(static_cast<unsigned char>(c)));
+	}
 
-	uint16_t mcb_size(machine_state& s, uint16_t mcb) { return read16(s, mcb, 3); }
-	uint16_t mcb_owner(machine_state& s, uint16_t mcb) { return read16(s, mcb, 1); }
-	uint8_t mcb_type(machine_state& s, uint16_t mcb) { return read8(s, mcb, 0); }
+	uint16_t mcb_size(machine_state& s, uint16_t mcb)
+	{
+		return read16(s, mcb, 3);
+	}
+	uint16_t mcb_owner(machine_state& s, uint16_t mcb)
+	{
+		return read16(s, mcb, 1);
+	}
+	uint8_t mcb_type(machine_state& s, uint16_t mcb)
+	{
+		return read8(s, mcb, 0);
+	}
 
 	void write_mcb(machine_state& s, uint16_t mcb, uint8_t type, uint16_t owner, uint16_t size)
 	{
@@ -289,8 +307,8 @@ namespace
 		for (int i = 0; i < dos_handles; ++i)
 		{
 			uint8_t file = i < size ? mem_read8(s, from + uint32_t(i)) : uint8_t(0xff);
-			if (file != 0xff && (file >= dos_max_files || s.dos.files[file].references == 0 ||
-			                     (s.dos.files[file].mode & 0x80) != 0))
+			if (file != 0xff &&
+			    (file >= dos_max_files || s.dos.files[file].references == 0 || (s.dos.files[file].mode & 0x80) != 0))
 				file = 0xff;
 			if (file != 0xff) ++s.dos.files[file].references;
 			write8(s, child, uint16_t(0x18 + i), file);
@@ -310,11 +328,11 @@ namespace
 		for (int i = 0; i < 8 && name[i] != 0 && name[i] != '.'; ++i) base[i] = upper(name[i]);
 		if (std::strcmp(base, "CON") == 0) return dos_device_con;
 		if (std::strcmp(base, "NUL") == 0) return dos_device_nul;
-		if (std::strcmp(base, "AUX") == 0 || (std::strncmp(base, "COM", 3) == 0 && base[3] >= '1' && base[3] <= '4' &&
-		                                      base[4] == 0))
+		if (std::strcmp(base, "AUX") == 0 ||
+		    (std::strncmp(base, "COM", 3) == 0 && base[3] >= '1' && base[3] <= '4' && base[4] == 0))
 			return dos_device_aux;
-		if (std::strcmp(base, "PRN") == 0 || (std::strncmp(base, "LPT", 3) == 0 && base[3] >= '1' && base[3] <= '3' &&
-		                                      base[4] == 0))
+		if (std::strcmp(base, "PRN") == 0 ||
+		    (std::strncmp(base, "LPT", 3) == 0 && base[3] >= '1' && base[3] <= '3' && base[4] == 0))
 			return dos_device_prn;
 		return dos_device_none;
 	}
@@ -503,7 +521,7 @@ namespace
 		uint16_t offset = 0;
 		for (const uint8_t ch : strings) write8(s, segment, offset++, ch);
 		write8(s, segment, offset++, 0); // the empty string that ends them
-		write16(s, segment, offset, 1); // one string follows
+		write16(s, segment, offset, 1);  // one string follows
 		offset = uint16_t(offset + 2);
 		for (size_t i = 0; i < path_length; ++i) write8(s, segment, offset++, uint8_t(program_path[i]));
 		write8(s, segment, offset, 0);
@@ -644,7 +662,10 @@ static bool load_image(machine_state& s, const uint8_t* image, uint32_t size, co
 	if (is_exe)
 	{
 		if (size < 0x20) return report("Truncated MZ header");
-		const auto word = [&](uint32_t offset) { return uint16_t(image[offset] | (image[offset + 1] << 8)); };
+		const auto word = [&](uint32_t offset)
+		{
+			return uint16_t(image[offset] | (image[offset + 1] << 8));
+		};
 		const uint16_t bytes_in_last_block = word(0x02);
 		const uint16_t blocks = word(0x04);
 		const uint16_t relocations = word(0x06);
@@ -680,8 +701,7 @@ static bool load_image(machine_state& s, const uint8_t* image, uint32_t size, co
 		s.dos.image_segment = load;
 		s.dos.image_bytes = body;
 
-		for (uint32_t i = 0; i < body; ++i)
-			mem_write8(s, linear_address(load, 0) + i, image[header_length + i]);
+		for (uint32_t i = 0; i < body; ++i) mem_write8(s, linear_address(load, 0) + i, image[header_length + i]);
 
 		for (uint16_t i = 0; i < relocations; ++i)
 		{
@@ -724,8 +744,7 @@ static bool load_image(machine_state& s, const uint8_t* image, uint32_t size, co
 		s.dos.image_segment = psp;
 		s.dos.image_bytes = size;
 
-		for (uint32_t i = 0; i < size; ++i)
-			mem_write8(s, linear_address(psp, 0x100) + i, image[i]);
+		for (uint32_t i = 0; i < size; ++i) mem_write8(s, linear_address(psp, 0x100) + i, image[i]);
 
 		finish_psp(s, psp, environment, parent, command_line);
 
@@ -854,7 +873,10 @@ namespace
 		}
 		const uint16_t segment = read16(s, block_segment, block);
 		const uint16_t factor = read16(s, block_segment, uint16_t(block + 2));
-		const auto word = [&](uint32_t offset) { return uint16_t(image[offset] | (image[offset + 1] << 8)); };
+		const auto word = [&](uint32_t offset)
+		{
+			return uint16_t(image[offset] | (image[offset + 1] << 8));
+		};
 
 		uint32_t header = 0;
 		uint32_t body = uint32_t(image.size());
@@ -937,16 +959,10 @@ namespace
 			uint8_t error = 0;
 			switch (command_exec(s, tail, environment, error))
 			{
-			case command_result::done:
-				succeed(s);
-				return;
-			case command_result::started:
-				return;
-			case command_result::failed:
-				fail(s, error);
-				return;
-			case command_result::not_a_command:
-				break; // no /C: the real COMMAND.COM, if there is one
+			case command_result::done: succeed(s); return;
+			case command_result::started: return;
+			case command_result::failed: fail(s, error); return;
+			case command_result::not_a_command: break; // no /C: the real COMMAND.COM, if there is one
 			}
 		}
 
@@ -1032,9 +1048,8 @@ namespace
 				fail(s, error_too_many_files);
 				return;
 			}
-			const int file = create
-				                 ? dos_open_file(s, path, host_open_read_write, true, false, uint8_t(c.cx() & 0x27))
-				                 : dos_open_file(s, path, c.al() & 3, false, false);
+			const int file = create ? dos_open_file(s, path, host_open_read_write, true, false, uint8_t(c.cx() & 0x27))
+			                        : dos_open_file(s, path, c.al() & 3, false, false);
 			if (file < 0)
 			{
 				fail(s, create ? error_access_denied : error_file_not_found);
@@ -1166,7 +1181,8 @@ namespace
 				return;
 			}
 			const int32_t offset = int32_t((uint32_t(c.cx()) << 16) | c.dx());
-			const int32_t position = s.host != nullptr ? s.host->file_seek(d.files[file].host_handle, offset, c.al()) : -1;
+			const int32_t position = s.host != nullptr ? s.host->file_seek(d.files[file].host_handle, offset, c.al())
+			                                           : -1;
 			if (position < 0)
 			{
 				fail(s, error_invalid_function);
@@ -1319,8 +1335,8 @@ namespace
 		{
 			char to[192] = {};
 			if (!read_dos_path(s, c.ds(), c.dx(), path, sizeof(path), true) ||
-			    !read_dos_path(s, c.es(), c.di(), to, sizeof(to), true) ||
-			    s.host == nullptr || !s.host->file_rename(path, to))
+			    !read_dos_path(s, c.es(), c.di(), to, sizeof(to), true) || s.host == nullptr ||
+			    !s.host->file_rename(path, to))
 			{
 				fail(s, error_file_not_found);
 				return;
@@ -1356,9 +1372,7 @@ namespace
 			return;
 		}
 
-		default:
-			fail(s, error_invalid_function);
-			return;
+		default: fail(s, error_invalid_function); return;
 		}
 	}
 }
@@ -1420,8 +1434,7 @@ int dos_open_file(machine_state& s, const char* path, int access, bool create, b
 			if (end > 0 && s.host->file_seek(handle, end - 1, 0) == end - 1 &&
 			    s.host->file_read(handle, &last, 1) == 1 && last == 0x1a)
 				s.host->file_seek(handle, end - 1, 0);
-			else
-				s.host->file_seek(handle, 0, 2);
+			else s.host->file_seek(handle, 0, 2);
 		}
 		entry.host_handle = handle;
 	}
@@ -1439,15 +1452,13 @@ int dos_read_handle(machine_state& s, uint16_t handle, uint8_t* data, int length
 	const dos_file& entry = s.dos.files[file];
 	switch (entry.device)
 	{
-	case dos_device_none:
-		return s.host != nullptr ? s.host->file_read(entry.host_handle, data, length) : -1;
+	case dos_device_none: return s.host != nullptr ? s.host->file_read(entry.host_handle, data, length) : -1;
 	case dos_device_con:
 	{
 		const int got = s.host != nullptr ? s.host->console_read(data, length) : -1;
 		return got < 0 ? 0 : got;
 	}
-	default:
-		return 0; // NUL, AUX and PRN have nothing to read
+	default: return 0; // NUL, AUX and PRN have nothing to read
 	}
 }
 
@@ -1471,16 +1482,13 @@ int dos_write_handle(machine_state& s, uint16_t handle, const uint8_t* data, int
 		}
 		return total;
 	}
-	case dos_device_con:
-		console_output(s, handle, data, length);
-		return length;
-	default:
-		return length; // NUL, AUX and PRN take everything
+	case dos_device_con: console_output(s, handle, data, length); return length;
+	default: return length; // NUL, AUX and PRN take everything
 	}
 }
 
-bool dos_start_child(machine_state& s, const char* path, const char* tail, uint16_t environment, int input,
-                     int output, uint8_t& error)
+bool dos_start_child(machine_state& s, const char* path, const char* tail, uint16_t environment, int input, int output,
+                     uint8_t& error)
 {
 	dos_state& d = s.dos;
 	if (d.exec_depth >= dos_max_nesting)
@@ -1596,11 +1604,11 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 
 	switch (c.ah())
 	{
-	case 0x00:
-		terminate(s, 0, 0);
-		return true;
+	case 0x00: terminate(s, 0, 0); return true;
 
-	case 0x01: case 0x07: case 0x08:
+	case 0x01:
+	case 0x07:
+	case 0x08:
 	{
 		const bool second_half = d.extended_pending;
 		uint8_t ch = 0;
@@ -1616,12 +1624,10 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 		c.set_al(c.dl());
 		return true;
 
-	case 0x03:
-		c.set_al(0);
-		return true;
+	case 0x03: c.set_al(0); return true;
 
-	case 0x04: case 0x05:
-		return true;
+	case 0x04:
+	case 0x05: return true;
 
 	case 0x06:
 		if (c.dl() == 0xff)
@@ -1726,7 +1732,9 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 		// Flush the buffer, then run the requested input function.
 		{
 			uint16_t key = 0;
-			while (bios_pop_key(s, key)) {}
+			while (bios_pop_key(s, key))
+			{
+			}
 			d.extended_pending = false;
 			if (c.al() == 0x01 || c.al() == 0x06 || c.al() == 0x07 || c.al() == 0x08 || c.al() == 0x0a)
 			{
@@ -1737,23 +1745,19 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 			return true;
 		}
 
-	case 0x0d:
-		return true;
+	case 0x0d: return true;
 
 	case 0x0e:
 		d.current_drive = uint8_t(c.dl() < 3 ? c.dl() : 2);
 		c.set_al(3); // three drives
 		return true;
 
-	case 0x19:
-		c.set_al(d.current_drive);
-		return true;
+	case 0x19: c.set_al(d.current_drive); return true;
 
-	case 0x1a:
-		d.dta = (uint32_t(c.ds()) << 16) | c.dx();
-		return true;
+	case 0x1a: d.dta = (uint32_t(c.ds()) << 16) | c.dx(); return true;
 
-	case 0x1b: case 0x1c:
+	case 0x1b:
+	case 0x1c:
 		c.set_al(0xff);
 		c.set_cx(512);
 		c.set_dx(0x1000);
@@ -1778,10 +1782,22 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 		uint16_t source = c.si();
 		const uint16_t fcb = c.di();
 		uint8_t result = 0;
-		const auto at = [&](int ahead) { return read8(s, c.ds(), uint16_t(source + ahead)); };
-		const auto put = [&](int offset, uint8_t value) { write8(s, c.es(), uint16_t(fcb + offset), value); };
-		const auto ends_name = [](uint8_t ch) { return ch <= ' ' || std::strchr(".\"/\\[]:<|>+=;,", ch) != nullptr; };
-		const auto blanks = [&]() { while (at(0) == ' ' || at(0) == '\t') ++source; };
+		const auto at = [&](int ahead)
+		{
+			return read8(s, c.ds(), uint16_t(source + ahead));
+		};
+		const auto put = [&](int offset, uint8_t value)
+		{
+			write8(s, c.es(), uint16_t(fcb + offset), value);
+		};
+		const auto ends_name = [](uint8_t ch)
+		{
+			return ch <= ' ' || std::strchr(".\"/\\[]:<|>+=;,", ch) != nullptr;
+		};
+		const auto blanks = [&]()
+		{
+			while (at(0) == ' ' || at(0) == '\t') ++source;
+		};
 		// The characters up to the next that ends a name, into a field of
 		// `width`: '*' fills the rest with '?', and what does not fit is
 		// passed over. With nothing given, an optional field is left alone.
@@ -1796,15 +1812,16 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 				if (ch == '*' || ch == '?') result |= 1;
 				if (ch == '*')
 					while (position < width) put(offset + position++, '?');
-				else
-					put(offset + position++, uint8_t(upper(char(ch))));
+				else put(offset + position++, uint8_t(upper(char(ch))));
 			}
 			while (position < width) put(offset + position++, ' ');
 		};
 
 		if ((flags & 2) == 0) put(0, 0);
-		if ((flags & 4) == 0) for (int i = 1; i <= 8; ++i) put(i, ' ');
-		if ((flags & 8) == 0) for (int i = 9; i <= 11; ++i) put(i, ' ');
+		if ((flags & 4) == 0)
+			for (int i = 1; i <= 8; ++i) put(i, ' ');
+		if ((flags & 8) == 0)
+			for (int i = 9; i <= 11; ++i) put(i, ' ');
 		for (int i = 12; i < 16; ++i) put(i, 0);
 
 		blanks();
@@ -1831,7 +1848,8 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 		return true;
 	}
 
-	case 0x2a: case 0x2c:
+	case 0x2a:
+	case 0x2c:
 	{
 		int year = 1990, month = 1, day = 1, weekday = 1, hour = 0, minute = 0, second = 0, hundredths = 0;
 		if (s.host != nullptr) s.host->clock(year, month, day, weekday, hour, minute, second, hundredths);
@@ -1852,13 +1870,10 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 		return true;
 	}
 
-	case 0x2b: case 0x2d:
-		c.set_al(0);
-		return true;
+	case 0x2b:
+	case 0x2d: c.set_al(0); return true;
 
-	case 0x2e:
-		d.verify = c.al();
-		return true;
+	case 0x2e: d.verify = c.al(); return true;
 
 	case 0x2f:
 		c.set_es(uint16_t(d.dta >> 16));
@@ -1902,7 +1917,7 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 	{
 		const uint32_t free = s.host != nullptr ? s.host->free_space() : 0x1000000;
 		const uint32_t clusters = free / (512 * 8);
-		c.set_ax(8); // sectors per cluster
+		c.set_ax(8);   // sectors per cluster
 		c.set_cx(512); // bytes per sector
 		c.set_bx(uint16_t(clusters > 0xfff0 ? 0xfff0 : clusters));
 		c.set_dx(0xfff0);
@@ -1926,7 +1941,9 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 		succeed(s);
 		return true;
 
-	case 0x39: case 0x3a: case 0x3b:
+	case 0x39:
+	case 0x3a:
+	case 0x3b:
 	{
 		char path[192] = {};
 		if (!read_dos_path(s, c.ds(), c.dx(), path, sizeof(path)) || s.host == nullptr)
@@ -1952,11 +1969,22 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 		return true;
 	}
 
-	case 0x3c: case 0x3d: case 0x3e: case 0x3f: case 0x40: case 0x41: case 0x42:
-	case 0x43: case 0x45: case 0x46: case 0x47: case 0x4e: case 0x4f: case 0x56:
-	case 0x57: case 0x5b:
-		file_functions(s);
-		return true;
+	case 0x3c:
+	case 0x3d:
+	case 0x3e:
+	case 0x3f:
+	case 0x40:
+	case 0x41:
+	case 0x42:
+	case 0x43:
+	case 0x45:
+	case 0x46:
+	case 0x47:
+	case 0x4e:
+	case 0x4f:
+	case 0x56:
+	case 0x57:
+	case 0x5b: file_functions(s); return true;
 
 	case 0x44: // IOCTL
 		switch (c.al())
@@ -2004,7 +2032,7 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 			succeed(s);
 			return true;
 		}
-		case 0x08: // removable media
+		case 0x08:       // removable media
 			c.set_ax(1); // fixed disk
 			succeed(s);
 			return true;
@@ -2013,9 +2041,7 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 			c.set_dx(0);
 			succeed(s);
 			return true;
-		default:
-			fail(s, error_invalid_function);
-			return true;
+		default: fail(s, error_invalid_function); return true;
 		}
 
 	case 0x48:
@@ -2062,22 +2088,17 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 		exec(s);
 		return true;
 
-	case 0x4c:
-		terminate(s, c.al(), 0);
-		return true;
+	case 0x4c: terminate(s, c.al(), 0); return true;
 
 	case 0x4d:
 		c.set_al(d.return_code);
 		c.set_ah(d.return_type);
 		return true;
 
-	case 0x50:
-		d.psp_segment = c.bx();
-		return true;
+	case 0x50: d.psp_segment = c.bx(); return true;
 
-	case 0x51: case 0x62:
-		c.set_bx(d.psp_segment);
-		return true;
+	case 0x51:
+	case 0x62: c.set_bx(d.psp_segment); return true;
 
 	case 0x52:
 		// List of lists: point at a zeroed area so a program that walks it
@@ -2086,9 +2107,7 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 		c.set_bx(0x0200);
 		return true;
 
-	case 0x54:
-		c.set_al(d.verify);
-		return true;
+	case 0x54: c.set_al(d.verify); return true;
 
 	case 0x58:
 		if (c.al() == 0) c.set_ax(0);
@@ -2118,7 +2137,8 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 		for (unsigned attempt = 0; attempt < 100 && s.host != nullptr; ++attempt)
 		{
 			char path[192] = {};
-			snprintf(raw + length, sizeof(raw) - size_t(length), "DOS%05u.TMP", unsigned((s.cycles + attempt) % 100000));
+			snprintf(raw + length, sizeof(raw) - size_t(length), "DOS%05u.TMP",
+			         unsigned((s.cycles + attempt) % 100000));
 			dos_resolve_path(s, raw, path, sizeof(path));
 			host_file_info info;
 			if (s.host->file_info(path, info)) continue;
@@ -2176,12 +2196,9 @@ bool dos_interrupt(machine_state& s, uint8_t vector)
 		return true;
 	}
 
-	case 0x68: case 0x6a:
-		succeed(s);
-		return true;
+	case 0x68:
+	case 0x6a: succeed(s); return true;
 
-	default:
-		fail(s, error_invalid_function);
-		return true;
+	default: fail(s, error_invalid_function); return true;
 	}
 }

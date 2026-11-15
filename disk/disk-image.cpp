@@ -14,7 +14,7 @@ namespace
 	constexpr uint32_t sector = disk_sector_size;
 	constexpr uint32_t hard_disk_sectors_per_track = 63;
 	constexpr uint32_t hard_disk_root_entries = 512;
-	constexpr int hard_disk_volumes = 24; // C: to Z:
+	constexpr int hard_disk_volumes = 24;        // C: to Z:
 	constexpr uint64_t largest_volume = 4194144; // 65524 clusters of 64 sectors
 
 	void put16(uint8_t* p, uint32_t value)
@@ -53,9 +53,7 @@ namespace
 	class vector_sink final : public disk_sink
 	{
 	public:
-		explicit vector_sink(std::vector<uint8_t>& image) : image(image)
-		{
-		}
+		explicit vector_sink(std::vector<uint8_t>& image) : image(image) {}
 
 		bool size(uint64_t bytes) override
 		{
@@ -91,10 +89,7 @@ namespace
 		std::vector<uint8_t> root;
 		uint8_t label[11] = {};
 
-		uint64_t data_start() const
-		{
-			return info.start + 1 + 2ull * sectors_per_fat + root_entries * 32 / sector;
-		}
+		uint64_t data_start() const { return info.start + 1 + 2ull * sectors_per_fat + root_entries * 32 / sector; }
 	};
 
 	// One reserved sector, two FATs, the root directory, then the clusters.
@@ -224,8 +219,8 @@ namespace
 
 	// The boot sector with its parameter block filled in, both FATs and the
 	// root directory.
-	bool write_volume(builder& b, const uint8_t* boot_sector, uint32_t heads, uint32_t sectors_per_track,
-	                  uint8_t drive, std::string& error)
+	bool write_volume(builder& b, const uint8_t* boot_sector, uint32_t heads, uint32_t sectors_per_track, uint8_t drive,
+	                  std::string& error)
 	{
 		uint8_t boot[sector];
 		std::memcpy(boot, boot_sector, sector);
@@ -308,8 +303,8 @@ namespace
 		p[2] = uint8_t(cylinder);
 	}
 
-	void put_partition(uint8_t* entry, bool active, uint8_t type, uint64_t start, uint64_t relative,
-	                   uint64_t count, uint32_t heads, uint32_t sectors_per_track)
+	void put_partition(uint8_t* entry, bool active, uint8_t type, uint64_t start, uint64_t relative, uint64_t count,
+	                   uint32_t heads, uint32_t sectors_per_track)
 	{
 		entry[0] = active ? 0x80 : 0x00;
 		put_chs(entry + 1, start, heads, sectors_per_track);
@@ -470,7 +465,7 @@ namespace
 			const std::string name = entry_name(e);
 			if (!live_entry(e) || name == "." || name == "..") continue;
 			disk_entry entry;
-			entry.path = parent + "\\" + name;
+			entry.path.append(parent).append("\\").append(name);
 			entry.size = get32(e + 28);
 			entry.attributes = e[11];
 			entry.time = uint16_t(get16(e + 22));
@@ -526,8 +521,7 @@ namespace
 			}
 		}
 		uint8_t boot[sector];
-		if (source.read(volume.start * sector, boot, sector) && boot[38] == 0x29)
-			volume.label = trimmed(boot + 43, 11);
+		if (source.read(volume.start * sector, boot, sector) && boot[38] == 0x29) volume.label = trimmed(boot + 43, 11);
 		if (volume.label == "NO NAME") volume.label.clear();
 	}
 
@@ -587,8 +581,8 @@ bool disk_build_floppy(int kilobytes, const uint8_t* boot_sector, const std::vec
 }
 
 bool disk_build_hard_disk(const disk_layout& layout, const uint8_t* master_boot, const uint8_t* boot_sector,
-                          const std::vector<disk_file>& files, const std::string& label,
-                          const disk_stamp& stamp, disk_sink& sink, disk_report& report, std::string& error)
+                          const std::vector<disk_file>& files, const std::string& label, const disk_stamp& stamp,
+                          disk_sink& sink, disk_report& report, std::string& error)
 {
 	const uint32_t sectors_per_track = hard_disk_sectors_per_track;
 	const uint32_t heads = layout.heads ? layout.heads : layout.megabytes <= 504 ? 16 : 255;
@@ -612,8 +606,8 @@ bool disk_build_hard_disk(const disk_layout& layout, const uint8_t* master_boot,
 	}
 	// A partition is at least a cylinder, as FDISK makes it: smaller, no
 	// partition would end on a cylinder after the track its table takes.
-	const uint64_t largest = std::max(
-		std::min<uint64_t>(uint64_t(layout.partition_megabytes) * 2048, largest_volume), cylinder - sectors_per_track);
+	const uint64_t largest = std::max(std::min<uint64_t>(uint64_t(layout.partition_megabytes) * 2048, largest_volume),
+	                                  cylinder - sectors_per_track);
 
 	report = {};
 	report.cylinders = uint32_t(cylinders);
@@ -653,8 +647,8 @@ bool disk_build_hard_disk(const disk_layout& layout, const uint8_t* master_boot,
 				put_partition(extended + 0x1ce, false, 0x05, end, end - extended_start, next_end - end, heads,
 				              sectors_per_track);
 		}
-		put_partition((n == 0 ? master : extended) + 0x1be, n == 0, type, start + sectors_per_track,
-		              sectors_per_track, size, heads, sectors_per_track);
+		put_partition((n == 0 ? master : extended) + 0x1be, n == 0, type, start + sectors_per_track, sectors_per_track,
+		              size, heads, sectors_per_track);
 		if (n > 0 && !sink.write(start * sector, extended, sector))
 		{
 			error = "cannot write the partition table at sector " + std::to_string(start);
@@ -732,13 +726,16 @@ bool disk_volumes(disk_source& source, std::vector<disk_volume>& volumes, std::s
 			add_partition(source, entry[4], table_start + get32(entry + 8), get32(entry + 12), volumes);
 		const uint8_t* next = table + 0x1ce;
 		const uint64_t following = extended + get32(next + 8);
-		table_start =
-			(next[4] == 0x05 || next[4] == 0x0f) && get32(next + 12) && following > table_start ? following : 0;
+		table_start = (next[4] == 0x05 || next[4] == 0x0f) && get32(next + 12) && following > table_start ? following
+		                                                                                                  : 0;
 	}
 
 	// DOS uses one primary partition a disk, the first of a DOS type, and
 	// every logical drive of one, whether it is formatted or not.
-	const auto dos_type = [](uint8_t type) { return type == 0x01 || type == 0x04 || type == 0x06 || type == 0x0e; };
+	const auto dos_type = [](uint8_t type)
+	{
+		return type == 0x01 || type == 0x04 || type == 0x06 || type == 0x0e;
+	};
 	char letter = 'C';
 	for (size_t i = 0; i < volumes.size() && letter <= 'Z'; ++i)
 	{
@@ -758,8 +755,8 @@ bool disk_list(disk_source& source, const disk_volume& volume, std::vector<disk_
 	return list_directory(source, f, fat, 0, "", 0, listed, entries, error);
 }
 
-bool disk_read_file(disk_source& source, const disk_volume& volume, const std::string& path,
-                    std::vector<uint8_t>& data, std::string& error)
+bool disk_read_file(disk_source& source, const disk_volume& volume, const std::string& path, std::vector<uint8_t>& data,
+                    std::string& error)
 {
 	fat_layout f;
 	std::vector<uint8_t> fat;
@@ -789,7 +786,8 @@ bool disk_read_file(disk_source& source, const disk_volume& volume, const std::s
 		for (size_t offset = 0; !found && offset + 32 <= listing.size() && listing[offset] != 0; offset += 32)
 		{
 			const uint8_t* e = &listing[offset];
-			if (live_entry(e) && std::equal(wanted, wanted + 11, e, [](uint8_t a, uint8_t b) { return a == upper(char(b)); }))
+			if (live_entry(e) &&
+			    std::equal(wanted, wanted + 11, e, [](uint8_t a, uint8_t b) { return a == upper(char(b)); }))
 				found = e;
 		}
 		if (!found)
